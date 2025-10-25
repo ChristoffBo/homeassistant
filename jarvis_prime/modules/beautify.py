@@ -20,7 +20,16 @@ IP_RE  = re.compile(r'\b(?:(?:25[0-5]|2[0-4]\d|1?\d{1,2})\.){3}(?:25[0-5]|2[0-4]
 HOST_RE = re.compile(r'\b(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\b')
 VER_RE  = re.compile(r'\bv?\d+\.\d+(?:\.\d+)?\b')
 
-EMOJI_RE = re.compile("[\U0001F300-\U0001F6FF\U0001F900-\U0001F9FF\U00002600-\U000026FF\U00002700-\U000027BF\U0001FA70-\U0001FAFF\U0001F1E6-\U0001F1FF]", flags=re.UNICODE)
+# FIX: Proper Unicode emoji regex with error handling
+try:
+    EMOJI_RE = re.compile(
+        "[\U0001F300-\U0001F6FF\U0001F900-\U0001F9FF\U00002600-\U000026FF"
+        "\U00002700-\U000027BF\U0001FA70-\U0001FAFF\U0001F1E6-\U0001F1FF]",
+        flags=re.UNICODE
+    )
+except Exception:
+    # Fallback if regex compilation fails
+    EMOJI_RE = re.compile(r'[\U0001F600-\U0001F64F]', flags=re.UNICODE)
 
 LIKELY_POSTER_HOSTS = (
     "githubusercontent.com","fanart.tv","themoviedb.org","image.tmdb.org","trakt.tv","tvdb.org","gravatar.com"
@@ -30,8 +39,22 @@ LIKELY_POSTER_HOSTS = (
 CODE_FENCE_RE = re.compile(r'```.*?```', re.S)
 LINK_RE       = re.compile(r'\[[^\]]+?\]\([^)]+?\)')
 
+def _ensure_utf8(text: str) -> str:
+    """Ensure text is properly UTF-8 encoded/decoded."""
+    if not text:
+        return ""
+    try:
+        # If already str, ensure it's valid UTF-8
+        if isinstance(text, bytes):
+            return text.decode('utf-8', errors='ignore')
+        # Encode and decode to normalize
+        return text.encode('utf-8', errors='ignore').decode('utf-8')
+    except Exception:
+        return str(text)
+
 def _fold_repeats(text: str, threshold: int = 3) -> str:
     """Collapse runs of identical lines into a single line with ×N, keep head/tail if huge."""
+    text = _ensure_utf8(text)
     lines = text.splitlines()
     out, i = [], 0
     while i < len(lines):
@@ -53,6 +76,7 @@ def _safe_truncate(s: str, max_len: int = 3500) -> str:
     Non-destructive truncation: never cuts inside code fences, markdown links/images, or raw image URLs.
     Applies only if the final message is extremely long.
     """
+    s = _ensure_utf8(s)
     if len(s) <= max_len:
         return s
     protected = []
@@ -96,6 +120,7 @@ def _kv_to_bullets(text: str) -> Optional[str]:
     """Turn key: value lines into neat bullets for readability."""
     if not text:
         return None
+    text = _ensure_utf8(text)
     kvs = []
     for ln in text.splitlines():
         m = KV_RE.match(ln)
@@ -118,19 +143,22 @@ def _prefer_host_key(url: str) -> int:
 
 def _strip_noise(text: str) -> str:
     if not text: return ""
+    text = _ensure_utf8(text)
     s = EMOJI_RE.sub("", text)
     NOISE = re.compile(r'^\s*(?:sent from .+|via .+ api|automated message|do not reply)\.?\s*$', re.I)
     kept = [ln for ln in s.splitlines() if not NOISE.match(ln)]
     return "\n".join(kept)
 
 def _normalize(text: str) -> str:
-    s = (text or "").replace("\t","  ")
+    text = _ensure_utf8(text or "")
+    s = text.replace("\t","  ")
     s = re.sub(r'[ \t]+$', "", s, flags=re.M)
     s = re.sub(r'\n{3,}', '\n\n', s)
     return s.strip()
 
 def _linewise_dedup_markdown(text: str, protect_message: bool = False) -> str:
     """Safe de-dup that never splits on '.' and can protect the 📄 Message block."""
+    text = _ensure_utf8(text)
     lines = text.splitlines()
     out: List[str] = []
     seen: set = set()
@@ -171,6 +199,7 @@ def _linewise_dedup_markdown(text: str, protect_message: bool = False) -> str:
 def _harvest_images(text: str) -> Tuple[str, List[str], List[str]]:
     """Strip images from body but keep meaning: retain ALT as [image: ALT]."""
     if not text: return "", [], []
+    text = _ensure_utf8(text)
     urls: List[str] = []
     alts: List[str] = []
 
@@ -198,13 +227,15 @@ def _find_ips(*texts: str) -> List[str]:
     ips=[]; seen=set()
     for t in texts:
         if not t: continue
+        t = _ensure_utf8(t)
         for m in IP_RE.finditer(t):
             ip = m.group(0)
             if ip not in seen: seen.add(ip); ips.append(ip)
     return ips
 
 def _repair_ipv4(val: str, *contexts: str) -> str:
-    cand = re.sub(r'\s*\.\s*', '.', (val or '').strip())
+    val = _ensure_utf8(val or '')
+    cand = re.sub(r'\s*\.\s*', '.', val.strip())
     m = IP_RE.search(cand)
     if m: return m.group(0)
     parts = re.findall(r'\d{1,3}', cand)
@@ -685,6 +716,7 @@ def _maybe_parse_query_payload(s: Optional[str]) -> Optional[Dict[str, str]]:
 _ACTION_SAYS_RX = re.compile(r'^\s*action\s+says:\s*.*$', re.I | re.M)
 
 def _strip_action_says(text: str) -> str:
+    text = _ensure_utf8(text or "")
     """Remove any 'action says:' lines from visible body (riffs/personas untouched elsewhere)."""
     if not text:
         return ""
@@ -694,6 +726,7 @@ def _strip_action_says(text: str) -> str:
 # MIME header stripping (SMTP / proxy leakage)
 _MIME_HEADER_RX = re.compile(r'^\s*Content-(?:Disposition|Type|Length|Transfer-Encoding)\s*:.*$', re.I | re.M)
 def _strip_mime_headers(text: str) -> str:
+    text = _ensure_utf8(text or "")
     if not text:
         return ""
     s = _MIME_HEADER_RX.sub("", text)
@@ -821,6 +854,7 @@ def _poster_fallback(title: str, body: str) -> Optional[str]:
     return _default_icon()
 
 def _remove_kv_lines(text: str) -> str:
+    text = _ensure_utf8(text or "")
     """
     Keep human 'key: value' content (e.g., CPU: 68%). Only drop transport noise:
     - Content-* MIME lines
@@ -844,6 +878,7 @@ def _remove_kv_lines(text: str) -> str:
     return s
 
 def _final_qs_cleanup(text: str) -> str:
+    text = _ensure_utf8(text or "")
     """If the *visible* message still looks like a querystring, decode and keep only human text."""
     if not text:
         return ""
@@ -869,6 +904,7 @@ _META_LINE_RX = re.compile(
 _META_TAG_RX = re.compile(r'\s*(?:(?:SYSTEM|INPUT|OUTPUT)|(?:SYSTEM|INPUT|OUTPUT))\s*', re.I)
 
 def _scrub_meta(text: str) -> str:
+    text = _ensure_utf8(text or "")
     if not text:
         return ""
     s = _META_TAG_RX.sub(" ", text)
