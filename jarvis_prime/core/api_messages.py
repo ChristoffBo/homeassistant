@@ -487,10 +487,10 @@ def _make_app() -> web.Application:
             asyncio.create_task(sentinel_instance.auto_purge())
             print("[sentinel] Monitoring started")
         if registry_module:
-            # Use async wrapper that runs in thread and registers routes
-            success = await registry_module.init_registry_async(
-                app=app,
-                notification_callback=notify_via_registry,
+            # Initialize registry (routes will be registered separately before startup)
+            success = await asyncio.to_thread(
+                registry_module.init_registry,
+                notify_callback=notify_via_registry,
                 db_path=os.getenv("JARVIS_DB_PATH", "/data/jarvis.db")
             )
             if success:
@@ -545,7 +545,10 @@ def _make_app() -> web.Application:
         sentinel_instance.setup_routes(app)
         print("[sentinel] Routes registered")
 
-    # Registry routes are registered by init_registry_async in startup tasks
+    # Register registry routes if available (BEFORE startup)
+    if registry_module and hasattr(registry_module, 'register_routes'):
+        registry_module.register_routes(app)
+        print("[registry] Routes registered")
 
     # Register backup routes if available
     try:
