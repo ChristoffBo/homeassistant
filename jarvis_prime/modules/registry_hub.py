@@ -1489,13 +1489,13 @@ def init_registry(notify_callback: Optional[Callable] = None, db_path: str = Non
         _logger.error("Failed to setup storage backend")
         return False
     
-    # Download registry binary if needed
-    if not download_registry_binary(
-        config["registry_binary_url"],
-        config["registry_binary_path"]
-    ):
-        _logger.error("Failed to setup registry binary")
+    # Check if registry binary exists (should be from Docker build)
+    if not os.path.exists(config["registry_binary_path"]):
+        _logger.error(f"Registry binary not found at {config['registry_binary_path']}")
+        _logger.error("Binary should be installed during Docker build")
         return False
+    
+    _logger.info(f"Registry binary found at {config['registry_binary_path']}")
     
     # Create registry config with actual storage path
     config_path = create_registry_config(config, storage_path)
