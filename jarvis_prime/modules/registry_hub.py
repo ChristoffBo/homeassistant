@@ -523,6 +523,15 @@ def start_registry_process(binary_path: str, config_path: str) -> Optional[subpr
     global _registry_process
     
     try:
+        # Kill any existing registry processes first
+        _logger.info("Checking for existing registry processes...")
+        try:
+            subprocess.run(["pkill", "-9", "registry"], check=False, capture_output=True)
+            time.sleep(1)  # Give it time to die
+            _logger.info("Killed any existing registry processes")
+        except Exception as e:
+            _logger.warning(f"Could not kill existing processes: {e}")
+        
         _logger.info(f"Starting registry process: {binary_path}")
         
         _registry_process = subprocess.Popen(
