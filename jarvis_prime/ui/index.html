@@ -53,7 +53,6 @@
         <li class="nav-tab" data-tab="sentinel">Sentinel</li>
         <li class="nav-tab" data-tab="analytics">Analytics</li>
         <li class="nav-tab" data-tab="atlas">Atlas</li>
-        <li class="nav-tab" data-tab="registry">Registry</li>
         <li class="nav-tab" data-tab="settings">Settings</li>
       </ul>
       
@@ -1085,173 +1084,7 @@
         </div>
       </div>
     </section>
-    <!-- REGISTRY HUB TAB -->
-    <section id="registry" class="tab-panel">
-      <div class="page-header">
-        <h2 class="page-title">📦 Registry Hub</h2>
-        <p class="page-subtitle">Docker registry cache with update detection</p>
-      </div>
-
-      <!-- Stats Cards (always visible) -->
-      <div class="metrics-grid" style="grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); margin-bottom: 24px;">
-        <div class="metric-card">
-          <div class="metric-header">
-            <div>
-              <div class="metric-value" id="registry-stat-cached-images">0</div>
-              <div class="metric-label">Cached Images</div>
-            </div>
-            <div class="metric-icon" style="background: rgba(14, 165, 233, 0.12); color: #0ea5e9;">
-              <svg class="icon icon-lg" fill="none" viewBox="0 0 24 24">
-                <path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" stroke="currentColor" stroke-width="2"/>
-              </svg>
-            </div>
-          </div>
-        </div>
-        
-        <div class="metric-card">
-          <div class="metric-header">
-            <div>
-              <div class="metric-value" id="registry-stat-storage-used">0 GB</div>
-              <div class="metric-label">Storage Used</div>
-            </div>
-            <div class="metric-icon" style="background: rgba(16, 185, 129, 0.12); color: #10b981;">
-              <svg class="icon icon-lg" fill="none" viewBox="0 0 24 24">
-                <path d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" stroke="currentColor" stroke-width="2"/>
-              </svg>
-            </div>
-          </div>
-        </div>
-        
-        <div class="metric-card">
-          <div class="metric-header">
-            <div>
-              <div class="metric-value" id="registry-stat-updates">0</div>
-              <div class="metric-label">Updates Available</div>
-            </div>
-            <div class="metric-icon" style="background: rgba(245, 158, 11, 0.12); color: #f59e0b;">
-              <svg class="icon icon-lg" fill="none" viewBox="0 0 24 24">
-                <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" stroke="currentColor" stroke-width="2"/>
-              </svg>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Sub-navigation (matching Sentinel pattern) -->
-      <div style="display: flex; gap: 8px; margin-bottom: 24px; border-bottom: 2px solid var(--surface-border); padding-bottom: 0;">
-        <button class="registry-subnav-btn" data-view="images" style="padding: 12px 24px; background: none; border: none; border-bottom: 3px solid transparent; color: var(--text-muted); cursor: pointer; font-weight: 500; transition: all 0.2s;">Images</button>
-        <button class="registry-subnav-btn" data-view="settings" style="padding: 12px 24px; background: none; border: none; border-bottom: 3px solid transparent; color: var(--text-muted); cursor: pointer; font-weight: 500; transition: all 0.2s;">Settings</button>
-        <button class="registry-subnav-btn" data-view="stats" style="padding: 12px 24px; background: none; border: none; border-bottom: 3px solid transparent; color: var(--text-muted); cursor: pointer; font-weight: 500; transition: all 0.2s;">Stats</button>
-        <div style="flex: 1;"></div>
-        <button id="registry-refresh-btn" class="btn">🔄 Refresh</button>
-        <button id="registry-pull-btn" class="btn primary">⬇️ Pull Image</button>
-        <button id="registry-check-updates-btn" class="btn">🔍 Check Updates</button>
-      </div>
-
-      <!-- Images View -->
-      <div id="registry-images-view" class="registry-view" style="display: block;">
-        <div style="margin-bottom: 16px;">
-          <input type="text" id="registry-search" placeholder="🔍 Search images..." style="width: 100%; padding: 10px 12px; background: var(--surface-secondary); border: 1px solid var(--surface-border); border-radius: 8px; color: var(--text-primary);">
-        </div>
-        <div id="registry-images-list" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 16px;">
-          <!-- Images will be rendered here -->
-        </div>
-      </div>
-
-      <!-- Settings View -->
-      <div id="registry-settings-view" class="registry-view" style="display: none;">
-        <div class="panel">
-          <div class="panel-head">
-            <h3>Registry Settings</h3>
-          </div>
-          <div style="padding: 24px; max-width: 600px;">
-            <div style="margin-bottom: 24px;">
-              <label style="display: flex; align-items: center; cursor: pointer;">
-                <input type="checkbox" id="registry-auto-pull" style="margin-right: 8px;">
-                <span>Auto-pull updates</span>
-              </label>
-              <p style="font-size: 14px; color: var(--text-muted); margin-top: 4px;">Automatically pull image updates when available</p>
-            </div>
-
-            <div style="margin-bottom: 24px;">
-              <label style="display: block; margin-bottom: 8px; font-weight: 500;">Update check interval (hours)</label>
-              <input type="number" id="registry-check-interval" value="12" min="1" max="168" style="width: 100%; padding: 10px 12px; background: var(--surface-secondary); border: 1px solid var(--surface-border); border-radius: 8px; color: var(--text-primary);">
-            </div>
-
-            <div style="margin-bottom: 24px;">
-              <label style="display: block; margin-bottom: 8px; font-weight: 500;">Keep versions</label>
-              <input type="number" id="registry-keep-versions" value="2" min="1" max="10" style="width: 100%; padding: 10px 12px; background: var(--surface-secondary); border: 1px solid var(--surface-border); border-radius: 8px; color: var(--text-primary);">
-              <p style="font-size: 14px; color: var(--text-muted); margin-top: 4px;">Number of image versions to keep cached</p>
-            </div>
-
-            <div style="margin-bottom: 24px;">
-              <label style="display: block; margin-bottom: 8px; font-weight: 500;">Max storage (GB)</label>
-              <input type="number" id="registry-max-storage" value="50" min="1" max="500" style="width: 100%; padding: 10px 12px; background: var(--surface-secondary); border: 1px solid var(--surface-border); border-radius: 8px; color: var(--text-primary);">
-            </div>
-
-            <div style="margin-bottom: 24px;">
-              <label style="display: block; margin-bottom: 8px; font-weight: 500;">Storage Backend</label>
-              <select id="registry-storage-type" style="width: 100%; padding: 10px 12px; background: var(--surface-secondary); border: 1px solid var(--surface-border); border-radius: 8px; color: var(--text-primary);">
-                <option value="local">Local Storage</option>
-                <option value="nfs">NFS Share</option>
-                <option value="smb">SMB/CIFS Share</option>
-              </select>
-            </div>
-
-            <!-- NFS Backend Fields -->
-            <div id="registry-nfs-fields" style="display: none; padding: 16px; background: var(--surface-secondary); border-radius: 8px; margin-bottom: 24px;">
-              <h4 style="margin-bottom: 16px;">NFS Configuration</h4>
-              <div style="margin-bottom: 16px;">
-                <label style="display: block; margin-bottom: 8px; font-weight: 500;">NFS Server</label>
-                <input type="text" id="registry-nfs-server" placeholder="192.168.1.100" style="width: 100%; padding: 10px 12px; background: var(--surface-primary); border: 1px solid var(--surface-border); border-radius: 8px; color: var(--text-primary);">
-                <p style="font-size: 14px; color: var(--text-muted); margin-top: 4px;">IP address or hostname of NFS server</p>
-              </div>
-              <div>
-                <label style="display: block; margin-bottom: 8px; font-weight: 500;">NFS Path</label>
-                <input type="text" id="registry-nfs-path" placeholder="/mnt/nfs/registry" style="width: 100%; padding: 10px 12px; background: var(--surface-primary); border: 1px solid var(--surface-border); border-radius: 8px; color: var(--text-primary);">
-                <p style="font-size: 14px; color: var(--text-muted); margin-top: 4px;">Path to NFS export</p>
-              </div>
-            </div>
-
-            <!-- SMB/CIFS Backend Fields -->
-            <div id="registry-smb-fields" style="display: none; padding: 16px; background: var(--surface-secondary); border-radius: 8px; margin-bottom: 24px;">
-              <h4 style="margin-bottom: 16px;">SMB/CIFS Configuration</h4>
-              <div style="margin-bottom: 16px;">
-                <label style="display: block; margin-bottom: 8px; font-weight: 500;">SMB Server</label>
-                <input type="text" id="registry-smb-server" placeholder="192.168.1.100" style="width: 100%; padding: 10px 12px; background: var(--surface-primary); border: 1px solid var(--surface-border); border-radius: 8px; color: var(--text-primary);">
-                <p style="font-size: 14px; color: var(--text-muted); margin-top: 4px;">IP address or hostname of SMB server</p>
-              </div>
-              <div style="margin-bottom: 16px;">
-                <label style="display: block; margin-bottom: 8px; font-weight: 500;">Share Name</label>
-                <input type="text" id="registry-smb-share" placeholder="registry" style="width: 100%; padding: 10px 12px; background: var(--surface-primary); border: 1px solid var(--surface-border); border-radius: 8px; color: var(--text-primary);">
-                <p style="font-size: 14px; color: var(--text-muted); margin-top: 4px;">Name of the SMB share</p>
-              </div>
-              <div style="margin-bottom: 16px;">
-                <label style="display: block; margin-bottom: 8px; font-weight: 500;">Username</label>
-                <input type="text" id="registry-smb-username" placeholder="username" style="width: 100%; padding: 10px 12px; background: var(--surface-primary); border: 1px solid var(--surface-border); border-radius: 8px; color: var(--text-primary);">
-              </div>
-              <div>
-                <label style="display: block; margin-bottom: 8px; font-weight: 500;">Password</label>
-                <input type="password" id="registry-smb-password" placeholder="••••••••" style="width: 100%; padding: 10px 12px; background: var(--surface-primary); border: 1px solid var(--surface-border); border-radius: 8px; color: var(--text-primary);">
-              </div>
-            </div>
-
-
-            <div style="display: flex; gap: 12px; margin-top: 32px;">
-              <button id="registry-save-settings" class="btn primary">💾 Save Settings</button>
-              <button id="registry-test-storage" class="btn">🧪 Test Storage</button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Stats View -->
-      <div id="registry-stats-view" class="registry-view" style="display: none;">
-        <!-- Stats will be rendered here by JavaScript -->
-      </div>
-    </section>
-
-    </section>
+    <!-- SETTINGS TAB - FIXED -->
     <section id="settings" class="tab-panel">
       <div class="panel-header">
         <div class="panel-title">
@@ -2788,7 +2621,6 @@
         <h2 id="analytics-service-modal-title">Add Service</h2>
         <button class="btn" onclick="analyticsCloseServiceModal()">✕</button>
       </div>
-  <script src="registry.js?v=1.0"></script>
       <form id="analytics-service-form" onsubmit="analyticsSaveService(event)">
         <input type="hidden" id="analytics-service-id">
         
@@ -2887,11 +2719,6 @@
 
 <div id="toast"></div>
 
-  </div>
-
-
-  </div>
-
 <!-- 🔐 Auth Overlay -->
 <div id="auth-overlay"></div>
 <script>
@@ -2919,115 +2746,5 @@
 <script src="analytics.js?v=1.0"></script>
 <script src="settings.js?v=1.0"></script>
 <script src="atlas.js?v=1.0"></script>
-
-  <!-- Registry Pull Image Modal -->
-  <div id="registry-pull-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.5); z-index: 1000; align-items: center; justify-content: center;">
-    <div style="background: var(--surface-primary); border-radius: 8px; max-width: 500px; width: 90%; max-height: 90vh; overflow: auto;">
-      <div style="display: flex; align-items: center; justify-content: space-between; padding: 24px; border-bottom: 1px solid var(--surface-border);">
-        <h3>Pull Docker Image</h3>
-        <button id="pull-modal-close" style="background: none; border: none; font-size: 24px; cursor: pointer; color: var(--text-muted);">✕</button>
-      </div>
-      <div style="padding: 24px;">
-        <div style="margin-bottom: 16px;">
-          <label style="display: block; margin-bottom: 8px; font-weight: 500;">Image Name</label>
-          <input type="text" id="pull-image-input" placeholder="nginx:latest" style="width: 100%; padding: 10px 12px; background: var(--surface-secondary); border: 1px solid var(--surface-border); border-radius: 8px; color: var(--text-primary);">
-          <p style="font-size: 14px; color: var(--text-muted); margin-top: 4px;">Examples: nginx:latest, postgres:15, ghcr.io/user/app:v1.0</p>
-        </div>
-      </div>
-      <div style="padding: 24px; border-top: 1px solid var(--surface-border); display: flex; justify-content: flex-end; gap: 12px;">
-        <button id="pull-modal-btn" class="btn primary">⬇️ Pull Image</button>
-      </div>
-    </div>
-  </div>
-
-  <style>
-    /* Registry Hub Sub-tab Styles */
-    .registry-subnav-btn:hover {
-      color: var(--text-primary) !important;
-      background: var(--surface-secondary);
-    }
-    
-    .registry-subnav-btn.active {
-      color: var(--primary) !important;
-      border-bottom-color: var(--primary) !important;
-    }
-    
-    .registry-view {
-      margin-top: 24px;
-    }
-    
-    /* Registry Image Cards */
-    .registry-image-card {
-      border: 1px solid var(--surface-border);
-      border-radius: 8px;
-      padding: 16px;
-      background: var(--surface-secondary);
-      transition: transform 0.2s, box-shadow 0.2s;
-    }
-    
-    .registry-image-card:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-    }
-    
-    .registry-image-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 12px;
-    }
-    
-    .registry-image-name {
-      font-weight: 600;
-      font-size: 18px;
-      color: var(--text-primary);
-    }
-    
-    .registry-image-tag {
-      background: var(--primary);
-      color: white;
-      padding: 4px 8px;
-      border-radius: 4px;
-      font-size: 14px;
-    }
-    
-    .registry-image-details {
-      margin: 12px 0;
-    }
-    
-    .registry-image-detail {
-      display: flex;
-      justify-content: space-between;
-      padding: 8px 0;
-      border-bottom: 1px solid var(--surface-border);
-    }
-    
-    .registry-image-detail .label {
-      color: var(--text-muted);
-      font-size: 14px;
-    }
-    
-    .registry-image-detail .value {
-      font-family: monospace;
-      font-size: 14px;
-    }
-    
-    .registry-update-badge {
-      background: rgba(245, 158, 11, 0.15);
-      color: #f59e0b;
-      padding: 4px 8px;
-      border-radius: 4px;
-      font-size: 14px;
-      margin-top: 8px;
-      display: inline-block;
-    }
-    
-    .registry-image-actions {
-      margin-top: 12px;
-      display: flex;
-      gap: 8px;
-    }
-  </style>
-
 </body>
 </html>

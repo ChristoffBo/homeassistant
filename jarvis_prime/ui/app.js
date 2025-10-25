@@ -228,13 +228,6 @@
           } else {
             console.warn('[atlas] atlasRender() not found');
           }
-        } else if (tabName === 'registry') {
-          // Registry Hub integration
-          if (typeof initRegistry === 'function') {
-            initRegistry();
-          } else {
-            console.warn('[registry] initRegistry() not found');
-          }
         } else if (tabName === 'settings') {
           // Open General settings tab
           const generalTab = $('.orch-tab[data-settings-tab="general"]');
