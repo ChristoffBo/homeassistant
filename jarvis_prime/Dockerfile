@@ -16,6 +16,8 @@ RUN apt-get update && apt-get install -y \
     build-essential cmake libopenblas-dev \
     ansible sshpass \
     iputils-ping \
+    # >>> Added for Registry Hub <<<
+    nfs-common cifs-utils \
  && rm -rf /var/lib/apt/lists/*
 
 # ----------------------------
@@ -37,6 +39,9 @@ RUN pip3 install --no-cache-dir --break-system-packages -r /app/requirements.txt
 
 # Apprise intake server deps
 RUN pip3 install --no-cache-dir --break-system-packages flask waitress
+
+# >>> Added for Registry Hub support <<<
+RUN pip3 install --no-cache-dir --break-system-packages requests
 
 # NumPy + modern llama-cpp-python (build from source, K-quants enabled)
 ENV CMAKE_ARGS="-DLLAMA_NATIVE=ON -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS"
@@ -74,7 +79,6 @@ COPY /modules/sentinel.py /app/sentinel.py
 COPY /modules/atlas.py /app/atlas.py
 COPY /modules/registry_hub.py /app/registry_hub.py
 
-
 # LLM + memory
 COPY /llm/llm_client.py /app/llm_client.py
 COPY /llm/llm_memory.py /app/llm_memory.py
@@ -97,6 +101,9 @@ COPY /modules/heartbeat.py  /app/heartbeat.py
 COPY /modules/orchestrator.py  /app/orchestrator.py
 COPY /modules/analytics.py  /app/analytics.py
 
+# >>> Added for Registry Hub support <<<
+COPY /registry_hub.py /app/registry_hub.py
+
 # Place intake blueprint at the path bot.py expects
 RUN mkdir -p /app/intakes
 COPY /intakes/apprise.py /app/intakes/apprise.py
@@ -110,6 +117,8 @@ RUN chmod +x /run.sh
 # Networking
 # ----------------------------
 EXPOSE 2525/tcp 2580/tcp 2581/tcp 2591/tcp
+# >>> Added ports for Registry Hub <<<
+EXPOSE 5001/tcp 8000/tcp
 
 # Healthcheck
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=5 \
