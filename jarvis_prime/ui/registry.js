@@ -145,7 +145,11 @@ function setupRegistryEventListeners() {
     // Pull modal - pull button
     const pullModalBtn = document.getElementById('pull-modal-btn');
     if (pullModalBtn) {
-        pullModalBtn.addEventListener('click', () => executePull());
+        pullModalBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            executePull(e);
+        });
     }
     
     // Pull modal - image input (Enter key)
@@ -154,7 +158,8 @@ function setupRegistryEventListeners() {
         pullImageInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
                 e.preventDefault();
-                executePull();
+                e.stopPropagation();
+                executePull(e);
             }
         });
     }
@@ -163,6 +168,14 @@ function setupRegistryEventListeners() {
     const saveSettingsBtn = document.getElementById('registry-save-settings');
     if (saveSettingsBtn) {
         saveSettingsBtn.addEventListener('click', () => saveSettings());
+    }
+    
+    // Storage type selector - show/hide backend fields
+    const storageTypeSelector = document.getElementById('registry-storage-type');
+    if (storageTypeSelector) {
+        storageTypeSelector.addEventListener('change', (e) => {
+            updateStorageFields(e.target.value);
+        });
     }
     
     // Storage test button
@@ -356,11 +369,29 @@ function renderSettings() {
     }
     
     // Storage backend type
+    const backend = settings.storage_backend || {};
     const storageTypeEl = document.getElementById('registry-storage-type');
     if (storageTypeEl) {
-        const backend = settings.storage_backend || {};
         storageTypeEl.value = backend.type || 'local';
         updateStorageFields(backend.type || 'local');
+    }
+    
+    // NFS backend fields
+    if (backend.type === 'nfs') {
+        const nfsServerEl = document.getElementById('registry-nfs-server');
+        const nfsPathEl = document.getElementById('registry-nfs-path');
+        if (nfsServerEl) nfsServerEl.value = backend.server || '';
+        if (nfsPathEl) nfsPathEl.value = backend.path || '';
+    }
+    
+    // SMB backend fields
+    if (backend.type === 'smb') {
+        const smbServerEl = document.getElementById('registry-smb-server');
+        const smbShareEl = document.getElementById('registry-smb-share');
+        const smbUsernameEl = document.getElementById('registry-smb-username');
+        if (smbServerEl) smbServerEl.value = backend.server || '';
+        if (smbShareEl) smbShareEl.value = backend.share || '';
+        if (smbUsernameEl) smbUsernameEl.value = backend.username || '';
     }
 }
 
@@ -376,14 +407,13 @@ function renderSettingsError(message) {
 
 function updateStorageFields(type) {
     // Show/hide storage backend fields based on type
-    document.querySelectorAll('.storage-backend-field').forEach(el => {
-        el.style.display = 'none';
-    });
+    const nfsFields = document.getElementById('registry-nfs-fields');
+    const smbFields = document.getElementById('registry-smb-fields');
     
-    const typeFields = document.querySelectorAll(`.storage-backend-field[data-backend="${type}"]`);
-    typeFields.forEach(el => {
-        el.style.display = 'block';
-    });
+    if (nfsFields) nfsFields.style.display = type === 'nfs' ? 'block' : 'none';
+    if (smbFields) smbFields.style.display = type === 'smb' ? 'block' : 'none';
+    
+    console.log('[Registry] Storage type changed to:', type);
 }
 
 // ============================================================================
@@ -462,19 +492,34 @@ function closePullModal() {
     }
 }
 
-async function executePull() {
+async function executePull(event) {
+    // Prevent form submission and page refresh
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+    
     const input = document.getElementById('pull-image-input');
     const imageName = input?.value.trim();
     
     if (!imageName) {
-        showToast('Please enter an image name', 'error');
-        return;
+        if (typeof showToast === 'function') {
+            showToast('Please enter an image name', 'error');
+        } else {
+            alert('Please enter an image name');
+        }
+        return false;
     }
     
     const btn = document.getElementById('pull-modal-btn');
-    if (btn) btn.classList.add('loading');
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '⏳ Pulling...';
+    }
     
     try {
+        console.log('[Registry] Pulling image:', imageName);
+        
         const response = await fetch(window.API('api/registry/pull'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -482,13 +527,18 @@ async function executePull() {
         });
         
         if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
+            const errorText = await response.text();
+            throw new Error(`HTTP ${response.status}: ${errorText}`);
         }
         
         const data = await response.json();
         
         if (data.success) {
-            showToast(`Successfully pulled ${imageName}`, 'success');
+            if (typeof showToast === 'function') {
+                showToast(`Successfully pulled ${imageName}`, 'success');
+            } else {
+                alert(`Successfully pulled ${imageName}`);
+            }
             closePullModal();
             loadRegistryImages();
             loadRegistryStats();
@@ -497,10 +547,19 @@ async function executePull() {
         }
     } catch (error) {
         console.error('[Registry] Pull error:', error);
-        showToast(`Failed to pull image: ${error.message}`, 'error');
+        if (typeof showToast === 'function') {
+            showToast(`Failed to pull image: ${error.message}`, 'error');
+        } else {
+            alert(`Failed to pull image: ${error.message}`);
+        }
     } finally {
-        if (btn) btn.classList.remove('loading');
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = '⬇️ Pull Image';
+        }
     }
+    
+    return false;
 }
 
 // ============================================================================
@@ -561,18 +620,37 @@ async function checkForUpdates() {
 // ============================================================================
 
 async function saveSettings() {
+    const storageType = document.getElementById('registry-storage-type')?.value || 'local';
+    
     const settings = {
         auto_pull: document.getElementById('registry-auto-pull')?.checked || false,
         check_interval_hours: parseInt(document.getElementById('registry-check-interval')?.value || '12'),
         keep_versions: parseInt(document.getElementById('registry-keep-versions')?.value || '2'),
         max_storage_gb: parseInt(document.getElementById('registry-max-storage')?.value || '50'),
         storage_backend: {
-            type: document.getElementById('registry-storage-type')?.value || 'local'
+            type: storageType
         }
     };
     
+    // Add NFS-specific fields
+    if (storageType === 'nfs') {
+        settings.storage_backend.server = document.getElementById('registry-nfs-server')?.value || '';
+        settings.storage_backend.path = document.getElementById('registry-nfs-path')?.value || '';
+    }
+    
+    // Add SMB-specific fields
+    if (storageType === 'smb') {
+        settings.storage_backend.server = document.getElementById('registry-smb-server')?.value || '';
+        settings.storage_backend.share = document.getElementById('registry-smb-share')?.value || '';
+        settings.storage_backend.username = document.getElementById('registry-smb-username')?.value || '';
+        settings.storage_backend.password = document.getElementById('registry-smb-password')?.value || '';
+    }
+    
     const btn = document.getElementById('registry-save-settings');
-    if (btn) btn.classList.add('loading');
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '💾 Saving...';
+    }
     
     try {
         const response = await fetch(window.API('api/registry/settings'), {
@@ -585,13 +663,24 @@ async function saveSettings() {
             throw new Error(`HTTP ${response.status}`);
         }
         
-        showToast('Settings saved', 'success');
+        if (typeof showToast === 'function') {
+            showToast('Settings saved', 'success');
+        } else {
+            alert('Settings saved');
+        }
         loadRegistrySettings();
     } catch (error) {
         console.error('[Registry] Save settings error:', error);
-        showToast(`Failed to save settings: ${error.message}`, 'error');
+        if (typeof showToast === 'function') {
+            showToast(`Failed to save settings: ${error.message}`, 'error');
+        } else {
+            alert(`Failed to save settings: ${error.message}`);
+        }
     } finally {
-        if (btn) btn.classList.remove('loading');
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = '💾 Save Settings';
+        }
     }
 }
 
