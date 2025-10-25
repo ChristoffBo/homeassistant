@@ -101,8 +101,6 @@ COPY /modules/heartbeat.py  /app/heartbeat.py
 COPY /modules/orchestrator.py  /app/orchestrator.py
 COPY /modules/analytics.py  /app/analytics.py
 
-# >>> Added for Registry Hub support <<<
-COPY /registry_hub.py /app/registry_hub.py
 
 # Place intake blueprint at the path bot.py expects
 RUN mkdir -p /app/intakes
