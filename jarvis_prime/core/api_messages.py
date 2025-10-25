@@ -109,23 +109,6 @@ else:
     atlas_module = None
     print("[atlas] Not found or failed to load")
 
-# ---- registry hub ----
-_REGISTRY_FILE = _THIS_DIR / "registry_hub.py"
-registry_spec = importlib.util.spec_from_file_location("jarvis_registry", str(_REGISTRY_FILE))
-registry_module = importlib.util.module_from_spec(registry_spec)  # type: ignore
-if registry_spec and registry_spec.loader and _REGISTRY_FILE.exists():
-    registry_spec.loader.exec_module(registry_module)  # type: ignore
-    
-    def notify_via_registry(title, body, source="registry", priority=5):
-        """Send registry notifications through inbox"""
-        storage.save_message(title, body, source, priority, {})  # type: ignore
-        _broadcast("created")
-    
-    print("[registry] Module loaded")
-else:
-    registry_module = None
-    print("[registry] Not found or failed to load")
-
 # ---- choose ONE UI root ----
 CANDIDATES = [
     Path("/share/jarvis_prime/ui"),
@@ -486,17 +469,6 @@ def _make_app() -> web.Application:
             sentinel_instance.start_all_monitoring()
             asyncio.create_task(sentinel_instance.auto_purge())
             print("[sentinel] Monitoring started")
-        if registry_module:
-            # Initialize registry (routes will be registered separately before startup)
-            success = await asyncio.to_thread(
-                registry_module.init_registry,
-                notify_callback=notify_via_registry,
-                db_path=os.getenv("JARVIS_DB_PATH", "/data/jarvis.db")
-            )
-            if success:
-                print("[registry] Initialized successfully")
-            else:
-                print("[registry] Failed to initialize")
 
     app.on_startup.append(start_background_tasks)
     
@@ -544,11 +516,6 @@ def _make_app() -> web.Application:
     if sentinel_instance:
         sentinel_instance.setup_routes(app)
         print("[sentinel] Routes registered")
-
-    # Register registry routes if available (BEFORE startup)
-    if registry_module and hasattr(registry_module, 'register_routes'):
-        registry_module.register_routes(app)
-        print("[registry] Routes registered")
 
     # Register backup routes if available
     try:
