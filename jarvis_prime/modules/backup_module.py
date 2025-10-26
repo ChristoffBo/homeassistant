@@ -1004,15 +1004,50 @@ def restore_worker(restore_id: str, restore_config: Dict, status_queue: Queue):
         
         # Perform restore
         backup_path = archive.get('destination_path')
+        selective_items = restore_config.get('selective_items', [])
         
         # Download from backup storage to temp
         temp_dir = tempfile.mkdtemp(prefix='jarvis_restore_')
         
-        if isinstance(source_conn, SSHConnection):
-            download_via_sftp(source_conn, backup_path, temp_dir)
+        if selective_items:
+            # Selective restore - only download specified items
+            status_queue.put({
+                'restore_id': restore_id,
+                'status': 'running',
+                'progress': 60,
+                'message': f'Restoring {len(selective_items)} selected items...'
+            })
+            
+            for item_path in selective_items:
+                item_relative = item_path.replace(backup_path, '').lstrip('/')
+                source_item = os.path.join(backup_path, item_relative)
+                dest_item = os.path.join(temp_dir, item_relative)
+                
+                if isinstance(source_conn, SSHConnection):
+                    # Download specific item via SFTP
+                    os.makedirs(os.path.dirname(dest_item), exist_ok=True)
+                    download_via_sftp(source_conn, source_item, dest_item)
+                else:
+                    source_full = os.path.join(source_conn.mount_point, source_item.lstrip('/'))
+                    if os.path.isdir(source_full):
+                        shutil.copytree(source_full, dest_item, dirs_exist_ok=True)
+                    else:
+                        os.makedirs(os.path.dirname(dest_item), exist_ok=True)
+                        shutil.copy2(source_full, dest_item)
         else:
-            source_full = os.path.join(source_conn.mount_point, backup_path.lstrip('/'))
-            shutil.copytree(source_full, temp_dir, dirs_exist_ok=True)
+            # Full restore - download entire backup
+            status_queue.put({
+                'restore_id': restore_id,
+                'status': 'running',
+                'progress': 60,
+                'message': 'Restoring full backup...'
+            })
+            
+            if isinstance(source_conn, SSHConnection):
+                download_via_sftp(source_conn, backup_path, temp_dir)
+            else:
+                source_full = os.path.join(source_conn.mount_point, backup_path.lstrip('/'))
+                shutil.copytree(source_full, temp_dir, dirs_exist_ok=True)
         
         status_queue.put({
             'restore_id': restore_id,
@@ -1274,7 +1309,7 @@ class BackupManager:
             return True
         return False
     
-    def start_restore(self, archive_id: str, dest_server_id: str, dest_path: str, overwrite: bool) -> str:
+    def start_restore(self, archive_id: str, dest_server_id: str, dest_path: str, overwrite: bool, selective_items: list = None) -> str:
         """Start a restore operation in separate process"""
         # Find archive
         archives = self.get_all_archives()
@@ -1290,6 +1325,7 @@ class BackupManager:
             'dest_server_id': dest_server_id,
             'dest_path': dest_path,
             'overwrite': overwrite,
+            'selective_items': selective_items or [],
             '_data_dir': str(self.data_dir)
         }
         
@@ -1589,13 +1625,14 @@ async def restore_backup(request):
         dest_server_id = data.get('destination_server_id')
         dest_path = data.get('destination_path')
         overwrite = data.get('overwrite', False)
+        selective_items = data.get('selective_items', [])
         
         if not all([archive_id, dest_server_id, dest_path]):
             return web.json_response({
                 'error': 'Missing required fields: archive_id, destination_server_id, destination_path'
             }, status=400)
         
-        restore_id = backup_manager.start_restore(archive_id, dest_server_id, dest_path, overwrite)
+        restore_id = backup_manager.start_restore(archive_id, dest_server_id, dest_path, overwrite, selective_items)
         
         return web.json_response({
             'success': True,
