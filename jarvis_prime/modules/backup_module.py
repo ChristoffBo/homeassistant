@@ -1302,18 +1302,21 @@ class BackupManager:
                 return json.load(f)
         return []
     
-    def delete_archive(self, archive_id: str) -> bool:
-        """Delete a backup archive"""
-        archives = self.get_all_archives()
-        filtered = [a for a in archives if a.get('id') != archive_id]
-        
-        if len(filtered) < len(archives):
-            archives_file = self.data_dir / 'backup_archives.json'
-            with open(archives_file, 'w') as f:
-                json.dump(filtered, f, indent=2)
-            logger.info(f"Deleted archive {archive_id}")
-            return True
-        return False
+    def get_all_archives(self) -> List[Dict]:
+    """Get all backup archives (UI-compatible)"""
+    archives_file = self.data_dir / 'backup_archives.json'
+    if archives_file.exists():
+        try:
+            with open(archives_file, 'r') as f:
+                data = json.load(f)
+                if isinstance(data, dict) and "archives" in data:
+                    return data["archives"]
+                elif isinstance(data, list):
+                    return data
+        except json.JSONDecodeError:
+            logger.warning("Invalid JSON in backup_archives.json, returning empty list")
+    return []
+
     
     def start_restore(self, archive_id: str, dest_server_id: str, dest_path: str, overwrite: bool, selective_items: list = None) -> str:
         """Start a restore operation in separate process"""
