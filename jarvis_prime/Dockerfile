@@ -14,8 +14,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update && apt-get install -y \
     python3 python3-pip curl jq ca-certificates tzdata pkg-config \
     build-essential cmake libopenblas-dev \
-    ansible sshpass \
-    iputils-ping \
+    ansible sshpass iputils-ping \
  && rm -rf /var/lib/apt/lists/*
 
 # ==========================================
@@ -80,7 +79,6 @@ COPY /modules/enviroguard.py /app/enviroguard.py
 COPY /modules/sentinel.py /app/sentinel.py
 COPY /modules/atlas.py /app/atlas.py
 COPY /modules/backup_module.py /app/backup_module.py
-
 
 # LLM + memory
 COPY /llm/llm_client.py /app/llm_client.py
