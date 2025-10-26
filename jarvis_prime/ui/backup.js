@@ -418,7 +418,8 @@
       stop_containers: document.getElementById('backup-job-stop-containers').checked,
       containers: document.getElementById('backup-job-containers').value.split(',').map(c => c.trim()).filter(c => c),
       schedule: document.getElementById('backup-job-schedule').value,
-      retention_days: parseInt(document.getElementById('backup-job-retention').value),
+      retention_days: parseInt(document.getElementById('backup-job-retention-days').value) || 0,
+      retention_count: parseInt(document.getElementById('backup-job-retention-count').value) || 0,
       enabled: true
     };
     
@@ -941,7 +942,8 @@
     document.getElementById('backup-edit-job-stop-containers').checked = job.stop_containers || false;
     document.getElementById('backup-edit-job-containers').value = Array.isArray(job.containers) ? job.containers.join(', ') : '';
     document.getElementById('backup-edit-job-schedule').value = job.schedule || '0 2 * * *';
-    document.getElementById('backup-edit-job-retention').value = job.retention_days || 30;
+    document.getElementById('backup-edit-job-retention-days').value = job.retention_days || 0;
+    document.getElementById('backup-edit-job-retention-count').value = job.retention_count || 0;
     document.getElementById('backup-edit-job-enabled').checked = job.enabled !== false;
     
     // Show/hide container field
@@ -975,7 +977,8 @@
       stop_containers: document.getElementById('backup-edit-job-stop-containers').checked,
       containers: document.getElementById('backup-edit-job-containers').value.split(',').map(c => c.trim()).filter(c => c),
       schedule: document.getElementById('backup-edit-job-schedule').value,
-      retention_days: parseInt(document.getElementById('backup-edit-job-retention').value),
+      retention_days: parseInt(document.getElementById('backup-edit-job-retention-days').value) || 0,
+      retention_count: parseInt(document.getElementById('backup-edit-job-retention-count').value) || 0,
       enabled: document.getElementById('backup-edit-job-enabled').checked
     };
     
