@@ -3484,7 +3484,12 @@
         <label class="form-label">Restore Location</label>
         <div class="checkbox-group">
           <input type="radio" id="restore-to-original" name="restore-location" checked onchange="backupToggleRestoreLocation()">
-          <label for="restore-to-original">Restore to original location</label>
+          <label for="restore-to-original">
+            Restore to original location
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;" id="restore-original-location-text">
+              Loading...
+            </div>
+          </label>
         </div>
         <div class="checkbox-group">
           <input type="radio" id="restore-to-custom" name="restore-location" onchange="backupToggleRestoreLocation()">
@@ -3502,7 +3507,34 @@
 
         <div class="form-group">
           <label class="form-label">Destination Path *</label>
-          <input type="text" id="restore-dest-path" placeholder="/restore/location">
+          <div style="display: flex; gap: 8px;">
+            <input type="text" id="restore-dest-path" placeholder="/restore/location" style="flex: 1;">
+            <button type="button" class="btn" onclick="backupBrowseRestoreDestination()">Browse</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">What to Restore</label>
+        <div class="checkbox-group">
+          <input type="radio" id="restore-full" name="restore-scope" checked onchange="backupToggleRestoreScope()">
+          <label for="restore-full">Restore entire backup</label>
+        </div>
+        <div class="checkbox-group">
+          <input type="radio" id="restore-selective" name="restore-scope" onchange="backupToggleRestoreScope()">
+          <label for="restore-selective">Select specific files/folders</label>
+        </div>
+      </div>
+
+      <div id="restore-selective-group" style="display: none;">
+        <div class="form-group">
+          <label class="form-label">Select Items to Restore</label>
+          <button type="button" class="btn" onclick="backupBrowseBackupContents()" style="width: 100%;">
+            Browse Backup Contents
+          </button>
+          <div id="restore-selected-items" style="margin-top: 8px; padding: 8px; background: var(--surface-secondary); border-radius: 4px; min-height: 40px; font-size: 13px; color: var(--text-muted);">
+            No items selected
+          </div>
         </div>
       </div>
 
