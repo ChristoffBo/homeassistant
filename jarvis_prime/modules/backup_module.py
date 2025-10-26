@@ -1289,12 +1289,25 @@ class BackupManager:
         return False
     
     def get_all_archives(self) -> List[Dict]:
-        """Get all backup archives"""
-        archives_file = self.data_dir / 'backup_archives.json'
-        if archives_file.exists():
-            with open(archives_file, 'r') as f:
-                return json.load(f)
+    """Get all backup archives (UI-safe and backward-compatible)"""
+    archives_file = self.data_dir / 'backup_archives.json'
+    if not archives_file.exists():
         return []
+
+    try:
+        with open(archives_file, 'r') as f:
+            data = json.load(f)
+            # support both list and dict formats
+            if isinstance(data, dict) and "archives" in data:
+                return data["archives"]
+            elif isinstance(data, list):
+                return data
+    except Exception as e:
+        logger.error(f"Failed to read archives file: {e}")
+        return []
+
+    return []
+
     
     def delete_archive(self, archive_id: str) -> bool:
         """Delete a backup archive"""
