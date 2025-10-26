@@ -1,36 +1,35 @@
 /**
- * Jarvis Prime Backup Module - Frontend
- * Manages backup operations, server configuration, and restore functionality
+ * Jarvis Prime Backup Module - WITH FILE EXPLORER
+ * Click and select folders from source/destination servers
  */
 
 (function() {
   'use strict';
 
-  // Use global API helper from app.js
   const API = window.API || ((path) => path);
   const toast = window.showToast || ((msg, type) => console.log(`[${type}] ${msg}`));
 
-  // State management
+  // State
   const backupState = {
     sourceServers: [],
     destinationServers: [],
     jobs: [],
     archives: [],
     currentServerType: 'source',
-    currentRestoreBackup: null,
-    currentJobId: null
+    selectedPaths: [],
+    selectedDestination: '',
+    currentBrowseServer: null,
+    currentBrowsePath: '/',
+    explorerSide: 'source' // 'source' or 'destination'
   };
 
-  /* =============== UTILITY FUNCTIONS =============== */
+  /* =============== UTILITY =============== */
   
   async function backupFetch(url, options = {}) {
     try {
       const response = await fetch(API(url), {
         ...options,
-        headers: {
-          'Content-Type': 'application/json',
-          ...options.headers
-        }
+        headers: { 'Content-Type': 'application/json', ...options.headers }
       });
       
       if (!response.ok) {
@@ -38,8 +37,9 @@
         throw new Error(`${response.status}: ${text}`);
       }
       
-      const contentType = response.headers.get('content-type') || '';
-      return contentType.includes('application/json') ? response.json() : response.text();
+      return response.headers.get('content-type')?.includes('application/json') 
+        ? response.json() 
+        : response.text();
     } catch (error) {
       console.error('[backup] API Error:', error);
       throw error;
@@ -57,14 +57,13 @@
   function formatDate(timestamp) {
     if (!timestamp) return 'N/A';
     try {
-      const date = new Date(timestamp * 1000);
-      return date.toLocaleString();
+      return new Date(timestamp * 1000).toLocaleString();
     } catch {
       return 'Invalid date';
     }
   }
 
-  /* =============== SERVER MODAL =============== */
+  /* =============== SERVER MODALS =============== */
 
   window.backupOpenServerModal = function(type) {
     backupState.currentServerType = type;
@@ -135,11 +134,7 @@
     const serverType = document.getElementById('backup-server-type').value;
     const name = document.getElementById('backup-server-name').value;
     
-    const server = {
-      name,
-      type,
-      server_type: serverType
-    };
+    const server = { name, type, server_type: serverType };
     
     try {
       if (type === 'ssh') {
@@ -157,7 +152,7 @@
         server.export_path = document.getElementById('backup-nfs-export').value;
       }
 
-      const result = await backupFetch('api/backup/servers', {
+      await backupFetch('api/backup/servers', {
         method: 'POST',
         body: JSON.stringify(server)
       });
@@ -168,6 +163,168 @@
     } catch (error) {
       toast('❌ Failed to save server: ' + error.message, 'error');
     }
+  };
+
+  /* =============== FILE EXPLORER MODAL =============== */
+
+  window.backupOpenFileExplorer = function(side) {
+    backupState.explorerSide = side;
+    const servers = side === 'source' ? backupState.sourceServers : backupState.destinationServers;
+    
+    if (servers.length === 0) {
+      toast(`❌ No ${side} servers configured`, 'error');
+      return;
+    }
+    
+    // Populate server dropdown
+    const select = document.getElementById('backup-explorer-server');
+    select.innerHTML = '<option value="">Select server...</option>';
+    servers.forEach(server => {
+      const option = document.createElement('option');
+      option.value = server.id;
+      option.textContent = `${server.name} (${server.host})`;
+      select.appendChild(option);
+    });
+    
+    document.getElementById('backup-explorer-modal-title').textContent = 
+      side === 'source' ? 'Select Source Folders' : 'Select Destination Folder';
+    document.getElementById('backup-explorer-modal').style.display = 'flex';
+    document.getElementById('backup-explorer-list').innerHTML = '<div class="text-muted">Select a server to browse</div>';
+  };
+
+  window.backupCloseFileExplorer = function() {
+    document.getElementById('backup-explorer-modal').style.display = 'none';
+  };
+
+  window.backupExplorerServerChanged = async function() {
+    const serverId = document.getElementById('backup-explorer-server').value;
+    if (!serverId) return;
+    
+    const allServers = [...backupState.sourceServers, ...backupState.destinationServers];
+    backupState.currentBrowseServer = allServers.find(s => s.id === serverId);
+    backupState.currentBrowsePath = '/';
+    
+    await backupBrowseDirectory('/');
+  };
+
+  async function backupBrowseDirectory(path) {
+    if (!backupState.currentBrowseServer) return;
+    
+    try {
+      document.getElementById('backup-explorer-list').innerHTML = '<div class="text-muted">Loading...</div>';
+      
+      const result = await backupFetch('api/backup/browse', {
+        method: 'POST',
+        body: JSON.stringify({
+          server_id: backupState.currentBrowseServer.id,
+          server_config: backupState.currentBrowseServer,
+          path: path
+        })
+      });
+      
+      if (!result.success) {
+        throw new Error(result.error || 'Browse failed');
+      }
+      
+      backupState.currentBrowsePath = path;
+      document.getElementById('backup-current-path').textContent = path;
+      
+      renderFileExplorer(result.files || []);
+    } catch (error) {
+      toast('❌ Failed to browse: ' + error.message, 'error');
+      document.getElementById('backup-explorer-list').innerHTML = '<div class="text-muted">Failed to load directory</div>';
+    }
+  }
+
+  function renderFileExplorer(files) {
+    const container = document.getElementById('backup-explorer-list');
+    
+    if (files.length === 0) {
+      container.innerHTML = '<div class="text-muted">Empty directory</div>';
+      return;
+    }
+    
+    // Sort: directories first, then files
+    files.sort((a, b) => {
+      if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    
+    let html = '<table style="width: 100%; border-collapse: collapse;">';
+    html += '<thead><tr style="border-bottom: 1px solid var(--border-color);"><th style="text-align: left; padding: 8px;">Name</th><th style="text-align: right; padding: 8px;">Size</th><th style="text-align: right; padding: 8px;">Modified</th><th style="width: 80px;"></th></tr></thead><tbody>';
+    
+    // Parent directory
+    if (backupState.currentBrowsePath !== '/') {
+      const parent = backupState.currentBrowsePath.split('/').slice(0, -1).join('/') || '/';
+      html += `
+        <tr style="cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.05);" onclick="backupBrowseDirectory('${parent}')">
+          <td style="padding: 12px;">📁 ..</td>
+          <td></td>
+          <td></td>
+          <td></td>
+        </tr>
+      `;
+    }
+    
+    files.forEach(file => {
+      const fullPath = backupState.currentBrowsePath === '/' 
+        ? `/${file.name}` 
+        : `${backupState.currentBrowsePath}/${file.name}`;
+      
+      const icon = file.is_dir ? '📁' : '📄';
+      const size = file.is_dir ? '' : formatBytes(file.size);
+      const modified = file.mtime ? new Date(file.mtime * 1000).toLocaleString() : '';
+      const isSelected = backupState.selectedPaths.includes(fullPath);
+      
+      html += `
+        <tr style="border-bottom: 1px solid rgba(255,255,255,0.05); ${isSelected ? 'background: rgba(14, 165, 233, 0.1);' : ''}">
+          <td style="padding: 12px; cursor: pointer;" onclick="${file.is_dir ? `backupBrowseDirectory('${fullPath}')` : ''}">
+            ${icon} ${file.name}
+          </td>
+          <td style="padding: 12px; text-align: right; color: var(--text-muted);">${size}</td>
+          <td style="padding: 12px; text-align: right; color: var(--text-muted);">${modified}</td>
+          <td style="padding: 12px; text-align: center;">
+            ${file.is_dir ? `
+              <button class="btn btn-sm" onclick="event.stopPropagation(); backupToggleSelection('${fullPath}')" style="padding: 4px 8px;">
+                ${isSelected ? '✓ Selected' : 'Select'}
+              </button>
+            ` : ''}
+          </td>
+        </tr>
+      `;
+    });
+    
+    html += '</tbody></table>';
+    container.innerHTML = html;
+  }
+
+  window.backupToggleSelection = function(path) {
+    const index = backupState.selectedPaths.indexOf(path);
+    if (index > -1) {
+      backupState.selectedPaths.splice(index, 1);
+    } else {
+      if (backupState.explorerSide === 'destination') {
+        // Only one destination folder
+        backupState.selectedPaths = [path];
+      } else {
+        backupState.selectedPaths.push(path);
+      }
+    }
+    backupBrowseDirectory(backupState.currentBrowsePath);
+  };
+
+  window.backupConfirmSelection = function() {
+    if (backupState.explorerSide === 'source') {
+      const textarea = document.getElementById('backup-job-paths');
+      textarea.value = backupState.selectedPaths.join('\n');
+      toast(`✅ Selected ${backupState.selectedPaths.length} folders`, 'success');
+    } else {
+      const input = document.getElementById('backup-job-dest-path');
+      input.value = backupState.selectedPaths[0] || '/backups';
+      toast(`✅ Selected destination: ${backupState.selectedPaths[0]}`, 'success');
+    }
+    backupState.selectedPaths = [];
+    backupCloseFileExplorer();
   };
 
   /* =============== JOB MODAL =============== */
@@ -185,36 +342,22 @@
   function backupPopulateServerDropdowns() {
     const sourceSelect = document.getElementById('backup-job-source');
     const destSelect = document.getElementById('backup-job-destination');
-    const restoreSelect = document.getElementById('backup-restore-destination');
     
-    // Clear existing options (except first)
     sourceSelect.innerHTML = '<option value="">Select source server...</option>';
     destSelect.innerHTML = '<option value="">Select destination server...</option>';
-    if (restoreSelect) {
-      restoreSelect.innerHTML = '<option value="">Select destination server...</option>';
-    }
     
-    // Populate source servers
     backupState.sourceServers.forEach(server => {
-      const option = document.createElement('option');
+      const option = document.getElementById('option');
       option.value = server.id;
       option.textContent = `${server.name} (${server.host})`;
       sourceSelect.appendChild(option);
     });
     
-    // Populate destination servers
     backupState.destinationServers.forEach(server => {
       const option = document.createElement('option');
       option.value = server.id;
       option.textContent = `${server.name} (${server.host})`;
       destSelect.appendChild(option);
-      
-      if (restoreSelect) {
-        const restoreOption = document.createElement('option');
-        restoreOption.value = server.id;
-        restoreOption.textContent = `${server.name} (${server.host})`;
-        restoreSelect.appendChild(restoreOption);
-      }
     });
   }
 
@@ -232,7 +375,8 @@
       stop_containers: document.getElementById('backup-job-stop-containers').checked,
       containers: document.getElementById('backup-job-containers').value.split(',').map(c => c.trim()).filter(c => c),
       schedule: document.getElementById('backup-job-schedule').value,
-      retention_days: parseInt(document.getElementById('backup-job-retention').value)
+      retention_days: parseInt(document.getElementById('backup-job-retention').value),
+      enabled: true
     };
     
     try {
@@ -249,116 +393,6 @@
     }
   };
 
-  /* =============== RESTORE MODAL =============== */
-
-  window.backupOpenRestoreModal = function(backup) {
-    backupState.currentRestoreBackup = backup;
-    document.getElementById('backup-restore-name').textContent = backup.name || backup.id;
-    document.getElementById('backup-restore-modal').style.display = 'flex';
-    backupPopulateServerDropdowns();
-  };
-
-  window.backupCloseRestoreModal = function() {
-    document.getElementById('backup-restore-modal').style.display = 'none';
-    backupState.currentRestoreBackup = null;
-  };
-
-  window.backupConfirmRestore = async function() {
-    if (!confirm('Are you sure you want to restore this backup? This will overwrite existing files.')) {
-      return;
-    }
-    
-    const backup = backupState.currentRestoreBackup;
-    if (!backup) {
-      toast('❌ No backup selected', 'error');
-      return;
-    }
-    
-    const restore = {
-      backup_id: backup.id,
-      destination_server_id: document.getElementById('backup-restore-destination').value,
-      restore_path: document.getElementById('backup-restore-path').value,
-      overwrite: document.getElementById('backup-restore-overwrite').checked
-    };
-    
-    try {
-      await backupFetch('api/backup/restore', {
-        method: 'POST',
-        body: JSON.stringify(restore)
-      });
-      
-      toast('✅ Restore initiated successfully', 'info');
-      backupCloseRestoreModal();
-    } catch (error) {
-      toast('❌ Restore failed: ' + error.message, 'error');
-    }
-  };
-
-  /* =============== JOB DETAILS MODAL =============== */
-
-  window.backupOpenJobDetailsModal = async function(jobId) {
-    backupState.currentJobId = jobId;
-    document.getElementById('backup-job-details-modal').style.display = 'flex';
-    
-    try {
-      const job = await backupFetch(`api/backup/jobs/${jobId}`);
-      renderJobDetails(job);
-    } catch (error) {
-      toast('❌ Failed to load job details: ' + error.message, 'error');
-    }
-  };
-
-  window.backupCloseJobDetailsModal = function() {
-    document.getElementById('backup-job-details-modal').style.display = 'none';
-    backupState.currentJobId = null;
-  };
-
-  window.backupRunJobFromDetails = async function() {
-    if (!backupState.currentJobId) return;
-    
-    try {
-      await backupFetch(`api/backup/jobs/${backupState.currentJobId}/run`, {
-        method: 'POST'
-      });
-      
-      toast('✅ Backup job started', 'info');
-      backupCloseJobDetailsModal();
-      await backupLoadJobs();
-    } catch (error) {
-      toast('❌ Failed to run job: ' + error.message, 'error');
-    }
-  };
-
-  function renderJobDetails(job) {
-    const content = document.getElementById('backup-job-details-content');
-    content.innerHTML = `
-      <div class="form-group">
-        <label class="form-label">Job Name</label>
-        <div style="padding: 12px; background: var(--surface-secondary); border-radius: 6px;">${job.name}</div>
-      </div>
-      
-      <div class="form-group">
-        <label class="form-label">Source Server</label>
-        <div style="padding: 12px; background: var(--surface-secondary); border-radius: 6px;">${job.source_server}</div>
-      </div>
-      
-      <div class="form-group">
-        <label class="form-label">Paths</label>
-        <div style="padding: 12px; background: var(--surface-secondary); border-radius: 6px;">${job.paths.join('<br>')}</div>
-      </div>
-      
-      <div class="form-group">
-        <label class="form-label">Schedule</label>
-        <div style="padding: 12px; background: var(--surface-secondary); border-radius: 6px;">${job.schedule}</div>
-      </div>
-      
-      <div class="form-group">
-        <label class="form-label">Status</label>
-        <div style="padding: 12px; background: var(--surface-secondary); border-radius: 6px;">${job.enabled ? '✅ Enabled' : '❌ Disabled'}</div>
-      </div>
-    `;
-  }
-
   /* =============== DATA LOADING =============== */
 
   async function backupLoadServers() {
@@ -367,11 +401,10 @@
       backupState.sourceServers = data.source_servers || [];
       backupState.destinationServers = data.destination_servers || [];
       
-      renderServerLists();
-      updateStatistics();
+      renderServersList('source');
+      renderServersList('destination');
     } catch (error) {
       console.error('[backup] Failed to load servers:', error);
-      toast('Failed to load servers', 'error');
     }
   }
 
@@ -381,10 +414,10 @@
       backupState.jobs = data.jobs || [];
       
       renderJobsList();
-      updateStatistics();
+      toast('Backup data refreshed', 'success');
     } catch (error) {
-      console.error('[backup] Failed to load jobs:', error);
       toast('Failed to load jobs', 'error');
+      console.error('[backup] Failed to load jobs:', error);
     }
   }
 
@@ -397,7 +430,6 @@
       updateStatistics();
     } catch (error) {
       console.error('[backup] Failed to load archives:', error);
-      toast('Failed to load archives', 'error');
     }
   };
 
@@ -408,19 +440,15 @@
       backupLoadJobs(),
       backupRefreshArchives()
     ]);
-    toast('✅ Backup data refreshed', 'success');
   };
 
   /* =============== RENDERING =============== */
 
-  function renderServerLists() {
-    renderServerList('backup-source-servers', backupState.sourceServers, 'source');
-    renderServerList('backup-destination-servers', backupState.destinationServers, 'destination');
-  }
-
-  function renderServerList(containerId, servers, type) {
-    const container = document.getElementById(containerId);
+  function renderServersList(type) {
+    const container = document.getElementById(`backup-${type}-servers`);
     if (!container) return;
+    
+    const servers = type === 'source' ? backupState.sourceServers : backupState.destinationServers;
     
     if (servers.length === 0) {
       container.innerHTML = `
@@ -475,7 +503,6 @@
           </div>
           <div style="display: flex; gap: 8px;">
             <button class="btn primary btn-sm" onclick="backupRunJob('${job.id}')">Run Now</button>
-            <button class="btn btn-sm" onclick="backupOpenJobDetailsModal('${job.id}')">Details</button>
             <button class="btn danger btn-sm" onclick="backupDeleteJob('${job.id}')">Delete</button>
           </div>
         </div>
@@ -515,15 +542,12 @@
   }
 
   function updateStatistics() {
-    // Update metrics
     document.getElementById('backup-stat-total').textContent = backupState.archives.length;
     document.getElementById('backup-stat-jobs').textContent = backupState.jobs.length;
     
-    // Calculate total size
     const totalSize = backupState.archives.reduce((sum, archive) => sum + (archive.size || 0), 0);
     document.getElementById('backup-stat-size').textContent = formatBytes(totalSize);
     
-    // Count today's successes and failures
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const todayTimestamp = today.getTime() / 1000;
@@ -584,34 +608,18 @@
     }
   };
 
-  /* =============== SEARCH FUNCTIONALITY =============== */
+  /* =============== RESTORE MODAL =============== */
 
-  const searchInput = document.getElementById('backup-search');
-  if (searchInput) {
-    searchInput.addEventListener('input', function() {
-      const searchTerm = this.value.toLowerCase();
-      const rows = document.querySelectorAll('#backup-archives-list tr');
-      
-      rows.forEach(row => {
-        const text = row.textContent.toLowerCase();
-        row.style.display = text.includes(searchTerm) ? '' : 'none';
-      });
-    });
-  }
+  window.backupOpenRestoreModal = function(archive) {
+    // TODO: Implement restore modal
+    toast('Restore feature coming soon', 'info');
+  };
 
-  /* =============== CONTAINER TOGGLE =============== */
+  window.backupCloseRestoreModal = function() {
+    document.getElementById('backup-restore-modal').style.display = 'none';
+  };
 
-  const stopContainersCheckbox = document.getElementById('backup-job-stop-containers');
-  if (stopContainersCheckbox) {
-    stopContainersCheckbox.addEventListener('change', function() {
-      const field = document.getElementById('backup-container-field');
-      if (field) {
-        field.style.display = this.checked ? 'block' : 'none';
-      }
-    });
-  }
-
-  /* =============== INITIALIZATION =============== */
+  /* =============== INIT =============== */
 
   window.backupModule = {
     init: async function() {
@@ -621,9 +629,15 @@
     }
   };
 
-  // Auto-initialize when backup tab is activated
-  if (typeof window !== 'undefined') {
-    console.log('[backup] Module loaded and ready');
+  // Container toggle
+  const stopContainersCheckbox = document.getElementById('backup-job-stop-containers');
+  if (stopContainersCheckbox) {
+    stopContainersCheckbox.addEventListener('change', function() {
+      const field = document.getElementById('backup-container-field');
+      if (field) field.style.display = this.checked ? 'block' : 'none';
+    });
   }
+
+  console.log('[backup] Module loaded and ready');
 
 })();
