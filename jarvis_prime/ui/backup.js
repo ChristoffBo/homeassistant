@@ -481,16 +481,19 @@
   }
 
   window.backupRefreshArchives = async function() {
-    try {
-      const data = await backupFetch('api/backup/archives');
-      backupState.archives = data.archives || [];
-      
-      renderArchivesList();
-      updateStatistics();
-    } catch (error) {
-      console.error('[backup] Failed to load archives:', error);
-    }
-  };
+  try {
+    const data = await backupFetch('api/backup/archives');
+    // Handle both array and { archives: [] } formats safely
+    const archives = Array.isArray(data) ? data : (data.archives || []);
+    backupState.archives = archives;
+
+    renderArchivesList();
+    updateStatistics();
+  } catch (error) {
+    console.error('[backup] Failed to load archives:', error);
+  }
+};
+
 
   window.backupRefreshAll = async function() {
     toast('Refreshing backup data...', 'info');
