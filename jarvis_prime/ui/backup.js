@@ -459,6 +459,7 @@
       const data = await backupFetch('api/backup/servers');
       backupState.sourceServers = data.source_servers || [];
       backupState.destinationServers = data.destination_servers || [];
+      backupState.servers = [...backupState.sourceServers, ...backupState.destinationServers];
       
       renderServersList('source');
       renderServersList('destination');
