@@ -278,8 +278,9 @@ async def api_save_settings(request: web.Request):
         data = await request.json()
     except Exception:
         return _json({"error":"bad json"}, status=400)
-    storage.save_inbox_settings(data)  # type: ignore
-    return _json({"ok": True})
+    # Settings are loaded from options.json / config.json
+    # This endpoint exists for compatibility but settings are managed via config
+    return _json({"ok": True, "message": "Settings managed via config file"})
 
 async def api_purge(request: web.Request):
     try:
@@ -506,8 +507,14 @@ def _make_app() -> web.Application:
     # Register backup_module routes if available
     if backup_module:
         try:
-            backup_module.setup_routes(app)
-            print("[backup_module] Routes registered")
+            if hasattr(backup_module, 'setup_routes'):
+                backup_module.setup_routes(app)
+                print("[backup_module] Routes registered via setup_routes()")
+            elif hasattr(backup_module, 'register_routes'):
+                backup_module.register_routes(app)
+                print("[backup_module] Routes registered via register_routes()")
+            else:
+                print("[backup_module] No route registration function found")
         except Exception as e:
             print(f"[backup_module] Failed to register routes: {e}")
 
