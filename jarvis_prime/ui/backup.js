@@ -315,15 +315,20 @@
 
   window.backupConfirmSelection = function() {
     if (backupState.explorerSide === 'source') {
-      const textarea = document.getElementById('backup-job-paths');
+      const textarea = backupState.editMode 
+        ? document.getElementById('backup-edit-job-paths')
+        : document.getElementById('backup-job-paths');
       textarea.value = backupState.selectedPaths.join('\n');
       toast(`✅ Selected ${backupState.selectedPaths.length} folders`, 'success');
     } else {
-      const input = document.getElementById('backup-job-dest-path');
+      const input = backupState.editMode
+        ? document.getElementById('backup-edit-job-dest-path')
+        : document.getElementById('backup-job-dest-path');
       input.value = backupState.selectedPaths[0] || '/backups';
       toast(`✅ Selected destination: ${backupState.selectedPaths[0]}`, 'success');
     }
     backupState.selectedPaths = [];
+    backupState.editMode = false;
     backupCloseFileExplorer();
   };
 
@@ -347,7 +352,7 @@
     destSelect.innerHTML = '<option value="">Select destination server...</option>';
     
     backupState.sourceServers.forEach(server => {
-      const option = document.getElementById('option');
+      const option = document.createElement('option');
       option.value = server.id;
       option.textContent = `${server.name} (${server.host})`;
       sourceSelect.appendChild(option);
@@ -470,7 +475,10 @@
               ${server.host}${server.port ? ':' + server.port : ''}
             </div>
           </div>
-          <button class="btn danger btn-sm" onclick="backupDeleteServer('${server.id}')" style="padding: 4px 8px;">Delete</button>
+          <div style="display: flex; gap: 8px;">
+            <button class="btn btn-sm" onclick='backupOpenEditServerModal(${JSON.stringify(server).replace(/'/g, "\\'")} )' style="padding: 4px 8px;">Edit</button>
+            <button class="btn danger btn-sm" onclick="backupDeleteServer('${server.id}')" style="padding: 4px 8px;">Delete</button>
+          </div>
         </div>
       </div>
     `).join('');
@@ -503,6 +511,7 @@
           </div>
           <div style="display: flex; gap: 8px;">
             <button class="btn primary btn-sm" onclick="backupRunJob('${job.id}')">Run Now</button>
+            <button class="btn btn-sm" onclick='backupOpenEditJobModal(${JSON.stringify(job).replace(/'/g, "\\'")} )'>Edit</button>
             <button class="btn danger btn-sm" onclick="backupDeleteJob('${job.id}')">Delete</button>
           </div>
         </div>
@@ -611,12 +620,220 @@
   /* =============== RESTORE MODAL =============== */
 
   window.backupOpenRestoreModal = function(archive) {
-    // TODO: Implement restore modal
-    toast('Restore feature coming soon', 'info');
+    backupState.currentRestoreArchive = archive;
+    document.getElementById('backup-restore-name').textContent = archive.name || archive.id;
+    document.getElementById('backup-restore-modal').style.display = 'flex';
+    
+    // Populate destination servers
+    const select = document.getElementById('backup-restore-destination');
+    select.innerHTML = '<option value="">Select destination server...</option>';
+    backupState.destinationServers.forEach(server => {
+      const option = document.createElement('option');
+      option.value = server.id;
+      option.textContent = `${server.name} (${server.host})`;
+      select.appendChild(option);
+    });
   };
 
   window.backupCloseRestoreModal = function() {
     document.getElementById('backup-restore-modal').style.display = 'none';
+  };
+
+  window.backupConfirmRestore = async function() {
+    if (!backupState.currentRestoreArchive) return;
+    
+    const destServerId = document.getElementById('backup-restore-destination').value;
+    const restorePath = document.getElementById('backup-restore-path').value;
+    const overwrite = document.getElementById('backup-restore-overwrite').checked;
+    
+    if (!destServerId || !restorePath) {
+      toast('❌ Please select destination and path', 'error');
+      return;
+    }
+    
+    if (!confirm('Are you sure you want to restore? This will overwrite existing files!')) {
+      return;
+    }
+    
+    try {
+      await backupFetch('api/backup/restore', {
+        method: 'POST',
+        body: JSON.stringify({
+          archive_id: backupState.currentRestoreArchive.id,
+          destination_server_id: destServerId,
+          destination_path: restorePath,
+          overwrite: overwrite
+        })
+      });
+      
+      toast('✅ Restore started successfully', 'success');
+      backupCloseRestoreModal();
+    } catch (error) {
+      toast('❌ Failed to start restore: ' + error.message, 'error');
+    }
+  };
+
+  /* =============== EDIT SERVER MODAL =============== */
+
+  window.backupOpenEditServerModal = function(server) {
+    document.getElementById('backup-edit-server-id').value = server.id;
+    document.getElementById('backup-edit-server-name').value = server.name;
+    document.getElementById('backup-edit-connection-type').value = server.type;
+    
+    backupUpdateEditConnectionFields();
+    
+    if (server.type === 'ssh') {
+      document.getElementById('backup-edit-ssh-host').value = server.host || '';
+      document.getElementById('backup-edit-ssh-port').value = server.port || 22;
+      document.getElementById('backup-edit-ssh-username').value = server.username || '';
+      document.getElementById('backup-edit-ssh-password').value = server.password || '';
+    } else if (server.type === 'smb') {
+      document.getElementById('backup-edit-smb-host').value = server.host || '';
+      document.getElementById('backup-edit-smb-share').value = server.share || '';
+      document.getElementById('backup-edit-smb-username').value = server.username || '';
+      document.getElementById('backup-edit-smb-password').value = server.password || '';
+    } else if (server.type === 'nfs') {
+      document.getElementById('backup-edit-nfs-host').value = server.host || '';
+      document.getElementById('backup-edit-nfs-export').value = server.export_path || '';
+    }
+    
+    document.getElementById('backup-edit-server-modal').style.display = 'flex';
+  };
+
+  window.backupCloseEditServerModal = function() {
+    document.getElementById('backup-edit-server-modal').style.display = 'none';
+  };
+
+  window.backupUpdateEditConnectionFields = function() {
+    const type = document.getElementById('backup-edit-connection-type').value;
+    document.getElementById('backup-edit-ssh-fields').style.display = type === 'ssh' ? 'block' : 'none';
+    document.getElementById('backup-edit-smb-fields').style.display = type === 'smb' ? 'block' : 'none';
+    document.getElementById('backup-edit-nfs-fields').style.display = type === 'nfs' ? 'block' : 'none';
+  };
+
+  window.backupUpdateServer = async function(event) {
+    event.preventDefault();
+    
+    const serverId = document.getElementById('backup-edit-server-id').value;
+    const type = document.getElementById('backup-edit-connection-type').value;
+    const name = document.getElementById('backup-edit-server-name').value;
+    
+    // Get current server to preserve server_type
+    const allServers = [...backupState.sourceServers, ...backupState.destinationServers];
+    const currentServer = allServers.find(s => s.id === serverId);
+    
+    const updatedServer = {
+      id: serverId,
+      name,
+      type,
+      server_type: currentServer ? currentServer.server_type : 'source'
+    };
+    
+    try {
+      if (type === 'ssh') {
+        updatedServer.host = document.getElementById('backup-edit-ssh-host').value;
+        updatedServer.port = parseInt(document.getElementById('backup-edit-ssh-port').value);
+        updatedServer.username = document.getElementById('backup-edit-ssh-username').value;
+        updatedServer.password = document.getElementById('backup-edit-ssh-password').value;
+      } else if (type === 'smb') {
+        updatedServer.host = document.getElementById('backup-edit-smb-host').value;
+        updatedServer.share = document.getElementById('backup-edit-smb-share').value;
+        updatedServer.username = document.getElementById('backup-edit-smb-username').value;
+        updatedServer.password = document.getElementById('backup-edit-smb-password').value;
+      } else if (type === 'nfs') {
+        updatedServer.host = document.getElementById('backup-edit-nfs-host').value;
+        updatedServer.export_path = document.getElementById('backup-edit-nfs-export').value;
+      }
+
+      // Delete old server
+      await backupFetch(`api/backup/servers/${serverId}`, { method: 'DELETE' });
+      
+      // Add updated server
+      await backupFetch('api/backup/servers', {
+        method: 'POST',
+        body: JSON.stringify(updatedServer)
+      });
+      
+      toast('✅ Server updated successfully', 'success');
+      backupCloseEditServerModal();
+      await backupLoadServers();
+    } catch (error) {
+      toast('❌ Failed to update server: ' + error.message, 'error');
+    }
+  };
+
+  /* =============== EDIT JOB MODAL =============== */
+
+  window.backupOpenEditJobModal = function(job) {
+    document.getElementById('backup-edit-job-id').value = job.id;
+    document.getElementById('backup-edit-job-name').value = job.name;
+    document.getElementById('backup-edit-job-paths').value = Array.isArray(job.paths) ? job.paths.join('\n') : job.paths;
+    document.getElementById('backup-edit-job-dest-path').value = job.destination_path || '/backups';
+    document.getElementById('backup-edit-job-type').value = job.backup_type || 'full';
+    document.getElementById('backup-edit-job-compress').checked = job.compress !== false;
+    document.getElementById('backup-edit-job-stop-containers').checked = job.stop_containers || false;
+    document.getElementById('backup-edit-job-containers').value = Array.isArray(job.containers) ? job.containers.join(', ') : '';
+    document.getElementById('backup-edit-job-schedule').value = job.schedule || '0 2 * * *';
+    document.getElementById('backup-edit-job-retention').value = job.retention_days || 30;
+    document.getElementById('backup-edit-job-enabled').checked = job.enabled !== false;
+    
+    // Show/hide container field
+    document.getElementById('backup-edit-container-field').style.display = job.stop_containers ? 'block' : 'none';
+    
+    // Store source/dest server IDs for update
+    backupState.editingJobSourceServer = job.source_server_id;
+    backupState.editingJobDestServer = job.destination_server_id;
+    
+    document.getElementById('backup-edit-job-modal').style.display = 'flex';
+  };
+
+  window.backupCloseEditJobModal = function() {
+    document.getElementById('backup-edit-job-modal').style.display = 'none';
+  };
+
+  window.backupUpdateJob = async function(event) {
+    event.preventDefault();
+    
+    const jobId = document.getElementById('backup-edit-job-id').value;
+    
+    const updatedJob = {
+      id: jobId,
+      name: document.getElementById('backup-edit-job-name').value,
+      source_server_id: backupState.editingJobSourceServer,
+      paths: document.getElementById('backup-edit-job-paths').value.split('\n').filter(p => p.trim()),
+      destination_server_id: backupState.editingJobDestServer,
+      destination_path: document.getElementById('backup-edit-job-dest-path').value,
+      backup_type: document.getElementById('backup-edit-job-type').value,
+      compress: document.getElementById('backup-edit-job-compress').checked,
+      stop_containers: document.getElementById('backup-edit-job-stop-containers').checked,
+      containers: document.getElementById('backup-edit-job-containers').value.split(',').map(c => c.trim()).filter(c => c),
+      schedule: document.getElementById('backup-edit-job-schedule').value,
+      retention_days: parseInt(document.getElementById('backup-edit-job-retention').value),
+      enabled: document.getElementById('backup-edit-job-enabled').checked
+    };
+    
+    try {
+      // Delete old job
+      await backupFetch(`api/backup/jobs/${jobId}`, { method: 'DELETE' });
+      
+      // Create updated job
+      await backupFetch('api/backup/jobs', {
+        method: 'POST',
+        body: JSON.stringify(updatedJob)
+      });
+      
+      toast('✅ Job updated successfully', 'success');
+      backupCloseEditJobModal();
+      await backupLoadJobs();
+    } catch (error) {
+      toast('❌ Failed to update job: ' + error.message, 'error');
+    }
+  };
+
+  window.backupOpenFileExplorerForEdit = function(side) {
+    // Use the same file explorer but remember we're in edit mode
+    backupState.editMode = true;
+    backupOpenFileExplorer(side);
   };
 
   /* =============== INIT =============== */
@@ -634,6 +851,14 @@
   if (stopContainersCheckbox) {
     stopContainersCheckbox.addEventListener('change', function() {
       const field = document.getElementById('backup-container-field');
+      if (field) field.style.display = this.checked ? 'block' : 'none';
+    });
+  }
+
+  const stopContainersEditCheckbox = document.getElementById('backup-edit-job-stop-containers');
+  if (stopContainersEditCheckbox) {
+    stopContainersEditCheckbox.addEventListener('change', function() {
+      const field = document.getElementById('backup-edit-container-field');
       if (field) field.style.display = this.checked ? 'block' : 'none';
     });
   }
