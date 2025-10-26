@@ -779,6 +779,99 @@
     try {
       await backupFetch(`api/backup/archives/${archiveId}`, { method: 'DELETE' });
       toast('✅ Backup deleted', 'success');
+      backupRefreshArchives();
+    } catch (error) {
+      toast('❌ Failed to delete backup: ' + error.message, 'error');
+    }
+  };
+
+  window.backupOpenRestoreModal = function(archive) {
+    backupState.currentRestoreArchive = archive;
+    
+    // Populate modal
+    document.getElementById('restore-archive-name').textContent = archive.job_name || archive.id;
+    document.getElementById('restore-archive-date').textContent = formatDate(archive.created_at);
+    document.getElementById('restore-archive-size').textContent = formatBytes(archive.size_mb * 1024 * 1024 || 0);
+    
+    // Show original paths
+    const pathsList = (archive.source_paths || []).join('\n');
+    document.getElementById('restore-original-paths').textContent = pathsList;
+    
+    // Populate server dropdown
+    const serverSelect = document.getElementById('restore-dest-server');
+    serverSelect.innerHTML = '<option value="">Select destination server...</option>';
+    backupState.servers.forEach(server => {
+      serverSelect.innerHTML += `<option value="${server.id}">${server.name} (${server.host})</option>`;
+    });
+    
+    // Set default to original location
+    document.getElementById('restore-to-original').checked = true;
+    document.getElementById('restore-custom-path-group').style.display = 'none';
+    
+    document.getElementById('backup-restore-modal').style.display = 'flex';
+  };
+
+  window.backupCloseRestoreModal = function() {
+    document.getElementById('backup-restore-modal').style.display = 'none';
+  };
+
+  window.backupToggleRestoreLocation = function() {
+    const toOriginal = document.getElementById('restore-to-original').checked;
+    document.getElementById('restore-custom-path-group').style.display = toOriginal ? 'none' : 'block';
+  };
+
+  window.backupSubmitRestore = async function(e) {
+    e.preventDefault();
+    
+    const archive = backupState.currentRestoreArchive;
+    if (!archive) {
+      toast('❌ No archive selected', 'error');
+      return;
+    }
+    
+    const toOriginal = document.getElementById('restore-to-original').checked;
+    let destServerId, destPath;
+    
+    if (toOriginal) {
+      destServerId = archive.source_server_id;
+      destPath = archive.source_paths[0].substring(0, archive.source_paths[0].lastIndexOf('/')) || '/';
+    } else {
+      destServerId = document.getElementById('restore-dest-server').value;
+      destPath = document.getElementById('restore-dest-path').value;
+    }
+    
+    if (!destServerId || !destPath) {
+      toast('❌ Please select destination server and path', 'error');
+      return;
+    }
+    
+    try {
+      const result = await backupFetch('api/backup/restore', {
+        method: 'POST',
+        body: JSON.stringify({
+          archive_id: archive.id,
+          destination_server_id: destServerId,
+          destination_path: destPath,
+          overwrite: document.getElementById('restore-overwrite').checked
+        })
+      });
+      
+      toast('✅ Restore started!', 'success');
+      backupCloseRestoreModal();
+      
+      // TODO: Show restore progress modal
+      
+    } catch (error) {
+      toast('❌ Failed to start restore: ' + error.message, 'error');
+    }
+  };
+
+  window.backupDeleteArchive = async function(archiveId) {
+    if (!confirm('Delete this backup? This cannot be undone.')) return;
+    
+    try {
+      await backupFetch(`api/backup/archives/${archiveId}`, { method: 'DELETE' });
+      toast('✅ Backup deleted', 'success');
       await backupRefreshArchives();
     } catch (error) {
       toast('❌ Failed to delete backup: ' + error.message, 'error');
