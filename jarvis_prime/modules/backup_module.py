@@ -956,13 +956,11 @@ async def get_job_status(request):
 async def get_all_jobs(request):
     """Get all jobs"""
     try:
-        jobs = backup_manager.get_all_jobs()
-        statuses = {job_id: backup_manager.get_job_status(job_id) for job_id in jobs.keys()}
+        jobs_dict = backup_manager.get_all_jobs()
+        jobs_list = list(jobs_dict.values())
         
         return web.json_response({
-            'success': True,
-            'jobs': jobs,
-            'statuses': statuses
+            'jobs': jobs_list
         })
         
     except Exception as e:
@@ -1002,7 +1000,12 @@ async def get_servers(request):
     """Get all configured servers"""
     try:
         servers = backup_manager.get_all_servers()
-        return web.json_response(servers)
+        source_servers = [s for s in servers if s.get('server_type') == 'source']
+        destination_servers = [s for s in servers if s.get('server_type') == 'destination']
+        return web.json_response({
+            'source_servers': source_servers,
+            'destination_servers': destination_servers
+        })
     except Exception as e:
         logger.error(f"Failed to get servers: {e}")
         return web.json_response({'error': str(e)}, status=500)
@@ -1042,7 +1045,7 @@ async def get_archives(request):
     """Get all backup archives"""
     try:
         archives = backup_manager.get_all_archives()
-        return web.json_response(archives)
+        return web.json_response({'archives': archives})
     except Exception as e:
         logger.error(f"Failed to get archives: {e}")
         return web.json_response({'error': str(e)}, status=500)
