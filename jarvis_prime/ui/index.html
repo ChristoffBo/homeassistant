@@ -3059,9 +3059,17 @@
 
       <div class="form-group">
         <label class="form-label">Source Paths *</label>
-        <textarea id="backup-job-paths" required placeholder="/var/www&#10;/etc/nginx&#10;/home/user" rows="4"></textarea>
-        <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
-          One path per line. Use absolute paths.
+        <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+          <textarea id="backup-job-paths" required placeholder="/var/www&#10;/etc/nginx&#10;/home/user" rows="4" style="flex: 1;"></textarea>
+          <button type="button" class="btn" onclick="backupOpenFileExplorer('source')" style="height: fit-content;">
+            <svg class="icon" style="width: 16px; height: 16px;" fill="none" viewBox="0 0 24 24">
+              <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" stroke="currentColor" stroke-width="2"/>
+            </svg>
+            Browse
+          </button>
+        </div>
+        <div style="font-size: 12px; color: var(--text-muted);">
+          One path per line. Use absolute paths, or click Browse to select folders.
         </div>
       </div>
 
@@ -3074,7 +3082,15 @@
 
       <div class="form-group">
         <label class="form-label">Destination Path</label>
-        <input type="text" id="backup-job-dest-path" value="/backups" placeholder="/backups">
+        <div style="display: flex; gap: 8px;">
+          <input type="text" id="backup-job-dest-path" value="/backups" placeholder="/backups" style="flex: 1;">
+          <button type="button" class="btn" onclick="backupOpenFileExplorer('destination')">
+            <svg class="icon" style="width: 16px; height: 16px;" fill="none" viewBox="0 0 24 24">
+              <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" stroke="currentColor" stroke-width="2"/>
+            </svg>
+            Browse
+          </button>
+        </div>
       </div>
 
       <div class="form-group">
@@ -3207,6 +3223,217 @@
         Run Now
       </button>
     </div>
+  </div>
+</div>
+
+<!-- FILE EXPLORER MODAL -->
+<div id="backup-explorer-modal" class="modal">
+  <div class="modal-content" style="max-width: 1000px; max-height: 80vh;">
+    <div class="modal-header">
+      <h2 id="backup-explorer-modal-title">File Explorer</h2>
+      <button class="btn" onclick="backupCloseFileExplorer()">✕</button>
+    </div>
+    <div style="padding: 24px;">
+      
+      <div class="form-group">
+        <label class="form-label">Server</label>
+        <select id="backup-explorer-server" onchange="backupExplorerServerChanged()" style="width: 100%;">
+          <option value="">Select server...</option>
+        </select>
+      </div>
+
+      <div style="padding: 12px; background: var(--surface-secondary); border-radius: 6px; margin-bottom: 16px; font-family: monospace; font-size: 14px;">
+        <strong>Path:</strong> <span id="backup-current-path">/</span>
+      </div>
+
+      <div id="backup-explorer-list" style="max-height: 400px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 8px; background: var(--surface-primary);">
+        <div class="text-muted" style="padding: 32px; text-align: center;">Select a server to browse</div>
+      </div>
+
+      <div style="margin-top: 16px; padding: 12px; background: rgba(14, 165, 233, 0.1); border-radius: 6px; color: #0ea5e9; font-size: 13px;">
+        <strong>💡 Tip:</strong> Click folder names to navigate, click "Select" button to choose folders for backup
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn" onclick="backupCloseFileExplorer()">Cancel</button>
+        <button type="button" class="btn primary" onclick="backupConfirmSelection()">Confirm Selection</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- EDIT SERVER MODAL -->
+<div id="backup-edit-server-modal" class="modal">
+  <div class="modal-content" style="max-width: 600px;">
+    <div class="modal-header">
+      <h2>Edit Server</h2>
+      <button class="btn" onclick="backupCloseEditServerModal()">✕</button>
+    </div>
+    <form id="backup-edit-server-form" onsubmit="backupUpdateServer(event)">
+      <input type="hidden" id="backup-edit-server-id">
+      
+      <div class="form-group">
+        <label class="form-label">Server Name *</label>
+        <input type="text" id="backup-edit-server-name" required placeholder="Production Server">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Connection Type</label>
+        <select id="backup-edit-connection-type" onchange="backupUpdateEditConnectionFields()" disabled>
+          <option value="ssh">SSH/SFTP</option>
+          <option value="smb">SMB/CIFS</option>
+          <option value="nfs">NFS</option>
+        </select>
+        <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">Connection type cannot be changed after creation</div>
+      </div>
+
+      <div id="backup-edit-ssh-fields" style="display: none;">
+        <div class="form-group">
+          <label class="form-label">Hostname/IP *</label>
+          <input type="text" id="backup-edit-ssh-host" placeholder="192.168.1.100">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Port</label>
+          <input type="number" id="backup-edit-ssh-port" value="22">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Username *</label>
+          <input type="text" id="backup-edit-ssh-username" placeholder="root">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Password *</label>
+          <input type="password" id="backup-edit-ssh-password">
+        </div>
+      </div>
+
+      <div id="backup-edit-smb-fields" style="display: none;">
+        <div class="form-group">
+          <label class="form-label">Hostname/IP *</label>
+          <input type="text" id="backup-edit-smb-host" placeholder="192.168.1.100">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Share Name *</label>
+          <input type="text" id="backup-edit-smb-share" placeholder="backups">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Username</label>
+          <input type="text" id="backup-edit-smb-username">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Password</label>
+          <input type="password" id="backup-edit-smb-password">
+        </div>
+      </div>
+
+      <div id="backup-edit-nfs-fields" style="display: none;">
+        <div class="form-group">
+          <label class="form-label">NFS Server *</label>
+          <input type="text" id="backup-edit-nfs-host" placeholder="192.168.1.100">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Export Path *</label>
+          <input type="text" id="backup-edit-nfs-export" placeholder="/mnt/backups">
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn" onclick="backupCloseEditServerModal()">Cancel</button>
+        <button type="submit" class="btn primary">Save Changes</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- EDIT JOB MODAL -->
+<div id="backup-edit-job-modal" class="modal">
+  <div class="modal-content" style="max-width: 700px;">
+    <div class="modal-header">
+      <h2>Edit Backup Job</h2>
+      <button class="btn" onclick="backupCloseEditJobModal()">✕</button>
+    </div>
+    <form id="backup-edit-job-form" onsubmit="backupUpdateJob(event)">
+      <input type="hidden" id="backup-edit-job-id">
+      
+      <div class="form-group">
+        <label class="form-label">Job Name *</label>
+        <input type="text" id="backup-edit-job-name" required>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Source Paths *</label>
+        <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+          <textarea id="backup-edit-job-paths" required rows="4" style="flex: 1;"></textarea>
+          <button type="button" class="btn" onclick="backupOpenFileExplorerForEdit('source')" style="height: fit-content;">
+            <svg class="icon" style="width: 16px; height: 16px;" fill="none" viewBox="0 0 24 24">
+              <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" stroke="currentColor" stroke-width="2"/>
+            </svg>
+            Browse
+          </button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Destination Path</label>
+        <div style="display: flex; gap: 8px;">
+          <input type="text" id="backup-edit-job-dest-path" style="flex: 1;">
+          <button type="button" class="btn" onclick="backupOpenFileExplorerForEdit('destination')">
+            <svg class="icon" style="width: 16px; height: 16px;" fill="none" viewBox="0 0 24 24">
+              <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" stroke="currentColor" stroke-width="2"/>
+            </svg>
+            Browse
+          </button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Backup Type</label>
+        <select id="backup-edit-job-type">
+          <option value="full">Full Backup</option>
+          <option value="incremental">Incremental Backup</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <div class="checkbox-group">
+          <input type="checkbox" id="backup-edit-job-compress">
+          <label for="backup-edit-job-compress">Compress backup archives</label>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <div class="checkbox-group">
+          <input type="checkbox" id="backup-edit-job-stop-containers">
+          <label for="backup-edit-job-stop-containers">Stop Docker containers during backup</label>
+        </div>
+      </div>
+
+      <div class="form-group" id="backup-edit-container-field" style="display: none;">
+        <label class="form-label">Container Names</label>
+        <input type="text" id="backup-edit-job-containers" placeholder="container1, container2">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Schedule (Cron)</label>
+        <input type="text" id="backup-edit-job-schedule" value="0 2 * * *">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Retention (days)</label>
+        <input type="number" id="backup-edit-job-retention" min="1">
+      </div>
+
+      <div class="form-group">
+        <div class="checkbox-group">
+          <input type="checkbox" id="backup-edit-job-enabled">
+          <label for="backup-edit-job-enabled">Job Enabled</label>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn" onclick="backupCloseEditJobModal()">Cancel</button>
+        <button type="submit" class="btn primary">Save Changes</button>
+      </div>
+    </form>
   </div>
 </div>
 
