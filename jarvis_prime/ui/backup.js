@@ -257,7 +257,7 @@
     if (backupState.currentBrowsePath !== '/') {
       const parent = backupState.currentBrowsePath.split('/').slice(0, -1).join('/') || '/';
       html += `
-        <tr style="cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.05);" onclick="backupBrowseDirectory('${parent}')">
+        <tr style="cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.05);" data-action="navigate" data-path="${parent}">
           <td style="padding: 12px;">📁 ..</td>
           <td></td>
           <td></td>
@@ -280,14 +280,14 @@
         <tr style="border-bottom: 1px solid rgba(255,255,255,0.05); ${isSelected ? 'background: rgba(14, 165, 233, 0.1);' : ''}">
           <td style="padding: 12px;">
             ${file.is_dir 
-              ? `<span style="cursor: pointer;" onclick="backupBrowseDirectory('${fullPath}')">${icon} ${file.name}</span>`
+              ? `<span style="cursor: pointer; color: #0ea5e9;" data-action="navigate" data-path="${fullPath}">${icon} ${file.name}</span>`
               : `${icon} ${file.name}`
             }
           </td>
           <td style="padding: 12px; text-align: right; color: var(--text-muted);">${size}</td>
           <td style="padding: 12px; text-align: right; color: var(--text-muted);">${modified}</td>
           <td style="padding: 12px; text-align: center;">
-            <button class="btn btn-sm" onclick="event.stopPropagation(); backupToggleSelection('${fullPath}', ${file.is_dir})" style="padding: 4px 8px;">
+            <button class="btn btn-sm" data-action="select" data-path="${fullPath}" data-is-dir="${file.is_dir}" style="padding: 4px 8px;">
               ${isSelected ? '✓ Selected' : 'Select'}
             </button>
           </td>
@@ -297,6 +297,22 @@
     
     html += '</tbody></table>';
     container.innerHTML = html;
+    
+    // Add event delegation
+    container.onclick = function(e) {
+      const target = e.target.closest('[data-action]');
+      if (!target) return;
+      
+      const action = target.getAttribute('data-action');
+      const path = target.getAttribute('data-path');
+      
+      if (action === 'navigate') {
+        backupBrowseDirectory(path);
+      } else if (action === 'select') {
+        const isDir = target.getAttribute('data-is-dir') === 'true';
+        backupToggleSelection(path, isDir);
+      }
+    };
   }
 
   window.backupToggleSelection = function(path, isDir) {
