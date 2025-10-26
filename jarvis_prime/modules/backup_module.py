@@ -337,6 +337,77 @@ def create_connection(conn_type: str, **kwargs) -> BackupConnection:
         raise ValueError(f"Unknown connection type: {conn_type}")
 
 
+def ensure_rsync_installed(ssh_conn):
+    """Ensure rsync is installed on remote SSH server"""
+    try:
+        # Check if rsync exists
+        stdout, stderr = ssh_conn.execute_command('which rsync')
+        if stdout.strip():
+            return True  # rsync already installed
+        
+        logger.info(f"rsync not found on {ssh_conn.host}, attempting to install...")
+        
+        # Try to install rsync
+        install_cmd = 'sudo apt-get update && sudo apt-get install -y rsync || yum install -y rsync'
+        stdout, stderr = ssh_conn.execute_command(install_cmd)
+        
+        # Verify installation
+        stdout, stderr = ssh_conn.execute_command('which rsync')
+        if stdout.strip():
+            logger.info(f"Successfully installed rsync on {ssh_conn.host}")
+            return True
+        else:
+            logger.warning(f"Failed to auto-install rsync on {ssh_conn.host}: {stderr}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Error checking/installing rsync: {e}")
+        return False
+
+
+def create_archive_record(job_id: str, job_config: Dict, duration: float, data_dir: Path):
+    """Create archive record after successful backup"""
+    import json
+    from pathlib import Path
+    
+    archives_file = Path(data_dir) / 'backup_archives.json'
+    
+    # Load existing archives
+    if archives_file.exists():
+        with open(archives_file, 'r') as f:
+            archives = json.load(f)
+    else:
+        archives = []
+    
+    # Create new archive record
+    archive_id = str(uuid.uuid4())
+    timestamp = datetime.now()
+    
+    archive = {
+        'id': archive_id,
+        'job_id': job_id,
+        'job_name': job_config.get('name', 'Unknown Job'),
+        'source_paths': job_config.get('paths', []),
+        'destination_path': job_config.get('destination_path'),
+        'source_server_id': job_config.get('source_server_id'),
+        'dest_server_id': job_config.get('destination_server_id'),
+        'backup_type': job_config.get('backup_type', 'full'),
+        'compressed': job_config.get('compress', True),
+        'size_mb': 0,  # TODO: Calculate actual size
+        'created_at': timestamp.isoformat(),
+        'duration': duration,
+        'status': 'completed'
+    }
+    
+    archives.append(archive)
+    
+    # Save archives
+    with open(archives_file, 'w') as f:
+        json.dump(archives, f, indent=2)
+    
+    logger.info(f"Created archive record {archive_id} for job {job_id}")
+
+
 def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
     """
     Worker function that runs in separate process
@@ -394,6 +465,10 @@ def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
         
         if not source_conn.connect():
             raise Exception(f"Failed to connect to source server {source_server['name']} at {source_server['host']}. Check credentials and network connectivity.")
+        
+        # Ensure rsync is installed on SSH servers
+        if isinstance(source_conn, SSHConnection):
+            ensure_rsync_installed(source_conn)
             
         status_queue.put({
             'job_id': job_id,
@@ -410,6 +485,10 @@ def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
         if not dest_conn.connect():
             source_conn.disconnect()
             raise Exception(f"Failed to connect to destination server {dest_server['name']} at {dest_server['host']}. Check credentials and network connectivity.")
+        
+        # Ensure rsync is installed on destination SSH server
+        if isinstance(dest_conn, SSHConnection):
+            ensure_rsync_installed(dest_conn)
             
         status_queue.put({
             'job_id': job_id,
@@ -482,6 +561,13 @@ def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
             'message': 'Backup completed successfully',
             'completed_at': datetime.now().isoformat()
         })
+        
+        # CREATE ARCHIVE RECORD
+        try:
+            data_dir_path = Path(job_config.get('_data_dir', '/data/backup_module'))
+            create_archive_record(job_id, job_config, duration, data_dir_path)
+        except Exception as archive_error:
+            logger.error(f"Failed to create archive record: {archive_error}")
         
         # Send success notification
         try:
@@ -846,6 +932,138 @@ def sync_directories(source, dest):
                 shutil.copy2(source_file, dest_file)
 
 
+def restore_worker(restore_id: str, restore_config: Dict, status_queue: Queue):
+    """
+    Worker function for restore operations
+    Runs in separate process
+    """
+    start_time = time.time()
+    
+    try:
+        logger.info(f"Restore worker started for {restore_id}")
+        
+        archive = restore_config['archive']
+        dest_server_id = restore_config['dest_server_id']
+        dest_path = restore_config['dest_path']
+        data_dir = Path(restore_config['_data_dir'])
+        
+        status_queue.put({
+            'restore_id': restore_id,
+            'status': 'running',
+            'progress': 10,
+            'message': 'Loading server configurations...'
+        })
+        
+        # Load servers
+        servers_file = data_dir / 'backup_servers.json'
+        with open(servers_file, 'r') as f:
+            all_servers = json.load(f)
+        
+        # Get source server (where backup is stored)
+        source_server_id = archive.get('dest_server_id')  # backup destination = restore source
+        source_server = next((s for s in all_servers if s['id'] == source_server_id), None)
+        if not source_server:
+            raise Exception(f"Backup storage server not found: {source_server_id}")
+        
+        # Get destination server (where to restore)
+        dest_server = next((s for s in all_servers if s['id'] == dest_server_id), None)
+        if not dest_server:
+            raise Exception(f"Restore destination server not found: {dest_server_id}")
+        
+        status_queue.put({
+            'restore_id': restore_id,
+            'status': 'running',
+            'progress': 20,
+            'message': f'Connecting to backup storage: {source_server["name"]}...'
+        })
+        
+        # Connect to backup storage
+        source_conn = create_connection(source_server['type'], **source_server)
+        if not source_conn.connect():
+            raise Exception(f"Failed to connect to backup storage: {source_server['name']}")
+        
+        status_queue.put({
+            'restore_id': restore_id,
+            'status': 'running',
+            'progress': 40,
+            'message': f'Connecting to restore destination: {dest_server["name"]}...'
+        })
+        
+        # Connect to restore destination
+        dest_conn = create_connection(dest_server['type'], **dest_server)
+        if not dest_conn.connect():
+            source_conn.disconnect()
+            raise Exception(f"Failed to connect to restore destination: {dest_server['name']}")
+        
+        status_queue.put({
+            'restore_id': restore_id,
+            'status': 'running',
+            'progress': 60,
+            'message': 'Restoring files...'
+        })
+        
+        # Perform restore
+        backup_path = archive.get('destination_path')
+        
+        # Download from backup storage to temp
+        temp_dir = tempfile.mkdtemp(prefix='jarvis_restore_')
+        
+        if isinstance(source_conn, SSHConnection):
+            download_via_sftp(source_conn, backup_path, temp_dir)
+        else:
+            source_full = os.path.join(source_conn.mount_point, backup_path.lstrip('/'))
+            shutil.copytree(source_full, temp_dir, dirs_exist_ok=True)
+        
+        status_queue.put({
+            'restore_id': restore_id,
+            'status': 'running',
+            'progress': 80,
+            'message': f'Uploading to {dest_path}...'
+        })
+        
+        # Upload to destination
+        if isinstance(dest_conn, SSHConnection):
+            upload_via_sftp(dest_conn, temp_dir, dest_path)
+        else:
+            dest_full = os.path.join(dest_conn.mount_point, dest_path.lstrip('/'))
+            os.makedirs(dest_full, exist_ok=True)
+            for item in os.listdir(temp_dir):
+                src = os.path.join(temp_dir, item)
+                dst = os.path.join(dest_full, item)
+                if os.path.isdir(src):
+                    shutil.copytree(src, dst, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(src, dst)
+        
+        # Cleanup
+        shutil.rmtree(temp_dir)
+        source_conn.disconnect()
+        dest_conn.disconnect()
+        
+        duration = time.time() - start_time
+        
+        status_queue.put({
+            'restore_id': restore_id,
+            'status': 'completed',
+            'progress': 100,
+            'message': f'Restore completed in {duration:.1f}s',
+            'completed_at': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        import traceback
+        logger.error(f"Restore worker failed: {e}")
+        logger.error(traceback.format_exc())
+        
+        status_queue.put({
+            'restore_id': restore_id,
+            'status': 'failed',
+            'progress': 0,
+            'message': f'Restore failed: {str(e)}',
+            'failed_at': datetime.now().isoformat()
+        })
+
+
 class BackupManager:
     """Main backup manager - runs in Jarvis main process"""
     
@@ -1057,9 +1275,41 @@ class BackupManager:
         return False
     
     def start_restore(self, archive_id: str, dest_server_id: str, dest_path: str, overwrite: bool) -> str:
-        """Start a restore operation"""
+        """Start a restore operation in separate process"""
+        # Find archive
+        archives = self.get_all_archives()
+        archive = next((a for a in archives if a['id'] == archive_id), None)
+        if not archive:
+            raise Exception(f"Archive {archive_id} not found")
+        
+        # Create restore config
         restore_id = str(uuid.uuid4())
-        # TODO: Implement actual restore logic
+        restore_config = {
+            'restore_id': restore_id,
+            'archive': archive,
+            'dest_server_id': dest_server_id,
+            'dest_path': dest_path,
+            'overwrite': overwrite,
+            '_data_dir': str(self.data_dir)
+        }
+        
+        # Start restore worker
+        process = Process(
+            target=restore_worker,
+            args=(restore_id, restore_config, status_queue)
+        )
+        process.start()
+        self.worker_processes[restore_id] = process
+        
+        self.statuses[restore_id] = {
+            'restore_id': restore_id,
+            'status': 'queued',
+            'progress': 0,
+            'message': 'Restore queued',
+            'started_at': datetime.now().isoformat()
+        }
+        self._save_statuses()
+        
         logger.info(f"Started restore {restore_id} for archive {archive_id}")
         return restore_id
 
