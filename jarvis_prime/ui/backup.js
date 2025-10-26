@@ -278,17 +278,18 @@
       
       html += `
         <tr style="border-bottom: 1px solid rgba(255,255,255,0.05); ${isSelected ? 'background: rgba(14, 165, 233, 0.1);' : ''}">
-          <td style="padding: 12px; cursor: pointer;" onclick="${file.is_dir ? `backupBrowseDirectory('${fullPath}')` : ''}">
-            ${icon} ${file.name}
+          <td style="padding: 12px;">
+            ${file.is_dir 
+              ? `<span style="cursor: pointer;" onclick="backupBrowseDirectory('${fullPath}')">${icon} ${file.name}</span>`
+              : `${icon} ${file.name}`
+            }
           </td>
           <td style="padding: 12px; text-align: right; color: var(--text-muted);">${size}</td>
           <td style="padding: 12px; text-align: right; color: var(--text-muted);">${modified}</td>
           <td style="padding: 12px; text-align: center;">
-            ${file.is_dir ? `
-              <button class="btn btn-sm" onclick="event.stopPropagation(); backupToggleSelection('${fullPath}')" style="padding: 4px 8px;">
-                ${isSelected ? '✓ Selected' : 'Select'}
-              </button>
-            ` : ''}
+            <button class="btn btn-sm" onclick="event.stopPropagation(); backupToggleSelection('${fullPath}', ${file.is_dir})" style="padding: 4px 8px;">
+              ${isSelected ? '✓ Selected' : 'Select'}
+            </button>
           </td>
         </tr>
       `;
@@ -298,34 +299,55 @@
     container.innerHTML = html;
   }
 
-  window.backupToggleSelection = function(path) {
+  window.backupToggleSelection = function(path, isDir) {
     const index = backupState.selectedPaths.indexOf(path);
     if (index > -1) {
       backupState.selectedPaths.splice(index, 1);
     } else {
       if (backupState.explorerSide === 'destination') {
-        // Only one destination folder
+        // Only one destination folder (must be directory)
+        if (!isDir) {
+          toast('❌ Destination must be a folder, not a file', 'error');
+          return;
+        }
         backupState.selectedPaths = [path];
       } else {
+        // Source can have multiple files/folders
         backupState.selectedPaths.push(path);
       }
     }
+    
+    // Update display
     backupBrowseDirectory(backupState.currentBrowsePath);
+    
+    // Show current selection count
+    const itemType = isDir ? 'folder' : 'file';
+    const count = backupState.selectedPaths.length;
+    if (index > -1) {
+      toast(`Deselected ${itemType}`, 'info');
+    } else {
+      toast(`Selected ${itemType} (${count} total)`, 'success');
+    }
   };
 
   window.backupConfirmSelection = function() {
+    if (backupState.selectedPaths.length === 0) {
+      toast('❌ No items selected', 'error');
+      return;
+    }
+    
     if (backupState.explorerSide === 'source') {
       const textarea = backupState.editMode 
         ? document.getElementById('backup-edit-job-paths')
         : document.getElementById('backup-job-paths');
       textarea.value = backupState.selectedPaths.join('\n');
-      toast(`✅ Selected ${backupState.selectedPaths.length} folders`, 'success');
+      toast(`✅ Selected ${backupState.selectedPaths.length} items for backup`, 'success');
     } else {
       const input = backupState.editMode
         ? document.getElementById('backup-edit-job-dest-path')
         : document.getElementById('backup-job-dest-path');
       input.value = backupState.selectedPaths[0] || '/backups';
-      toast(`✅ Selected destination: ${backupState.selectedPaths[0]}`, 'success');
+      toast(`✅ Destination set to: ${backupState.selectedPaths[0]}`, 'success');
     }
     backupState.selectedPaths = [];
     backupState.editMode = false;
