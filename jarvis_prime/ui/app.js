@@ -228,6 +228,13 @@
           } else {
             console.warn('[atlas] atlasRender() not found');
           }
+        } else if (tabName === 'backup') {
+          // Initialize backup module if available
+          if (typeof backupModule !== 'undefined' && backupModule.init) {
+            backupModule.init();
+          } else {
+            console.warn('[backup] backupModule not found');
+          }
         } else if (tabName === 'settings') {
           // Open General settings tab
           const generalTab = $('.orch-tab[data-settings-tab="general"]');
@@ -260,6 +267,13 @@
       // Messages today
       const dashInboxToday = $('#dash-inbox-today');
       if (dashInboxToday) dashInboxToday.textContent = todayCount;
+      
+      // Most recent source
+      const dashRecentSource = $('#dash-recent-source');
+      if (dashRecentSource && INBOX_ITEMS.length > 0) {
+        const lastMsg = INBOX_ITEMS[INBOX_ITEMS.length - 1];
+        dashRecentSource.textContent = lastMsg.source || 'N/A';
+      }
       
       // Error messages
       const errorCount = INBOX_ITEMS.filter(i => 
