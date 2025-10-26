@@ -367,39 +367,45 @@ def ensure_rsync_installed(ssh_conn):
 
 def create_archive_record(job_id: str, job_config: Dict, duration: float, data_dir: Path):
     """Create archive record after successful backup"""
-    import json
-    from pathlib import Path
-    
     archives_file = Path(data_dir) / 'backup_archives.json'
-    
-    # Load existing archives
+
+    # Load existing archives (support both list and dict formats)
     if archives_file.exists():
         with open(archives_file, 'r') as f:
-            archives = json.load(f)
+            try:
+                existing = json.load(f)
+                archives = existing.get('archives', []) if isinstance(existing, dict) else existing
+            except json.JSONDecodeError:
+                archives = []
     else:
         archives = []
-    
-    # Create new archive record
+
+    # New archive entry
     archive_id = str(uuid.uuid4())
-    timestamp = datetime.now()
-    
     archive = {
-        'id': archive_id,
-        'job_id': job_id,
-        'job_name': job_config.get('name', 'Unknown Job'),
-        'source_paths': job_config.get('paths', []),
-        'destination_path': job_config.get('destination_path'),
-        'source_server_id': job_config.get('source_server_id'),
-        'dest_server_id': job_config.get('destination_server_id'),
-        'backup_type': job_config.get('backup_type', 'full'),
-        'compressed': job_config.get('compress', True),
-        'size_mb': 0,  # TODO: Calculate actual size
-        'created_at': timestamp.isoformat(),
-        'duration': duration,
-        'status': 'completed'
+        "id": archive_id,
+        "job_id": job_id,
+        "job_name": job_config.get("name", "Unknown Job"),
+        "source_paths": job_config.get("paths", []),
+        "destination_path": job_config.get("destination_path"),
+        "source_server_id": job_config.get("source_server_id"),
+        "dest_server_id": job_config.get("destination_server_id"),
+        "backup_type": job_config.get("backup_type", "full"),
+        "compressed": job_config.get("compress", True),
+        "size_mb": 0,
+        "created_at": datetime.now().isoformat(),
+        "duration": duration,
+        "status": "completed"
     }
-    
+
     archives.append(archive)
+
+    # Save wrapped in dict for frontend compatibility
+    with open(archives_file, 'w') as f:
+        json.dump({"archives": archives}, f, indent=2)
+
+    logger.info(f"Created archive record {archive_id} for job {job_id}")
+
     
     # Save archives
     with open(archives_file, 'w') as f:
