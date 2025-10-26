@@ -474,34 +474,32 @@ def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
         # Calculate duration
         duration = time.time() - job_config.get('start_time', time.time())
         
-        if success:
-            status_queue.put({
-                'job_id': job_id,
-                'status': 'completed',
-                'progress': 100,
-                'message': 'Backup completed successfully',
-                'completed_at': datetime.now().isoformat()
-            })
+        # Backup functions now raise exceptions on failure, so if we get here it succeeded
+        status_queue.put({
+            'job_id': job_id,
+            'status': 'completed',
+            'progress': 100,
+            'message': 'Backup completed successfully',
+            'completed_at': datetime.now().isoformat()
+        })
+        
+        # Send success notification
+        try:
+            source_paths = job_config.get('paths') or job_config.get('source_paths', [])
+            source_paths_str = ", ".join(source_paths[:3])
+            if len(source_paths) > 3:
+                source_paths_str += f" +{len(source_paths) - 3} more"
             
-            # Send success notification
-            try:
-                source_paths = job_config.get('paths') or job_config.get('source_paths', [])
-                source_paths_str = ", ".join(source_paths[:3])
-                if len(source_paths) > 3:
-                    source_paths_str += f" +{len(source_paths) - 3} more"
-                
-                backup_fanout_notify(
-                    job_id=job_id,
-                    job_name=job_config.get('name', 'Unknown Job'),
-                    status='success',
-                    source_path=source_paths_str,
-                    dest_path=job_config.get('destination_path'),
-                    duration=duration
-                )
-            except Exception as notify_error:
-                logger.error(f"Failed to send success notification: {notify_error}")
-        else:
-            raise Exception("Backup operation failed")
+            backup_fanout_notify(
+                job_id=job_id,
+                job_name=job_config.get('name', 'Unknown Job'),
+                status='success',
+                source_path=source_paths_str,
+                dest_path=job_config.get('destination_path'),
+                duration=duration
+            )
+        except Exception as notify_error:
+            logger.error(f"Failed to send success notification: {notify_error}")
             
     except Exception as e:
         import traceback
@@ -624,8 +622,19 @@ def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compres
         return True
         
     except Exception as e:
-        logger.error(f"Full backup failed: {e}")
-        return False
+        import traceback
+        error_detail = f"Full backup failed: {str(e)}\nTraceback: {traceback.format_exc()}"
+        logger.error(error_detail)
+        
+        # Put error in status queue
+        status_queue.put({
+            'job_id': job_id,
+            'status': 'failed',
+            'progress': 0,
+            'message': f'Backup failed: {str(e)}'
+        })
+        
+        raise Exception(f"Full backup failed: {str(e)}") from e
 
 
 def perform_incremental_backup(source_conn, dest_conn, source_paths, dest_path, compress, status_queue, job_id):
@@ -672,8 +681,19 @@ def perform_incremental_backup(source_conn, dest_conn, source_paths, dest_path, 
         return True
         
     except Exception as e:
-        logger.error(f"Incremental backup failed: {e}")
-        return False
+        import traceback
+        error_detail = f"Incremental backup failed: {str(e)}\nTraceback: {traceback.format_exc()}"
+        logger.error(error_detail)
+        
+        # Put error in status queue
+        status_queue.put({
+            'job_id': job_id,
+            'status': 'failed',
+            'progress': 0,
+            'message': f'Backup failed: {str(e)}'
+        })
+        
+        raise Exception(f"Incremental backup failed: {str(e)}") from e
 
 
 def download_via_rsync(ssh_conn, remote_path, local_path, incremental=False):
