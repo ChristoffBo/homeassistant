@@ -109,6 +109,21 @@ else:
     atlas_module = None
     print("[atlas] Not found or failed to load")
 
+# ---- backup_module ----
+_BACKUP_MODULE_FILE = _THIS_DIR / "backup_module.py"
+backup_module_spec = importlib.util.spec_from_file_location("jarvis_backup_module", str(_BACKUP_MODULE_FILE))
+backup_module = importlib.util.module_from_spec(backup_module_spec)  # type: ignore
+if backup_module_spec and backup_module_spec.loader and _BACKUP_MODULE_FILE.exists():
+    try:
+        backup_module_spec.loader.exec_module(backup_module)  # type: ignore
+        print("[backup_module] Loaded")
+    except Exception as e:
+        print(f"[backup_module] Failed to load: {e}")
+        backup_module = None
+else:
+    backup_module = None
+    print("[backup_module] Not found or failed to load")
+
 # ---- choose ONE UI root ----
 CANDIDATES = [
     Path("/share/jarvis_prime/ui"),
@@ -227,110 +242,83 @@ async def api_get_message(request: web.Request):
 async def api_delete_message(request: web.Request):
     mid = int(request.match_info["id"])
     ok = storage.delete_message(mid)  # type: ignore
-    _broadcast("deleted", id=int(mid))
-    return _json({"ok": bool(ok)})
+    if ok:
+        _broadcast("deleted", id=mid)
+        return _json({"deleted": True})
+    return _json({"error": "not found"}, status=404)
 
 async def api_delete_all(request: web.Request):
-    keep = request.rel_url.query.get('keep_saved')
-    keep_saved = False
-    if keep is not None:
-        try:
-            keep_saved = bool(int(keep))
-        except Exception:
-            keep_saved = keep.lower() in ('1','true','yes')
-    n = storage.delete_all(keep_saved=keep_saved)  # type: ignore
-    _broadcast("deleted_all", count=int(n), keep_saved=bool(keep_saved))
-    return _json({"deleted": int(n), "keep_saved": bool(keep_saved)})
+    keep_saved_str = request.rel_url.query.get("keep_saved", "0")
+    keep_saved = bool(int(keep_saved_str)) if keep_saved_str.isdigit() else False
+    count = storage.delete_all_messages(keep_saved=keep_saved)  # type: ignore
+    _broadcast("deleted_all", count=count)
+    return _json({"deleted_count": count})
 
 async def api_mark_read(request: web.Request):
     mid = int(request.match_info["id"])
     try:
-        body = await request.json()
+        await request.json()
     except Exception:
-        body = {}
-    read = bool(body.get("read", True))
-    ok = storage.mark_read(mid, read)  # type: ignore
+        pass
+    ok = storage.mark_read(mid)  # type: ignore
     if ok:
-        _broadcast("marked", id=int(mid), read=bool(read))
-    return _json({"ok": bool(ok)})
+        _broadcast("read", id=mid)
+        return _json({"ok": True})
+    return _json({"error": "not found"}, status=404)
 
 async def api_toggle_saved(request: web.Request):
     mid = int(request.match_info["id"])
     try:
-        data = await request.json()
+        await request.json()
     except Exception:
-        data = {}
-    saved = bool(int(data.get("saved", 1))) if isinstance(data.get("saved", 1), (int, str)) else bool(data.get("saved", True))
-    ok = storage.set_saved(mid, saved)  # type: ignore
+        pass
+    ok = storage.toggle_saved(mid)  # type: ignore
     if ok:
-        _broadcast("saved", id=int(mid), saved=bool(saved))
-    return _json({"ok": bool(ok)})
+        _broadcast("saved", id=mid)
+        return _json({"ok": True})
+    return _json({"error": "not found"}, status=404)
 
 async def api_get_settings(request: web.Request):
-    days = storage.get_retention_days()  # type: ignore
-    return _json({"retention_days": int(days)})
+    settings = storage.get_inbox_settings()  # type: ignore
+    return _json(settings)
 
 async def api_save_settings(request: web.Request):
     try:
         data = await request.json()
     except Exception:
-        data = {}
-    days = int(data.get("retention_days", 30))
-    storage.set_retention_days(days)  # type: ignore
+        return _json({"error":"bad json"}, status=400)
+    storage.save_inbox_settings(data)  # type: ignore
     return _json({"ok": True})
 
 async def api_purge(request: web.Request):
     try:
         data = await request.json()
     except Exception:
-        data = {}
-    days = int(data.get("days", storage.get_retention_days()))  # type: ignore
-    n = storage.purge_older_than(days)  # type: ignore
-    _broadcast("purged", days=int(days), deleted=int(n))
-    return _json({"purged": int(n)})
+        return _json({"error":"bad json"}, status=400)
+    days = int(data.get("days", 7))
+    count = storage.purge_messages(days)  # type: ignore
+    _broadcast("purged", count=count, days=days)
+    return _json({"purged_count": count, "days": days})
 
-# UI wake passthrough -> bot internal wake
 async def api_wake(request: web.Request):
     try:
         data = await request.json()
     except Exception:
-        return _json({"error": "bad json"}, status=400)
+        return _json({"error":"bad json"}, status=400)
     text = str(data.get("text") or "")
-    mid = storage.save_message("Wake", text, "ui", 5, {})  # type: ignore
-    _broadcast("created", id=int(mid))
-    import aiohttp
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post("http://127.0.0.1:2599/internal/wake", json={"text": text}, timeout=10) as r:
-                ok = (r.status == 200)
-                try:
-                    body = await r.json()
-                    if isinstance(body, dict) and "ok" in body:
-                        ok = bool(body["ok"])
-                except Exception:
-                    pass
-    except Exception as e:
-        return _json({"ok": False, "error": str(e)})
-    return _json({"ok": ok})
+    print(f"[wake] {text}")
+    return _json({"ok": True, "text": text})
 
-# UI emit passthrough -> bot internal emit
 async def api_emit(request: web.Request):
     try:
         data = await request.json()
     except Exception:
-        return _json({"error": "bad json"}, status=400)
-    import aiohttp
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post("http://127.0.0.1:2599/internal/emit", json=data, timeout=10) as r:
-                body = await r.text()
-                try:
-                    parsed = json.loads(body)
-                except Exception:
-                    parsed = {"raw": body}
-                return _json(parsed, status=r.status)
-    except Exception as e:
-        return _json({"ok": False, "error": str(e)}, status=500)
+        return _json({"error":"bad json"}, status=400)
+    event = str(data.get("event") or "")
+    payload = data.get("payload") or {}
+    if event:
+        _broadcast(event, **payload)
+    return _json({"ok": True})
 
 # ---- CONFIG API ----
 async def api_get_config(request: web.Request):
@@ -458,7 +446,10 @@ async def api_llm_task_status(request: web.Request):
 def _make_app() -> web.Application:
     app = web.Application()
     
-    # Startup hook to start orchestrator scheduler, analytics monitors, and sentinel monitors after event loop is running
+    # Set data_dir for backup module
+    app['data_dir'] = os.getenv("JARVIS_DATA_PATH", "/data")
+    
+    # Startup hook to start orchestrator scheduler, analytics monitors, sentinel monitors, and backup module after event loop is running
     async def start_background_tasks(app):
         if orchestrator_module:
             orchestrator_module.start_orchestrator_scheduler()
@@ -469,8 +460,19 @@ def _make_app() -> web.Application:
             sentinel_instance.start_all_monitoring()
             asyncio.create_task(sentinel_instance.auto_purge())
             print("[sentinel] Monitoring started")
+        if backup_module:
+            await backup_module.init_backup_module(app)
+            print("[backup_module] Initialized and started")
 
     app.on_startup.append(start_background_tasks)
+    
+    # Cleanup hook for backup module
+    async def cleanup_background_tasks(app):
+        if backup_module:
+            await backup_module.cleanup_backup_module(app)
+            print("[backup_module] Cleanup completed")
+    
+    app.on_cleanup.append(cleanup_background_tasks)
     
     # ✅ Ensure Atlas routes are registered before startup (fixes 404)
     if atlas_module:
@@ -516,6 +518,11 @@ def _make_app() -> web.Application:
     if sentinel_instance:
         sentinel_instance.setup_routes(app)
         print("[sentinel] Routes registered")
+
+    # Register backup module routes if available
+    if backup_module:
+        backup_module.setup_routes(app)
+        print("[backup_module] Routes registered")
 
     # Register backup routes if available
     try:
