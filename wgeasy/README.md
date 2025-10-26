@@ -1,19 +1,19 @@
-# 🧩 WireGuard Easy  
-Created by **jdeath**, rebuilt for Home Assistant in the locked dark-mode style — the easiest way to install and manage WireGuard VPN directly inside Home Assistant.  
+# 🧩 WireGuard Easy
+Created by jdeath and adapted for Home Assistant. This add-on provides a full WireGuard VPN with integrated Web UI directly inside Home Assistant for secure and simple remote access.
 
-✅ All-in-one VPN + Web UI  
-✅ Full Ingress support  
-✅ Simple client management  
-✅ Auto-generated QR codes & configs  
-✅ Real-time stats and Tx/Rx charts  
-✅ Persistent config storage  
-✅ Gravatar avatar support  
+✅ All-in-one WireGuard VPN + Web UI  
+✅ Ingress supported  
+✅ Create, edit, enable, disable, and remove clients  
+✅ QR code and config download per client  
+✅ Real-time connection and traffic stats  
+✅ Persistent configuration storage  
+✅ Simple installation and management  
 
-📁 Key paths and files  
-/ssl/wgeasy → Default config storage  
-/share/wgeasy → Optional custom storage  
+📁 Paths  
+/ssl/wgeasy → Default persistent storage  
+/share/wgeasy → Optional alternate storage path  
 
-⚙️ Configuration (flat JSON example)  
+⚙️ Configuration  
 {
   "PASSWORD_HASH": "",
   "WG_HOST": "vpn.myserver.com",
@@ -29,37 +29,37 @@ Created by **jdeath**, rebuilt for Home Assistant in the locked dark-mode style 
   "WG_POST_DOWN": ""
 }
 
-🧪 Options explained  
-- PASSWORD_HASH – Optional login password hash for the Web UI (docker run -it ghcr.io/wg-easy/wg-easy wgpw YOUR_PASSWORD).  
-- WG_HOST – Your public hostname or external IP.  
-- WG_PORT – UDP port your router forwards to Home Assistant.  
-- WG_CONFIG_PORT – UDP port used internally by the add-on.  
-- WG_DEVICE – Ethernet device for traffic forwarding (usually eth0).  
-- WG_PATH – Persistent config directory (/ssl/wgeasy or /share/wgeasy).  
-- WG_PERSISTENT_KEEPALIVE – Optional keepalive interval (seconds).  
-- WG_DEFAULT_ADDRESS – Client subnet (default 10.8.0.x).  
-- WG_DEFAULT_DNS – DNS servers clients will use.  
-- WG_ALLOWED_IPS – IP ranges allowed through the VPN.  
-- WG_POST_UP / WG_POST_DOWN – Leave blank or "" if add-on fails to start.  
+🧪 Options  
+PASSWORD_HASH – Optional Web UI password hash (docker run -it ghcr.io/wg-easy/wg-easy wgpw YOUR_PASSWORD)  
+WG_HOST – Public hostname or external IP of your VPN server  
+WG_PORT – UDP port forwarded to Home Assistant (default 51820)  
+WG_CONFIG_PORT – Internal WireGuard config port  
+WG_DEVICE – Network interface used for forwarding (usually eth0)  
+WG_PATH – Config directory for WireGuard data  
+WG_PERSISTENT_KEEPALIVE – Optional keepalive interval in seconds  
+WG_DEFAULT_ADDRESS – IP range for clients (default 10.8.0.x)  
+WG_DEFAULT_DNS – DNS server(s) clients use  
+WG_ALLOWED_IPS – IP ranges routed through VPN  
+WG_POST_UP / WG_POST_DOWN – Leave blank or "" if add-on fails to start  
 
-🌍 Web UI Access  
-The UI opens directly via Home Assistant Ingress — no manual port required.  
-For direct access, forward WG_PORT (default 51820) from your router to your Home Assistant IP.  
-⚠️ Do not expose the UI directly to the internet unless you fully understand the risk.  
+🌍 Access  
+UI loads via Home Assistant Ingress automatically.  
+To use externally, forward UDP port 51820 from your router to your Home Assistant IP.  
+Do not expose the UI directly to the internet unless you know what you are doing.  
 
 🧠 Notes  
-- Ensure /ssl/wgeasy exists before first start.  
-- To use AdGuard Home with WireGuard, set WG_DEFAULT_DNS to 172.30.32.1.  
-- If the add-on refuses to start, clear WG_POST_UP and WG_POST_DOWN.  
-- Rebuilding automatically pulls the latest WireGuard version but not custom UI changes from upstream.  
+Ensure /ssl/wgeasy exists before starting.  
+To use with AdGuard Home, set WG_DEFAULT_DNS to 172.30.32.1.  
+If the add-on refuses to start, clear WG_POST_UP and WG_POST_DOWN.  
+Rebuilding pulls the latest WireGuard version but not UI changes from upstream.  
 
 ✅ Features  
-- Full Ingress support  
-- Add, edit, delete, enable/disable clients  
-- QR code and config download per client  
-- Real-time client stats and charts  
-- Built-in password protection (optional)  
-- Seamless HA integration  
+Ingress-ready interface  
+Add, edit, delete, and manage clients easily  
+Generate QR codes and download configs  
+View live connection and bandwidth stats  
+Secure password-protected Web UI (optional)  
+Automatic persistent configuration  
 
 🧩 Credits  
-Originally created by **jdeath** (https://github.com/jdeath/homeassistant-addons), adapted to this format for Home Assistant users.
+Originally created by jdeath (https://github.com/jdeath/homeassistant-addons).
