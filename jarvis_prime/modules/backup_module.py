@@ -697,8 +697,22 @@ def perform_incremental_backup(source_conn, dest_conn, source_paths, dest_path, 
 
 
 def download_via_rsync(ssh_conn, remote_path, local_path, incremental=False):
-    """Download using rsync over SSH"""
+    """Download using rsync over SSH (with SFTP fallback)"""
     os.makedirs(local_path, exist_ok=True)
+    
+    # Check if rsync is available
+    try:
+        subprocess.run(['which', 'rsync'], check=True, capture_output=True)
+        subprocess.run(['which', 'sshpass'], check=True, capture_output=True)
+        has_rsync = True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        has_rsync = False
+    
+    if not has_rsync:
+        # Fallback to SFTP
+        logger.warning("rsync not available, using SFTP fallback (slower)")
+        download_via_sftp(ssh_conn, remote_path, local_path)
+        return
     
     rsync_cmd = [
         'rsync',
@@ -711,12 +725,61 @@ def download_via_rsync(ssh_conn, remote_path, local_path, incremental=False):
     
     if incremental:
         rsync_cmd.insert(2, '--update')
+    
+    try:
+        result = subprocess.run(rsync_cmd, check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as e:
+        error_output = e.stderr if e.stderr else e.stdout
+        raise Exception(f"rsync failed (exit code {e.returncode}): {error_output}")
+
+
+def download_via_sftp(ssh_conn, remote_path, local_path):
+    """Download using SFTP (slower but more compatible)"""
+    import stat
+    
+    try:
+        # Check if remote path exists and is a directory
+        remote_stat = ssh_conn.sftp.stat(remote_path)
         
-    subprocess.run(rsync_cmd, check=True, capture_output=True)
+        if stat.S_ISDIR(remote_stat.st_mode):
+            # Download directory recursively
+            os.makedirs(local_path, exist_ok=True)
+            
+            for item in ssh_conn.sftp.listdir_attr(remote_path):
+                remote_item = os.path.join(remote_path, item.filename)
+                local_item = os.path.join(local_path, item.filename)
+                
+                if stat.S_ISDIR(item.st_mode):
+                    # Recursively download subdirectory
+                    download_via_sftp(ssh_conn, remote_item, local_item)
+                else:
+                    # Download file
+                    ssh_conn.sftp.get(remote_item, local_item)
+        else:
+            # Download single file
+            ssh_conn.sftp.get(remote_path, os.path.join(local_path, os.path.basename(remote_path)))
+            
+    except Exception as e:
+        raise Exception(f"SFTP download failed: {str(e)}")
 
 
 def upload_via_rsync(ssh_conn, local_path, remote_path):
-    """Upload using rsync over SSH"""
+    """Upload using rsync over SSH (with SFTP fallback)"""
+    
+    # Check if rsync is available
+    try:
+        subprocess.run(['which', 'rsync'], check=True, capture_output=True)
+        subprocess.run(['which', 'sshpass'], check=True, capture_output=True)
+        has_rsync = True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        has_rsync = False
+    
+    if not has_rsync:
+        # Fallback to SFTP
+        logger.warning("rsync not available, using SFTP fallback (slower)")
+        upload_via_sftp(ssh_conn, local_path, remote_path)
+        return
+    
     rsync_cmd = [
         'rsync',
         '-avz',
@@ -726,7 +789,42 @@ def upload_via_rsync(ssh_conn, local_path, remote_path):
         f'{ssh_conn.username}@{ssh_conn.host}:{remote_path}/'
     ]
     
-    subprocess.run(rsync_cmd, check=True, capture_output=True)
+    try:
+        result = subprocess.run(rsync_cmd, check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as e:
+        error_output = e.stderr if e.stderr else e.stdout
+        raise Exception(f"rsync failed (exit code {e.returncode}): {error_output}")
+
+
+def upload_via_sftp(ssh_conn, local_path, remote_path):
+    """Upload using SFTP (slower but more compatible)"""
+    import stat
+    
+    try:
+        # Create remote directory if it doesn't exist
+        try:
+            ssh_conn.sftp.stat(remote_path)
+        except:
+            ssh_conn.sftp.mkdir(remote_path)
+        
+        if os.path.isdir(local_path):
+            # Upload directory recursively
+            for item in os.listdir(local_path):
+                local_item = os.path.join(local_path, item)
+                remote_item = os.path.join(remote_path, item)
+                
+                if os.path.isdir(local_item):
+                    # Recursively upload subdirectory
+                    upload_via_sftp(ssh_conn, local_item, remote_item)
+                else:
+                    # Upload file
+                    ssh_conn.sftp.put(local_item, remote_item)
+        else:
+            # Upload single file
+            ssh_conn.sftp.put(local_path, os.path.join(remote_path, os.path.basename(local_path)))
+            
+    except Exception as e:
+        raise Exception(f"SFTP upload failed: {str(e)}")
 
 
 def sync_directories(source, dest):
