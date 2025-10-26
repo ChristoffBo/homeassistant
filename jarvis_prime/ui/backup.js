@@ -483,7 +483,7 @@
   window.backupRefreshArchives = async function() {
     try {
       const data = await backupFetch('api/backup/archives');
-      backupState.archives = Array.isArray(data) ? data : (data.archives || []);
+      backupState.archives = data.archives || [];
       
       renderArchivesList();
       updateStatistics();
