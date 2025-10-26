@@ -287,7 +287,9 @@ async def api_save_settings(request: web.Request):
         data = await request.json()
     except Exception:
         return _json({"error":"bad json"}, status=400)
-    storage.save_inbox_settings(data)  # type: ignore
+    # Store inbox settings (retention days)
+    if hasattr(storage, 'save_inbox_settings'):
+        storage.save_inbox_settings(data)  # type: ignore
     return _json({"ok": True})
 
 async def api_purge(request: web.Request):
