@@ -352,11 +352,12 @@ def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
         import json
         from pathlib import Path
         
-        data_dir = Path('/var/lib/jarvis_prime')
+        # Get data_dir from job config (passed by parent process)
+        data_dir = Path(job_config.get('_data_dir', '/data/backup_module'))
         servers_file = data_dir / 'backup_servers.json'
         
         if not servers_file.exists():
-            raise Exception("No servers configured. Please add source and destination servers.")
+            raise Exception(f"No servers configured. Please add source and destination servers. Looking in: {servers_file}")
         
         with open(servers_file, 'r') as f:
             all_servers = json.load(f)
@@ -834,7 +835,9 @@ class BackupManager:
             logger.warning(f"Job {job_id} is already running")
             return False
             
-        job_config = self.jobs[job_id]
+        job_config = self.jobs[job_id].copy()
+        # Add data_dir to job config so worker process can find servers
+        job_config['_data_dir'] = str(self.data_dir)
         
         process = Process(
             target=backup_worker,
