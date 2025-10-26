@@ -79,6 +79,8 @@ COPY /modules/beautify.py /app/beautify.py
 COPY /modules/enviroguard.py /app/enviroguard.py
 COPY /modules/sentinel.py /app/sentinel.py
 COPY /modules/atlas.py /app/atlas.py
+COPY /modules/backup_module.py /app/backup_module.py
+
 
 # LLM + memory
 COPY /llm/llm_client.py /app/llm_client.py
