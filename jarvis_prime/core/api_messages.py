@@ -110,31 +110,18 @@ else:
     print("[atlas] Not found or failed to load")
 
 # ---- backup_module ----
-_BACKUP_FILE = _THIS_DIR / "backup_module.py"
-backup_spec = importlib.util.spec_from_file_location("jarvis_backup", str(_BACKUP_FILE))
-backup_module = importlib.util.module_from_spec(backup_spec)  # type: ignore
-backup_manager = None
-if backup_spec and backup_spec.loader and _BACKUP_FILE.exists():
+_BACKUP_MODULE_FILE = _THIS_DIR / "backup_module.py"
+backup_module_spec = importlib.util.spec_from_file_location("jarvis_backup_module", str(_BACKUP_MODULE_FILE))
+backup_module = importlib.util.module_from_spec(backup_module_spec)  # type: ignore
+if backup_module_spec and backup_module_spec.loader and _BACKUP_MODULE_FILE.exists():
     try:
-        backup_spec.loader.exec_module(backup_module)  # type: ignore
-        
-        def notify_via_backup(title, body, source="backup", priority=5):
-            """Send backup notifications through inbox"""
-            storage.save_message(title, body, source, priority, {})  # type: ignore
-            _broadcast("created")
-        
-        backup_manager = backup_module.BackupManager(
-            config_path="/share/jarvis_prime/backup",
-            notify_callback=notify_via_backup,
-            logger=print
-        )
-        print("[backup_module] Loaded")
+        backup_module_spec.loader.exec_module(backup_module)  # type: ignore
+        print("[backup_module] Module loaded")
     except Exception as e:
-        print(f"[backup_module] Failed to initialize: {e}")
-        backup_manager = None
+        print(f"[backup_module] Failed to load: {e}")
+        backup_module = None
 else:
     backup_module = None
-    backup_manager = None
     print("[backup_module] Not found or failed to load")
 
 # ---- choose ONE UI root ----
@@ -226,163 +213,275 @@ async def api_create_message(request: web.Request):
     return _json({"id": int(mid)})
 
 async def api_list_messages(request: web.Request):
-    items = storage.get_all_messages()  # type: ignore
+    q = request.rel_url.query.get("q")
+    try:
+        limit = int(request.rel_url.query.get("limit", "50"))
+    except Exception:
+        limit = 50
+    try:
+        offset = int(request.rel_url.query.get("offset", "0"))
+    except Exception:
+        offset = 0
+    saved = request.rel_url.query.get("saved")
+    saved_bool = None
+    if saved is not None:
+        try:
+            saved_bool = bool(int(saved))
+        except Exception:
+            saved_bool = saved.lower() in ('1','true','yes')
+    items = storage.list_messages(limit=limit, q=q, offset=offset, saved=saved_bool)  # type: ignore
     return _json({"items": items})
 
-async def api_delete_message(request: web.Request):
-    mid = request.match_info.get("id")
-    if not mid:
-        return _json({"error":"no id"}, status=400)
-    storage.delete_message(int(mid))  # type: ignore
-    _broadcast("deleted", id=int(mid))
-    return _json({"ok": True})
+async def api_get_message(request: web.Request):
+    mid = int(request.match_info["id"])
+    m = storage.get_message(mid)  # type: ignore
+    if not m:
+        return _json({"error": "not found"}, status=404)
+    return _json(m)
 
-async def api_save_message(request: web.Request):
-    mid = request.match_info.get("id")
-    if not mid:
-        return _json({"error":"no id"}, status=400)
-    storage.toggle_save(int(mid))  # type: ignore
-    _broadcast("saved", id=int(mid))
-    return _json({"ok": True})
+async def api_delete_message(request: web.Request):
+    mid = int(request.match_info["id"])
+    ok = storage.delete_message(mid)  # type: ignore
+    _broadcast("deleted", id=int(mid))
+    return _json({"ok": bool(ok)})
 
 async def api_delete_all(request: web.Request):
-    qs = request.rel_url.query
-    keep_saved = (qs.get("keep_saved") == "1")
-    storage.delete_all_messages(keep_saved=keep_saved)  # type: ignore
-    _broadcast("deleted_all")
+    keep = request.rel_url.query.get('keep_saved')
+    keep_saved = False
+    if keep is not None:
+        try:
+            keep_saved = bool(int(keep))
+        except Exception:
+            keep_saved = keep.lower() in ('1','true','yes')
+    n = storage.delete_all(keep_saved=keep_saved)  # type: ignore
+    _broadcast("deleted_all", count=int(n), keep_saved=bool(keep_saved))
+    return _json({"deleted": int(n), "kept_saved": bool(keep_saved)})
+
+async def api_mark_read(request: web.Request):
+    mid = int(request.match_info["id"])
+    storage.mark_read(mid)  # type: ignore
+    _broadcast("updated", id=int(mid))
     return _json({"ok": True})
+
+async def api_toggle_saved(request: web.Request):
+    mid = int(request.match_info["id"])
+    storage.toggle_saved(mid)  # type: ignore
+    _broadcast("updated", id=int(mid))
+    return _json({"ok": True})
+
+async def api_get_settings(request: web.Request):
+    settings = storage.load_inbox_settings()  # type: ignore
+    return _json(settings)
 
 async def api_save_settings(request: web.Request):
     try:
         data = await request.json()
     except Exception:
         return _json({"error":"bad json"}, status=400)
-    # For inbox settings, just acknowledge - storage handles it internally if needed
+    storage.save_inbox_settings(data)  # type: ignore
     return _json({"ok": True})
 
 async def api_purge(request: web.Request):
     try:
         data = await request.json()
     except Exception:
+        data = {}
+    hours = int(data.get("hours", 24))
+    keep_saved = bool(data.get("keep_saved", False))
+    n = storage.purge_old_messages(hours, keep_saved)  # type: ignore
+    _broadcast("purged", count=int(n))
+    return _json({"deleted": int(n)})
+
+async def api_wake(request: web.Request):
+    try:
+        data = await request.json()
+    except Exception:
         return _json({"error":"bad json"}, status=400)
-    days = int(data.get("days", 7))
-    storage.purge_old_messages(days)  # type: ignore
-    _broadcast("purged")
-    return _json({"ok": True})
+    title = str(data.get("title","") or "Wake")
+    msg = str(data.get("message","") or "")
+    priority = int(data.get("priority", 5))
+    mid = storage.save_message(title, msg, "wake", priority, {})  # type: ignore
+    _broadcast("created", id=int(mid))
+    return _json({"id": int(mid)})
 
-# ---- LLM task queue ----
-llm_tasks = {}
-llm_task_counter = 0
+async def api_emit(request: web.Request):
+    try:
+        data = await request.json()
+    except Exception:
+        return _json({"error":"bad json"}, status=400)
+    title = str(data.get("title") or "")
+    body = str(data.get("body") or "")
+    source = str(data.get("source") or "internal")
+    priority = int(data.get("priority", 5))
+    extras = data.get("extras") or {}
+    mid = storage.save_message(title, body, source, priority, extras)  # type: ignore
+    _broadcast("created", id=int(mid))
+    return _json({"id": int(mid)})
 
+# ---- CONFIG API ----
+async def api_get_config(request: web.Request):
+    """GET /api/config - returns current merged config"""
+    is_hassio = bool(os.getenv("HASSIO_TOKEN"))
+    
+    # Use JARVIS_CONFIG_PATH if set, otherwise default based on HA mode
+    config_path = Path(os.getenv("JARVIS_CONFIG_PATH", "/data/options.json" if is_hassio else "/data/config.json"))
+    
+    config = {}
+    try:
+        if config_path.exists():
+            config = json.loads(config_path.read_text())
+    except Exception as e:
+        print(f"[config] Failed to load config from {config_path}: {e}")
+    
+    return _json({
+        "config": config,
+        "is_hassio": is_hassio,
+        "readonly": is_hassio
+    })
+
+async def api_save_config(request: web.Request):
+    """POST /api/config - saves config (Docker only)"""
+    is_hassio = bool(os.getenv("HASSIO_TOKEN"))
+    
+    if is_hassio:
+        return _json({"error": "Use Home Assistant addon UI to configure"}, status=403)
+    
+    try:
+        new_config = await request.json()
+    except Exception:
+        return _json({"error": "bad json"}, status=400)
+    
+    # Use JARVIS_CONFIG_PATH if set, otherwise default to /data/config.json
+    config_path = Path(os.getenv("JARVIS_CONFIG_PATH", "/data/config.json"))
+    
+    try:
+        config_path.write_text(json.dumps(new_config, indent=2))
+        print(f"[config] Saved config to {config_path}")
+        return _json({"ok": True, "restart_required": True})
+    except Exception as e:
+        print(f"[config] Failed to save config to {config_path}: {e}")
+        return _json({"error": str(e)}, status=500)
+
+# ---- LLM API ----
 async def api_llm_rewrite(request: web.Request):
-    global llm_task_counter
+    """POST /api/llm/rewrite - submit rewrite task"""
     try:
         data = await request.json()
     except Exception:
         return _json({"error": "bad json"}, status=400)
-
-    text = data.get("text", "")
-    style = data.get("style", "improved")
-    max_tokens = int(data.get("max_tokens", 256))
-    timeout = int(data.get("timeout", 20))
-
-    llm_task_counter += 1
-    task_id = f"rewrite-{llm_task_counter}"
-
-    async def _run():
-        try:
-            result = await asyncio.wait_for(
-                asyncio.to_thread(llm_client.rewrite_text, text, style, max_tokens),
-                timeout=timeout
-            )
-            llm_tasks[task_id] = {"status": "complete", "result": result}
-        except asyncio.TimeoutError:
-            llm_tasks[task_id] = {"status": "error", "error": "Timeout"}
-        except Exception as e:
-            llm_tasks[task_id] = {"status": "error", "error": str(e)}
-
-    llm_tasks[task_id] = {"status": "processing"}
-    asyncio.create_task(_run())
-    return _json({"task_id": task_id})
+    
+    text = str(data.get("text", ""))
+    if not text:
+        return _json({"error": "text required"}, status=400)
+    
+    mood = str(data.get("mood", "neutral"))
+    timeout = int(data.get("timeout", 12))
+    
+    task_id = llm_client.submit_task(
+        llm_client.rewrite,
+        text=text,
+        mood=mood,
+        timeout=timeout,
+        allow_profanity=False
+    )
+    
+    return _json({"task_id": task_id, "status": "processing"})
 
 async def api_llm_riff(request: web.Request):
-    global llm_task_counter
+    """POST /api/llm/riff - submit persona riff task"""
     try:
         data = await request.json()
     except Exception:
         return _json({"error": "bad json"}, status=400)
-
-    prompt = data.get("prompt", "")
-    max_tokens = int(data.get("max_tokens", 100))
-    timeout = int(data.get("timeout", 20))
-
-    llm_task_counter += 1
-    task_id = f"riff-{llm_task_counter}"
-
-    async def _run():
-        try:
-            result = await asyncio.wait_for(
-                asyncio.to_thread(llm_client.persona_riff, prompt, max_tokens),
-                timeout=timeout
-            )
-            llm_tasks[task_id] = {"status": "complete", "result": result}
-        except asyncio.TimeoutError:
-            llm_tasks[task_id] = {"status": "error", "error": "Timeout"}
-        except Exception as e:
-            llm_tasks[task_id] = {"status": "error", "error": str(e)}
-
-    llm_tasks[task_id] = {"status": "processing"}
-    asyncio.create_task(_run())
-    return _json({"task_id": task_id})
+    
+    persona = str(data.get("persona", "neutral"))
+    context = str(data.get("context", ""))
+    max_lines = int(data.get("max_lines", 3))
+    timeout = int(data.get("timeout", 8))
+    
+    task_id = llm_client.submit_task(
+        llm_client.persona_riff,
+        persona=persona,
+        context=context,
+        max_lines=max_lines,
+        timeout=timeout
+    )
+    
+    return _json({"task_id": task_id, "status": "processing"})
 
 async def api_llm_chat(request: web.Request):
-    global llm_task_counter
+    """POST /api/llm/chat - submit chat task"""
     try:
         data = await request.json()
     except Exception:
         return _json({"error": "bad json"}, status=400)
-
+    
     messages = data.get("messages", [])
+    if not messages:
+        return _json({"error": "messages required"}, status=400)
+    
+    system_prompt = str(data.get("system_prompt", ""))
     max_tokens = int(data.get("max_tokens", 384))
     timeout = int(data.get("timeout", 20))
-
-    llm_task_counter += 1
-    task_id = f"chat-{llm_task_counter}"
-
-    async def _run():
-        try:
-            result = await asyncio.wait_for(
-                asyncio.to_thread(llm_client.chat, messages, max_tokens),
-                timeout=timeout
-            )
-            llm_tasks[task_id] = {"status": "complete", "result": result}
-        except asyncio.TimeoutError:
-            llm_tasks[task_id] = {"status": "error", "error": "Timeout"}
-        except Exception as e:
-            llm_tasks[task_id] = {"status": "error", "error": str(e)}
-
-    llm_tasks[task_id] = {"status": "processing"}
-    asyncio.create_task(_run())
-    return _json({"task_id": task_id})
+    
+    task_id = llm_client.submit_task(
+        llm_client.chat_generate,
+        messages=messages,
+        system_prompt=system_prompt,
+        max_new_tokens=max_tokens,
+        timeout=timeout
+    )
+    
+    return _json({"task_id": task_id, "status": "processing"})
 
 async def api_llm_task_status(request: web.Request):
-    task_id = request.match_info.get("task_id")
-    if not task_id or task_id not in llm_tasks:
-        return _json({"status": "not_found"}, status=404)
-    return _json(llm_tasks[task_id])
+    """GET /api/llm/task/{task_id} - get task status"""
+    task_id = request.match_info["task_id"]
+    status = llm_client.get_task_status(task_id)
+    return _json(status)
 
-def _make_app():
+# ---- app ----
+def _make_app() -> web.Application:
     app = web.Application()
+    
+    # Startup hook to start orchestrator scheduler, analytics monitors, and sentinel monitors after event loop is running
+    async def start_background_tasks(app):
+        if orchestrator_module:
+            orchestrator_module.start_orchestrator_scheduler()
+        if analytics_module:
+            await analytics_module.init_analytics(app, notification_callback=notify_via_analytics)
+            print("[analytics] Initialized and monitoring started")
+        if sentinel_instance:
+            sentinel_instance.start_all_monitoring()
+            asyncio.create_task(sentinel_instance.auto_purge())
+            print("[sentinel] Monitoring started")
 
-    # Message API routes
+    app.on_startup.append(start_background_tasks)
+    
+    # ✅ Ensure Atlas routes are registered before startup (fixes 404)
+    if atlas_module:
+       atlas_module.register_routes(app)
+       print("[atlas] Routes registered (pre-startup)")
+ 
+    # API routes
     app.router.add_get("/api/stream", _sse)
-    app.router.add_post("/api/messages", api_create_message)
     app.router.add_get("/api/messages", api_list_messages)
-    app.router.add_delete("/api/messages/{id}", api_delete_message)
-    app.router.add_post("/api/messages/{id}/save", api_save_message)
+    app.router.add_post("/api/messages", api_create_message)
+    app.router.add_get("/api/messages/{id:\\d+}", api_get_message)
+    app.router.add_delete("/api/messages/{id:\\d+}", api_delete_message)
     app.router.add_delete("/api/messages", api_delete_all)
+    app.router.add_post("/api/messages/{id:\\d+}/read", api_mark_read)
+    app.router.add_post("/api/messages/{id:\\d+}/save", api_toggle_saved)
+    app.router.add_get("/api/inbox/settings", api_get_settings)
     app.router.add_post("/api/inbox/settings", api_save_settings)
     app.router.add_post("/api/inbox/purge", api_purge)
+    app.router.add_post("/api/wake", api_wake)
+    app.router.add_post("/internal/wake", api_wake)
+    app.router.add_post("/internal/emit", api_emit)
+    
+    # Config API
+    app.router.add_get("/api/config", api_get_config)
+    app.router.add_post("/api/config", api_save_config)
 
     # LLM routes
     app.router.add_post("/api/llm/rewrite", api_llm_rewrite)
@@ -404,17 +503,23 @@ def _make_app():
         sentinel_instance.setup_routes(app)
         print("[sentinel] Routes registered")
 
-    # Register atlas routes if available
-    if atlas_module and hasattr(atlas_module, 'register_routes'):
-        atlas_module.register_routes(app)
-        print("[atlas] Routes registered")
+    # Register backup_module routes if available
+    if backup_module:
+        try:
+            backup_module.setup_routes(app)
+            print("[backup_module] Routes registered")
+        except Exception as e:
+            print(f"[backup_module] Failed to register routes: {e}")
 
-    # Register backup routes if available
-    if backup_module and hasattr(backup_module, 'setup_routes'):
-        backup_module.setup_routes(app)
-        print("[backup_module] Routes registered")
+    # Register backup routes if available (old backup.py)
+    try:
+        from backup import register_routes as register_backup
+        register_backup(app)
+        print("[backup] Routes registered")
+    except Exception as e:
+        print(f"[backup] Failed to register routes: {e}")
 
-    # Register authentication routes
+# Register authentication routes
     try:
         auth.setup_auth_routes(app)
         print("[auth] Routes registered")
@@ -436,28 +541,6 @@ def _make_app():
     async def _debug_ui_root(_):
         return _json({"ui_root": str(UI_ROOT), "index_exists": UI_INDEX.exists()})
     app.router.add_get("/debug/ui-root", _debug_ui_root)
-
-    # Startup hook for modules
-    async def on_startup(app):
-        if analytics_module and hasattr(analytics_module, 'start_monitoring'):
-            asyncio.create_task(analytics_module.start_monitoring())
-            print("[analytics] Initialized and monitoring started")
-        
-        if sentinel_instance and hasattr(sentinel_instance, 'start'):
-            asyncio.create_task(sentinel_instance.start())
-            print("[sentinel] Monitoring started")
-        
-        if backup_manager and hasattr(backup_manager, 'start'):
-            await backup_manager.start()
-            print("[backup_module] Initialized and started")
-
-    async def on_cleanup(app):
-        if backup_manager and hasattr(backup_manager, 'shutdown'):
-            await backup_manager.shutdown()
-            print("[backup_module] Shutdown complete")
-
-    app.on_startup.append(on_startup)
-    app.on_cleanup.append(on_cleanup)
 
     return app
 
