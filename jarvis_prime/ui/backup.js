@@ -636,10 +636,139 @@
   window.backupRunJob = async function(jobId) {
     try {
       await backupFetch(`api/backup/jobs/${jobId}/run`, { method: 'POST' });
-      toast('✅ Backup job started', 'info');
-      setTimeout(() => backupLoadJobs(), 2000);
+      
+      // Open progress modal
+      backupOpenProgressModal(jobId);
+      
+      // Start polling for progress
+      backupStartProgressPolling(jobId);
+      
     } catch (error) {
       toast('❌ Failed to run job: ' + error.message, 'error');
+    }
+  };
+
+  let progressPollingInterval = null;
+  let progressLogEntries = [];
+
+  window.backupOpenProgressModal = function(jobId) {
+    // Find job details
+    const job = backupState.jobs.find(j => j.id === jobId);
+    if (job) {
+      document.getElementById('backup-progress-job-name').textContent = job.name;
+    }
+    
+    // Reset progress
+    document.getElementById('backup-progress-bar').style.width = '0%';
+    document.getElementById('backup-progress-percent').textContent = '0%';
+    document.getElementById('backup-progress-status').textContent = 'Starting...';
+    document.getElementById('backup-progress-message').textContent = 'Initializing backup...';
+    document.getElementById('backup-progress-log').innerHTML = '<div style="color: var(--text-muted);">Starting backup...</div>';
+    progressLogEntries = ['[' + new Date().toLocaleTimeString() + '] Backup job started'];
+    
+    backupState.currentProgressJobId = jobId;
+    document.getElementById('backup-progress-modal').style.display = 'flex';
+  };
+
+  window.backupCloseProgressModal = function() {
+    document.getElementById('backup-progress-modal').style.display = 'none';
+    if (progressPollingInterval) {
+      clearInterval(progressPollingInterval);
+      progressPollingInterval = null;
+    }
+    backupLoadJobs(); // Refresh job list
+  };
+
+  window.backupStartProgressPolling = function(jobId) {
+    // Clear any existing interval
+    if (progressPollingInterval) {
+      clearInterval(progressPollingInterval);
+    }
+    
+    // Poll every 2 seconds
+    progressPollingInterval = setInterval(async () => {
+      try {
+        const result = await backupFetch(`api/backup/jobs/${jobId}/status`);
+        const status = result.status || result; // Handle both {status: {...}} and direct status
+        backupUpdateProgressDisplay(status);
+        
+        // Stop polling if completed or failed
+        if (status.status === 'completed' || status.status === 'failed') {
+          clearInterval(progressPollingInterval);
+          progressPollingInterval = null;
+          
+          setTimeout(() => {
+            backupLoadJobs();
+            backupRefreshArchives();
+          }, 2000);
+        }
+      } catch (error) {
+        console.error('Progress polling error:', error);
+      }
+    }, 2000);
+  };
+
+  function backupUpdateProgressDisplay(status) {
+    if (!status) return;
+    
+    const progress = status.progress || 0;
+    const statusText = status.status || 'running';
+    const message = status.message || 'Processing...';
+    
+    // Update progress bar
+    document.getElementById('backup-progress-bar').style.width = progress + '%';
+    document.getElementById('backup-progress-percent').textContent = progress + '%';
+    
+    // Update status text
+    let statusColor = '#0ea5e9';
+    let statusDisplay = statusText.toUpperCase();
+    
+    if (statusText === 'completed') {
+      statusColor = '#10b981';
+      statusDisplay = '✅ COMPLETED';
+      document.getElementById('backup-progress-bar').style.background = 'linear-gradient(90deg, #10b981, #059669)';
+    } else if (statusText === 'failed') {
+      statusColor = '#ef4444';
+      statusDisplay = '❌ FAILED';
+      document.getElementById('backup-progress-bar').style.background = 'linear-gradient(90deg, #ef4444, #dc2626)';
+    } else if (statusText === 'running') {
+      statusDisplay = '⏳ RUNNING';
+    }
+    
+    document.getElementById('backup-progress-status').textContent = statusDisplay;
+    document.getElementById('backup-progress-status').style.color = statusColor;
+    
+    // Update message
+    document.getElementById('backup-progress-message').textContent = message;
+    
+    // Add to log if message changed
+    if (progressLogEntries[progressLogEntries.length - 1] !== message) {
+      const timestamp = new Date().toLocaleTimeString();
+      progressLogEntries.push(`[${timestamp}] ${message}`);
+      
+      // Keep last 20 entries
+      if (progressLogEntries.length > 20) {
+        progressLogEntries.shift();
+      }
+      
+      // Update log display
+      const logHtml = progressLogEntries.map(entry => {
+        let color = 'var(--text-muted)';
+        if (entry.includes('completed') || entry.includes('success')) color = '#10b981';
+        if (entry.includes('failed') || entry.includes('error')) color = '#ef4444';
+        return `<div style="color: ${color};">${entry}</div>`;
+      }).join('');
+      
+      const logContainer = document.getElementById('backup-progress-log');
+      logContainer.innerHTML = logHtml;
+      logContainer.scrollTop = logContainer.scrollHeight;
+    }
+  }
+
+  window.backupCancelJob = function() {
+    if (confirm('Are you sure you want to cancel this backup?')) {
+      // TODO: Add cancel endpoint
+      toast('Cancel feature coming soon', 'info');
     }
   };
 
