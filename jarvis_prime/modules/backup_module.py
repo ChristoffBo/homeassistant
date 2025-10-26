@@ -741,6 +741,70 @@ class BackupManager:
             logger.info(f"Deleted backup job {job_id}")
             return True
         return False
+    
+    def get_all_servers(self) -> List[Dict]:
+        """Get all configured servers"""
+        servers_file = self.data_dir / 'backup_servers.json'
+        if servers_file.exists():
+            with open(servers_file, 'r') as f:
+                return json.load(f)
+        return []
+    
+    def add_server(self, server_config: Dict) -> str:
+        """Add a new server configuration"""
+        server_id = str(uuid.uuid4())
+        server_config['id'] = server_id
+        
+        servers = self.get_all_servers()
+        servers.append(server_config)
+        
+        servers_file = self.data_dir / 'backup_servers.json'
+        with open(servers_file, 'w') as f:
+            json.dump(servers, f, indent=2)
+        
+        logger.info(f"Added server {server_id}")
+        return server_id
+    
+    def delete_server(self, server_id: str) -> bool:
+        """Delete a server configuration"""
+        servers = self.get_all_servers()
+        filtered = [s for s in servers if s.get('id') != server_id]
+        
+        if len(filtered) < len(servers):
+            servers_file = self.data_dir / 'backup_servers.json'
+            with open(servers_file, 'w') as f:
+                json.dump(filtered, f, indent=2)
+            logger.info(f"Deleted server {server_id}")
+            return True
+        return False
+    
+    def get_all_archives(self) -> List[Dict]:
+        """Get all backup archives"""
+        archives_file = self.data_dir / 'backup_archives.json'
+        if archives_file.exists():
+            with open(archives_file, 'r') as f:
+                return json.load(f)
+        return []
+    
+    def delete_archive(self, archive_id: str) -> bool:
+        """Delete a backup archive"""
+        archives = self.get_all_archives()
+        filtered = [a for a in archives if a.get('id') != archive_id]
+        
+        if len(filtered) < len(archives):
+            archives_file = self.data_dir / 'backup_archives.json'
+            with open(archives_file, 'w') as f:
+                json.dump(filtered, f, indent=2)
+            logger.info(f"Deleted archive {archive_id}")
+            return True
+        return False
+    
+    def start_restore(self, archive_id: str, dest_server_id: str, dest_path: str, overwrite: bool) -> str:
+        """Start a restore operation"""
+        restore_id = str(uuid.uuid4())
+        # TODO: Implement actual restore logic
+        logger.info(f"Started restore {restore_id} for archive {archive_id}")
+        return restore_id
 
 
 # API Routes
@@ -934,15 +998,119 @@ async def delete_backup_job(request):
         }, status=500)
 
 
+async def get_servers(request):
+    """Get all configured servers"""
+    try:
+        servers = backup_manager.get_all_servers()
+        return web.json_response(servers)
+    except Exception as e:
+        logger.error(f"Failed to get servers: {e}")
+        return web.json_response({'error': str(e)}, status=500)
+
+
+async def add_server(request):
+    """Add a new server configuration"""
+    try:
+        data = await request.json()
+        server_id = backup_manager.add_server(data)
+        return web.json_response({
+            'success': True,
+            'id': server_id,
+            'message': 'Server added successfully'
+        })
+    except Exception as e:
+        logger.error(f"Failed to add server: {e}")
+        return web.json_response({'error': str(e)}, status=500)
+
+
+async def delete_server(request):
+    """Delete a server configuration"""
+    try:
+        server_id = request.match_info['server_id']
+        success = backup_manager.delete_server(server_id)
+        
+        if success:
+            return web.json_response({'success': True, 'message': 'Server deleted'})
+        else:
+            return web.json_response({'error': 'Server not found'}, status=404)
+    except Exception as e:
+        logger.error(f"Failed to delete server: {e}")
+        return web.json_response({'error': str(e)}, status=500)
+
+
+async def get_archives(request):
+    """Get all backup archives"""
+    try:
+        archives = backup_manager.get_all_archives()
+        return web.json_response(archives)
+    except Exception as e:
+        logger.error(f"Failed to get archives: {e}")
+        return web.json_response({'error': str(e)}, status=500)
+
+
+async def delete_archive(request):
+    """Delete a backup archive"""
+    try:
+        archive_id = request.match_info['archive_id']
+        success = backup_manager.delete_archive(archive_id)
+        
+        if success:
+            return web.json_response({'success': True, 'message': 'Archive deleted'})
+        else:
+            return web.json_response({'error': 'Archive not found'}, status=404)
+    except Exception as e:
+        logger.error(f"Failed to delete archive: {e}")
+        return web.json_response({'error': str(e)}, status=500)
+
+
+async def restore_backup(request):
+    """Restore a backup to specified location"""
+    try:
+        data = await request.json()
+        archive_id = data.get('archive_id')
+        dest_server_id = data.get('destination_server_id')
+        dest_path = data.get('destination_path')
+        overwrite = data.get('overwrite', False)
+        
+        if not all([archive_id, dest_server_id, dest_path]):
+            return web.json_response({
+                'error': 'Missing required fields: archive_id, destination_server_id, destination_path'
+            }, status=400)
+        
+        restore_id = backup_manager.start_restore(archive_id, dest_server_id, dest_path, overwrite)
+        
+        return web.json_response({
+            'success': True,
+            'restore_id': restore_id,
+            'message': 'Restore started'
+        })
+    except Exception as e:
+        logger.error(f"Restore failed: {e}")
+        return web.json_response({'error': str(e)}, status=500)
+
+
 def setup_routes(app):
     """Setup API routes"""
-    app.router.add_post('/api/backup/test-connection', test_connection)
-    app.router.add_post('/api/backup/browse', browse_directory)
+    # Job routes
     app.router.add_post('/api/backup/jobs', create_backup_job)
+    app.router.add_get('/api/backup/jobs', get_all_jobs)
     app.router.add_post('/api/backup/jobs/{job_id}/run', run_backup_job)
     app.router.add_get('/api/backup/jobs/{job_id}/status', get_job_status)
-    app.router.add_get('/api/backup/jobs', get_all_jobs)
     app.router.add_delete('/api/backup/jobs/{job_id}', delete_backup_job)
+    
+    # Server routes
+    app.router.add_get('/api/backup/servers', get_servers)
+    app.router.add_post('/api/backup/servers', add_server)
+    app.router.add_delete('/api/backup/servers/{server_id}', delete_server)
+    
+    # Archive routes
+    app.router.add_get('/api/backup/archives', get_archives)
+    app.router.add_delete('/api/backup/archives/{archive_id}', delete_archive)
+    
+    # Other routes
+    app.router.add_post('/api/backup/test-connection', test_connection)
+    app.router.add_post('/api/backup/browse', browse_directory)
+    app.router.add_post('/api/backup/restore', restore_backup)
     
     app.on_startup.append(init_backup_module)
     app.on_cleanup.append(cleanup_backup_module)
