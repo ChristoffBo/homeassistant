@@ -18,6 +18,13 @@ RUN apt-get update && apt-get install -y \
     iputils-ping \
  && rm -rf /var/lib/apt/lists/*
 
+# ==========================================
+# ADDITIVE BLOCK for backup_module support
+# ==========================================
+RUN apt-get update && apt-get install -y \
+    rsync cifs-utils nfs-common tar \
+ && rm -rf /var/lib/apt/lists/*
+
 # ----------------------------
 # Install official Ookla Speedtest CLI
 # ----------------------------
