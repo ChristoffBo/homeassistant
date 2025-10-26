@@ -3437,5 +3437,52 @@
   </div>
 </div>
 
+<!-- BACKUP PROGRESS MODAL -->
+<div id="backup-progress-modal" class="modal">
+  <div class="modal-content" style="max-width: 700px;">
+    <div class="modal-header">
+      <h2>Backup Progress</h2>
+      <button class="btn" onclick="backupCloseProgressModal()">✕</button>
+    </div>
+    <div style="padding: 24px;">
+      
+      <div style="margin-bottom: 20px;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+          <span style="font-weight: 600;" id="backup-progress-job-name">Job Name</span>
+          <span id="backup-progress-status" style="font-weight: 600; color: #0ea5e9;">Starting...</span>
+        </div>
+        
+        <!-- Progress Bar -->
+        <div style="width: 100%; height: 8px; background: var(--surface-secondary); border-radius: 4px; overflow: hidden; margin-bottom: 8px;">
+          <div id="backup-progress-bar" style="width: 0%; height: 100%; background: linear-gradient(90deg, #0ea5e9, #06b6d4); transition: width 0.3s ease;"></div>
+        </div>
+        
+        <div style="font-size: 13px; color: var(--text-muted);">
+          <span id="backup-progress-percent">0%</span> complete
+        </div>
+      </div>
+
+      <!-- Status Message -->
+      <div style="padding: 16px; background: var(--surface-secondary); border-radius: 8px; border-left: 3px solid #0ea5e9; margin-bottom: 16px;">
+        <div style="font-weight: 600; margin-bottom: 4px;">Current Status:</div>
+        <div id="backup-progress-message" style="color: var(--text-muted);">Initializing backup...</div>
+      </div>
+
+      <!-- Live Log -->
+      <div style="margin-top: 20px;">
+        <div style="font-weight: 600; margin-bottom: 8px;">Activity Log:</div>
+        <div id="backup-progress-log" style="max-height: 200px; overflow-y: auto; padding: 12px; background: var(--surface-secondary); border-radius: 8px; font-family: monospace; font-size: 12px; line-height: 1.6;">
+          <div style="color: var(--text-muted);">Waiting for updates...</div>
+        </div>
+      </div>
+
+      <div class="modal-footer" style="margin-top: 20px;">
+        <button type="button" class="btn" onclick="backupCloseProgressModal()">Close</button>
+        <button type="button" class="btn danger" id="backup-progress-cancel-btn" onclick="backupCancelJob()" style="display: none;">Cancel Backup</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
