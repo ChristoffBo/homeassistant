@@ -348,35 +348,67 @@ def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
     try:
         logger.info(f"Backup worker started for job {job_id}")
         
+        # Load server configurations
+        import json
+        from pathlib import Path
+        
+        data_dir = Path('/var/lib/jarvis_prime')
+        servers_file = data_dir / 'backup_servers.json'
+        
+        if not servers_file.exists():
+            raise Exception("No servers configured. Please add source and destination servers.")
+        
+        with open(servers_file, 'r') as f:
+            all_servers = json.load(f)
+        
+        # Find source server
+        source_server_id = job_config.get('source_server_id')
+        if not source_server_id:
+            raise Exception("No source server specified in job configuration")
+        
+        source_server = next((s for s in all_servers if s.get('id') == source_server_id), None)
+        if not source_server:
+            raise Exception(f"Source server '{source_server_id}' not found. Server may have been deleted.")
+        
+        # Find destination server  
+        dest_server_id = job_config.get('destination_server_id')
+        if not dest_server_id:
+            raise Exception("No destination server specified in job configuration")
+            
+        dest_server = next((s for s in all_servers if s.get('id') == dest_server_id), None)
+        if not dest_server:
+            raise Exception(f"Destination server '{dest_server_id}' not found. Server may have been deleted.")
+        
         status_queue.put({
             'job_id': job_id,
             'status': 'running',
             'progress': 0,
-            'message': 'Connecting to source...'
+            'message': f'Connecting to source: {source_server["name"]} ({source_server["host"]})...'
         })
         
         source_conn = create_connection(
-            job_config['source']['type'],
-            **job_config['source']
+            source_server['type'],
+            **source_server
         )
         
         if not source_conn.connect():
-            raise Exception("Failed to connect to source")
+            raise Exception(f"Failed to connect to source server {source_server['name']} at {source_server['host']}. Check credentials and network connectivity.")
             
         status_queue.put({
             'job_id': job_id,
             'status': 'running',
             'progress': 10,
-            'message': 'Connected to source, connecting to destination...'
+            'message': f'Connected to source. Connecting to destination: {dest_server["name"]} ({dest_server["host"]})...'
         })
         
         dest_conn = create_connection(
-            job_config['destination']['type'],
-            **job_config['destination']
+            dest_server['type'],
+            **dest_server
         )
         
         if not dest_conn.connect():
-            raise Exception("Failed to connect to destination")
+            source_conn.disconnect()
+            raise Exception(f"Failed to connect to destination server {dest_server['name']} at {dest_server['host']}. Check credentials and network connectivity.")
             
         status_queue.put({
             'job_id': job_id,
@@ -394,13 +426,26 @@ def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
         # Perform backup
         backup_type = job_config.get('backup_type', 'incremental')
         compress = job_config.get('compress', True)
+        source_paths = job_config.get('paths') or job_config.get('source_paths', [])
+        
+        if not source_paths:
+            raise Exception("No source paths specified. Please select folders/files to backup.")
+        
+        destination_path = job_config.get('destination_path', '/backups')
+        
+        status_queue.put({
+            'job_id': job_id,
+            'status': 'running',
+            'progress': 25,
+            'message': f'Backing up {len(source_paths)} items...'
+        })
         
         if backup_type == 'full':
             success = perform_full_backup(
                 source_conn,
                 dest_conn,
-                job_config['source_paths'],
-                job_config['destination_path'],
+                source_paths,
+                destination_path,
                 compress,
                 status_queue,
                 job_id
@@ -409,8 +454,8 @@ def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
             success = perform_incremental_backup(
                 source_conn,
                 dest_conn,
-                job_config['source_paths'],
-                job_config['destination_path'],
+                source_paths,
+                destination_path,
                 compress,
                 status_queue,
                 job_id
@@ -439,9 +484,10 @@ def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
             
             # Send success notification
             try:
-                source_paths_str = ", ".join(job_config.get('source_paths', [])[:3])
-                if len(job_config.get('source_paths', [])) > 3:
-                    source_paths_str += f" +{len(job_config['source_paths']) - 3} more"
+                source_paths = job_config.get('paths') or job_config.get('source_paths', [])
+                source_paths_str = ", ".join(source_paths[:3])
+                if len(source_paths) > 3:
+                    source_paths_str += f" +{len(source_paths) - 3} more"
                 
                 backup_fanout_notify(
                     job_id=job_id,
@@ -457,9 +503,13 @@ def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
             raise Exception("Backup operation failed")
             
     except Exception as e:
-        logger.error(f"Backup worker failed for job {job_id}: {e}")
-        
+        import traceback
         error_msg = str(e)
+        error_trace = traceback.format_exc()
+        
+        logger.error(f"Backup worker failed for job {job_id}: {error_msg}")
+        logger.error(f"Full traceback:\n{error_trace}")
+        
         duration = time.time() - job_config.get('start_time', time.time())
         
         status_queue.put({
@@ -472,9 +522,10 @@ def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
         
         # Send failure notification
         try:
-            source_paths_str = ", ".join(job_config.get('source_paths', [])[:3])
-            if len(job_config.get('source_paths', [])) > 3:
-                source_paths_str += f" +{len(job_config['source_paths']) - 3} more"
+            source_paths = job_config.get('paths') or job_config.get('source_paths', [])
+            source_paths_str = ", ".join(source_paths[:3])
+            if len(source_paths) > 3:
+                source_paths_str += f" +{len(source_paths) - 3} more"
             
             backup_fanout_notify(
                 job_id=job_id,
