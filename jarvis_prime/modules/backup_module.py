@@ -29,6 +29,56 @@ manager = Manager()
 status_queue = Queue()
 
 
+def backup_fanout_notify(job_id: str, job_name: str, status: str, source_path: str = None,
+                         dest_path: str = None, size_mb: float = None, duration: float = None,
+                         error: str = None):
+    """
+    Fan-out detailed backup job notification through Jarvis Prime's multi-channel system.
+    """
+    try:
+        import sys
+        import textwrap
+        
+        # Add parent directory to path to import bot
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        
+        from bot import process_incoming
+        
+        # Build message
+        emoji = "✅" if status == "success" else "❌"
+        title = f"{emoji} Backup {job_name}"
+        
+        message_parts = [
+            f"**Status:** {status.upper()}",
+            f"**Job ID:** {job_id}"
+        ]
+        
+        if source_path:
+            message_parts.append(f"**Source:** {source_path}")
+        if dest_path:
+            message_parts.append(f"**Destination:** {dest_path}")
+        if size_mb is not None:
+            message_parts.append(f"**Size:** {size_mb:.2f} MB")
+        if duration is not None:
+            message_parts.append(f"**Duration:** {duration:.1f}s")
+        if error:
+            message_parts.append(f"**Error:** {error}")
+        
+        message = "\n".join(f"• {part}" for part in message_parts)
+        
+        priority = 3 if status == "success" else 8
+        process_incoming(title, message, source="backup", priority=priority)
+        logger.info(f"Backup notification sent for job {job_id}")
+        
+    except Exception as e:
+        # Fallback to error notification if available
+        try:
+            from errors import notify_error
+            notify_error(f"[Backup Fanout Failure] {str(e)}", context="backup")
+        except Exception:
+            logger.error(f"Backup fanout failed: {e}")
+
+
 class BackupConnection:
     """Base class for backup connections"""
     
@@ -302,6 +352,9 @@ def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
     Worker function that runs in separate process
     Performs the actual backup operation
     """
+    start_time = time.time()
+    job_config['start_time'] = start_time
+    
     try:
         logger.info(f"Backup worker started for job {job_id}")
         
@@ -382,6 +435,9 @@ def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
         source_conn.disconnect()
         dest_conn.disconnect()
         
+        # Calculate duration
+        duration = time.time() - job_config.get('start_time', time.time())
+        
         if success:
             status_queue.put({
                 'job_id': job_id,
@@ -390,18 +446,57 @@ def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
                 'message': 'Backup completed successfully',
                 'completed_at': datetime.now().isoformat()
             })
+            
+            # Send success notification
+            try:
+                source_paths_str = ", ".join(job_config.get('source_paths', [])[:3])
+                if len(job_config.get('source_paths', [])) > 3:
+                    source_paths_str += f" +{len(job_config['source_paths']) - 3} more"
+                
+                backup_fanout_notify(
+                    job_id=job_id,
+                    job_name=job_config.get('name', 'Unknown Job'),
+                    status='success',
+                    source_path=source_paths_str,
+                    dest_path=job_config.get('destination_path'),
+                    duration=duration
+                )
+            except Exception as notify_error:
+                logger.error(f"Failed to send success notification: {notify_error}")
         else:
             raise Exception("Backup operation failed")
             
     except Exception as e:
         logger.error(f"Backup worker failed for job {job_id}: {e}")
+        
+        error_msg = str(e)
+        duration = time.time() - job_config.get('start_time', time.time())
+        
         status_queue.put({
             'job_id': job_id,
             'status': 'failed',
             'progress': 0,
-            'message': f'Backup failed: {str(e)}',
+            'message': f'Backup failed: {error_msg}',
             'failed_at': datetime.now().isoformat()
         })
+        
+        # Send failure notification
+        try:
+            source_paths_str = ", ".join(job_config.get('source_paths', [])[:3])
+            if len(job_config.get('source_paths', [])) > 3:
+                source_paths_str += f" +{len(job_config['source_paths']) - 3} more"
+            
+            backup_fanout_notify(
+                job_id=job_id,
+                job_name=job_config.get('name', 'Unknown Job'),
+                status='failed',
+                source_path=source_paths_str,
+                dest_path=job_config.get('destination_path'),
+                duration=duration,
+                error=error_msg
+            )
+        except Exception as notify_error:
+            logger.error(f"Failed to send failure notification: {notify_error}")
 
 
 def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compress, status_queue, job_id):
