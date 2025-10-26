@@ -147,26 +147,21 @@ class SSHConnection(BackupConnection):
         
     def list_directory(self, path: str) -> List[Dict]:
         """List directory contents via SFTP"""
-        try:
-            items = []
-            attrs = self.sftp.listdir_attr(path)
+        items = []
+        attrs = self.sftp.listdir_attr(path)
+        
+        for attr in attrs:
+            import stat
+            item = {
+                'name': attr.filename,
+                'path': os.path.join(path, attr.filename),
+                'is_dir': stat.S_ISDIR(attr.st_mode),
+                'size': attr.st_size if hasattr(attr, 'st_size') else 0,
+                'mtime': attr.st_mtime if hasattr(attr, 'st_mtime') else 0
+            }
+            items.append(item)
             
-            for attr in attrs:
-                import stat
-                item = {
-                    'name': attr.filename,
-                    'path': os.path.join(path, attr.filename),
-                    'is_dir': stat.S_ISDIR(attr.st_mode),
-                    'size': attr.st_size if hasattr(attr, 'st_size') else 0,
-                    'modified': attr.st_mtime if hasattr(attr, 'st_mtime') else 0
-                }
-                items.append(item)
-                
-            return sorted(items, key=lambda x: (not x['is_dir'], x['name']))
-            
-        except Exception as e:
-            logger.error(f"Failed to list directory {path}: {e}")
-            return []
+        return sorted(items, key=lambda x: (not x['is_dir'], x['name']))
             
     def execute_command(self, command: str) -> tuple:
         """Execute command on remote system"""
@@ -226,28 +221,23 @@ class SMBConnection(BackupConnection):
         
     def list_directory(self, path: str) -> List[Dict]:
         """List directory contents from mounted SMB share"""
-        try:
-            full_path = os.path.join(self.mount_point, path.lstrip('/'))
-            items = []
+        full_path = os.path.join(self.mount_point, path.lstrip('/'))
+        items = []
+        
+        for entry in os.listdir(full_path):
+            entry_path = os.path.join(full_path, entry)
+            stat_info = os.stat(entry_path)
             
-            for entry in os.listdir(full_path):
-                entry_path = os.path.join(full_path, entry)
-                stat_info = os.stat(entry_path)
-                
-                item = {
-                    'name': entry,
-                    'path': os.path.join(path, entry),
-                    'is_dir': os.path.isdir(entry_path),
-                    'size': stat_info.st_size,
-                    'modified': stat_info.st_mtime
-                }
-                items.append(item)
-                
-            return sorted(items, key=lambda x: (not x['is_dir'], x['name']))
+            item = {
+                'name': entry,
+                'path': os.path.join(path, entry),
+                'is_dir': os.path.isdir(entry_path),
+                'size': stat_info.st_size,
+                'mtime': stat_info.st_mtime
+            }
+            items.append(item)
             
-        except Exception as e:
-            logger.error(f"Failed to list SMB directory {path}: {e}")
-            return []
+        return sorted(items, key=lambda x: (not x['is_dir'], x['name']))
 
 
 class NFSConnection(BackupConnection):
@@ -308,7 +298,7 @@ class NFSConnection(BackupConnection):
                     'path': os.path.join(path, entry),
                     'is_dir': os.path.isdir(entry_path),
                     'size': stat_info.st_size,
-                    'modified': stat_info.st_mtime
+                    'mtime': stat_info.st_mtime
                 }
                 items.append(item)
                 
@@ -956,15 +946,23 @@ async def browse_directory(request):
     try:
         data = await request.json()
         
+        # Get server config from either 'server_config' or 'connection'
+        server_config = data.get('server_config') or data.get('connection')
+        if not server_config:
+            return web.json_response({
+                'success': False,
+                'message': 'No server configuration provided'
+            }, status=400)
+        
         conn = create_connection(
-            data['connection']['type'],
-            **data['connection']
+            server_config['type'],
+            **server_config
         )
         
         if not conn.connect():
             return web.json_response({
                 'success': False,
-                'message': 'Connection failed'
+                'message': 'Failed to connect to server. Check credentials.'
             }, status=400)
             
         path = data.get('path', '/')
@@ -974,7 +972,7 @@ async def browse_directory(request):
         
         return web.json_response({
             'success': True,
-            'items': items
+            'files': items  # Frontend expects 'files' not 'items'
         })
         
     except Exception as e:
