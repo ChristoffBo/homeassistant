@@ -511,7 +511,7 @@ def import_existing_backups(data_dir: Path) -> List[Dict]:
 
 def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
     """
-    Worker function for backup operations
+    Worker process for backup operations
     """
     start_time = time.time()
     job_config["start_time"] = start_time
@@ -592,6 +592,7 @@ def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
         job_name = job_config.get("name", "unnamed_job")
         destination_path = Path(job_config.get("destination_path", "/backups")) / job_name
         temp_dir = tempfile.mkdtemp(prefix="jarvis_backup_")
+        os.chmod(temp_dir, 0o755)  # Ensure temp directory is writable
 
         if sync_mode:
             success = perform_sync_backup(source_conn, dest_conn, source_paths, destination_path, status_queue, job_id)
@@ -610,6 +611,8 @@ def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
         if success:
             duration = time.time() - start_time
             archive_path = os.path.join(temp_dir, f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.tar.gz") if compress else temp_dir
+            if not os.path.exists(archive_path):
+                raise Exception(f"Archive not found at {archive_path} after backup")
             create_archive_record(job_id, job_config, duration, data_dir, archive_path)
             apply_retention_policy(job_id, job_config, data_dir)
             status_queue.put(
@@ -691,11 +694,13 @@ def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compres
             status_queue.put({"job_id": job_id, "status": "running", "progress": 75, "message": "Compressing backup..."})
             with tarfile.open(archive_path, "w:gz") as tar:
                 for item in os.listdir(temp_dir):
-                    if item != archive_name:
+                    if item != archive_name:  # Avoid self-inclusion
                         tar.add(os.path.join(temp_dir, item), arcname=item)
-            shutil.rmtree(temp_dir, ignore_errors=True)
-            os.makedirs(temp_dir, exist_ok=True)
-            shutil.move(archive_path, os.path.join(temp_dir, archive_name))
+            if not os.path.exists(archive_path):
+                raise Exception(f"Failed to create archive at {archive_path}")
+            shutil.rmtree(temp_dir, ignore_errors=True)  # Clean up source files
+            os.makedirs(temp_dir, exist_ok=True)  # Recreate for move
+            shutil.move(archive_path, os.path.join(temp_dir, archive_name))  # Ensure move succeeds
             upload_file = archive_path
             is_archive = True
         else:
