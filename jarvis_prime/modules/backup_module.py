@@ -1547,19 +1547,31 @@ async def delete_backup_job(request):
         }, status=500)
 
 
-async def get_servers(request):
-    """Get all configured servers"""
+sync def add_server(request):
+    """Add a new server configuration (ensures server_type persists)"""
     try:
-        servers = backup_manager.get_all_servers()
-        source_servers = [s for s in servers if s.get('server_type') == 'source']
-        destination_servers = [s for s in servers if s.get('server_type') == 'destination']
+        data = await request.json()
+
+        # 🔧 Ensure server_type is present
+        if not data.get("server_type"):
+            conn_type = data.get("type", "")
+            if conn_type == "ssh":
+                data["server_type"] = "source"
+            else:
+                data["server_type"] = "destination"
+
+        server_id = backup_manager.add_server(data)
+
+        logger.info(f"Server added: {data.get('name')} ({data.get('server_type')})")
+
         return web.json_response({
-            'source_servers': source_servers,
-            'destination_servers': destination_servers
+            "success": True,
+            "id": server_id,
+            "message": "Server added successfully"
         })
     except Exception as e:
-        logger.error(f"Failed to get servers: {e}")
-        return web.json_response({'error': str(e)}, status=500)
+        logger.error(f"Failed to add server: {e}")
+        return web.json_response({"error": str(e)}, status=500)
 
 
 async def add_server(request):
