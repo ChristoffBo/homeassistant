@@ -1547,7 +1547,22 @@ async def delete_backup_job(request):
         }, status=500)
 
 
-sync def add_server(request):
+async def get_servers(request):
+    """Get all configured servers"""
+    try:
+        servers = backup_manager.get_all_servers()
+        source_servers = [s for s in servers if s.get('server_type') == 'source']
+        destination_servers = [s for s in servers if s.get('server_type') == 'destination']
+        return web.json_response({
+            'source_servers': source_servers,
+            'destination_servers': destination_servers
+        })
+    except Exception as e:
+        logger.error(f"Failed to get servers: {e}")
+        return web.json_response({'error': str(e)}, status=500)
+
+
+async def add_server(request):
     """Add a new server configuration (ensures server_type persists)"""
     try:
         data = await request.json()
@@ -1561,28 +1576,12 @@ sync def add_server(request):
                 data["server_type"] = "destination"
 
         server_id = backup_manager.add_server(data)
-
         logger.info(f"Server added: {data.get('name')} ({data.get('server_type')})")
 
         return web.json_response({
             "success": True,
             "id": server_id,
             "message": "Server added successfully"
-        })
-    except Exception as e:
-        logger.error(f"Failed to add server: {e}")
-        return web.json_response({"error": str(e)}, status=500)
-
-
-async def add_server(request):
-    """Add a new server configuration"""
-    try:
-        data = await request.json()
-        server_id = backup_manager.add_server(data)
-        return web.json_response({
-            'success': True,
-            'id': server_id,
-            'message': 'Server added successfully'
         })
     except Exception as e:
         logger.error(f"Failed to add server: {e}")
