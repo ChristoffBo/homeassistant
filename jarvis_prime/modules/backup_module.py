@@ -1261,24 +1261,19 @@ class BackupManager:
         return []
     
     def add_server(self, server_config: Dict) -> str:
-    """Add a new server configuration"""
-    server_id = str(uuid.uuid4())
-    server_config['id'] = server_id
-
-    # Ensure server_type is persisted (fixes missing restore target)
-    if "server_type" not in server_config or not server_config["server_type"]:
-        conn_type = server_config.get("type", "")
-        server_config["server_type"] = "source" if conn_type == "ssh" else "destination"
-
-    servers = self.get_all_servers()
-    servers.append(server_config)
-
-    servers_file = self.data_dir / 'backup_servers.json'
-    with open(servers_file, 'w') as f:
-        json.dump(servers, f, indent=2)
-
-    logger.info(f"Added server {server_id} ({server_config['server_type']})")
-    return server_id
+        """Add a new server configuration"""
+        server_id = str(uuid.uuid4())
+        server_config['id'] = server_id
+        
+        servers = self.get_all_servers()
+        servers.append(server_config)
+        
+        servers_file = self.data_dir / 'backup_servers.json'
+        with open(servers_file, 'w') as f:
+            json.dump(servers, f, indent=2)
+        
+        logger.info(f"Added server {server_id}")
+        return server_id
     
     def delete_server(self, server_id: str) -> bool:
         """Delete a server configuration"""
@@ -1568,25 +1563,14 @@ async def get_servers(request):
 
 
 async def add_server(request):
-    """Add a new server configuration (ensures server_type persists)"""
+    """Add a new server configuration"""
     try:
         data = await request.json()
-
-        # 🔧 Ensure server_type is present
-        if not data.get("server_type"):
-            conn_type = data.get("type", "")
-            if conn_type == "ssh":
-                data["server_type"] = "source"
-            else:
-                data["server_type"] = "destination"
-
         server_id = backup_manager.add_server(data)
-        logger.info(f"Server added: {data.get('name')} ({data.get('server_type')})")
-
         return web.json_response({
-            "success": True,
-            "id": server_id,
-            "message": "Server added successfully"
+            'success': True,
+            'id': server_id,
+            'message': 'Server added successfully'
         })
     except Exception as e:
         logger.error(f"Failed to add server: {e}")
