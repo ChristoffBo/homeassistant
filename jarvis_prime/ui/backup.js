@@ -411,7 +411,7 @@
       sourceSelect.appendChild(option);
     });
     
-    backupState.servers.forEach(server => {
+    backupState.destinationServers.forEach(server => {
       const option = document.createElement('option');
       option.value = server.id;
       option.textContent = `${server.name} (${server.host})`;
@@ -982,19 +982,14 @@
     document.getElementById('backup-restore-name').textContent = archive.name || archive.id;
     document.getElementById('backup-restore-modal').style.display = 'flex';
     
-// Populate destination servers (show all servers for restore)
-const select = document.getElementById('backup-restore-destination');
-select.innerHTML = '<option value="">Select destination server...</option>';
-
-const allServers = backupState.sourceServers.concat(backupState.destinationServers);
-allServers.forEach((server) => {
-  const option = document.createElement('option');
-  option.value = server.id;
-  option.textContent = `${server.name} (${server.host})`;
-  select.appendChild(option);
-});
-
-
+    // Populate destination servers
+    const select = document.getElementById('backup-restore-destination');
+    select.innerHTML = '<option value="">Select destination server...</option>';
+    backupState.destinationServers.forEach(server => {
+      const option = document.createElement('option');
+      option.value = server.id;
+      option.textContent = `${server.name} (${server.host})`;
+      select.appendChild(option);
     });
   };
 
