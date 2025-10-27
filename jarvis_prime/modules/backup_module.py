@@ -21,13 +21,13 @@ import paramiko
 from multiprocessing import Process, Queue, Manager
 import subprocess
 import time
+import sys
 
 logger = logging.getLogger(__name__)
 
 # Global manager for shared state
 manager = Manager()
 status_queue = Queue()
-
 
 def backup_fanout_notify(
     job_id: str,
@@ -44,12 +44,8 @@ def backup_fanout_notify(
     Fan-out detailed backup/restore job notification through Jarvis Prime's multi-channel system.
     """
     try:
-        import sys
-        import textwrap
-
         # Add parent directory to path to import bot
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
-
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
         from bot import process_incoming
 
         # Build message
@@ -85,7 +81,6 @@ def backup_fanout_notify(
         except Exception:
             logger.error(f"{'Restore' if restore_id else 'Backup'} fanout failed: {e}")
 
-
 class BackupConnection:
     """Base class for backup connections"""
 
@@ -113,7 +108,6 @@ class BackupConnection:
 
     def put_file(self, local_path: str, remote_path: str):
         raise NotImplementedError
-
 
 class SSHConnection(BackupConnection):
     """SSH/SFTP connection handler"""
@@ -158,7 +152,6 @@ class SSHConnection(BackupConnection):
             attrs = self.sftp.listdir_attr(path)
             for attr in attrs:
                 import stat
-
                 item = {
                     "name": attr.filename,
                     "path": os.path.join(path, attr.filename),
@@ -197,7 +190,6 @@ class SSHConnection(BackupConnection):
         except Exception as e:
             logger.error(f"Command execution failed: {e}")
             return "", str(e)
-
 
 class SMBConnection(BackupConnection):
     """SMB/CIFS connection handler"""
@@ -278,7 +270,6 @@ class SMBConnection(BackupConnection):
             logger.error(f"Failed to put file {remote_path}: {e}")
             raise
 
-
 class NFSConnection(BackupConnection):
     """NFS connection handler"""
 
@@ -350,7 +341,6 @@ class NFSConnection(BackupConnection):
             logger.error(f"Failed to put file {remote_path}: {e}")
             raise
 
-
 def create_connection(conn_type: str, **kwargs) -> BackupConnection:
     """Factory function to create connection objects"""
     if conn_type == "ssh":
@@ -363,7 +353,6 @@ def create_connection(conn_type: str, **kwargs) -> BackupConnection:
         return NFSConnection(kwargs["host"], kwargs["export_path"], kwargs.get("username"), kwargs.get("password"))
     else:
         raise ValueError(f"Unknown connection type: {conn_type}")
-
 
 def ensure_rsync_installed(ssh_conn):
     """Ensure rsync is installed on remote SSH server"""
@@ -385,17 +374,15 @@ def ensure_rsync_installed(ssh_conn):
         logger.error(f"Error checking/installing rsync: {e}")
         return False
 
-
 def verify_tar_integrity(archive_path: str) -> bool:
     """Verify tar.gz file integrity"""
     try:
         with tarfile.open(archive_path, "r:gz") as tar:
-            tar.list()  # Attempt to read archive contents
+            tar.list()
         return True
     except tarfile.ReadError as e:
         logger.error(f"Tar integrity check failed for {archive_path}: {e}")
         return False
-
 
 def create_archive_record(job_id: str, job_config: Dict, duration: float, data_dir: Path, archive_path: str):
     """Create archive record after successful backup"""
@@ -432,7 +419,6 @@ def create_archive_record(job_id: str, job_config: Dict, duration: float, data_d
 
     logger.info(f"Created archive record {archive_id} for job {job_id}")
 
-
 def apply_retention_policy(job_id: str, job_config: Dict, data_dir: Path):
     """Apply retention policy to delete old backups"""
     archives_file = data_dir / "backup_archives.json"
@@ -447,10 +433,8 @@ def apply_retention_policy(job_id: str, job_config: Dict, data_dir: Path):
     retention_count = job_config.get("retention_count", 10)
     cutoff_date = datetime.now() - timedelta(days=retention_days)
 
-    # Sort by creation time (newest first)
     job_archives.sort(key=lambda x: x["created_at"], reverse=True)
 
-    # Keep latest retention_count or within retention_days
     to_delete = []
     for idx, archive in enumerate(job_archives):
         created_at = datetime.fromisoformat(archive["created_at"])
@@ -460,7 +444,6 @@ def apply_retention_policy(job_id: str, job_config: Dict, data_dir: Path):
     for archive in to_delete:
         try:
             archives.remove(archive)
-            # Delete physical file
             servers_file = data_dir / "backup_servers.json"
             with open(servers_file, "r") as f:
                 servers = json.load(f)
@@ -469,10 +452,7 @@ def apply_retention_policy(job_id: str, job_config: Dict, data_dir: Path):
                 conn = create_connection(dest_server["type"], **dest_server)
                 if conn.connect():
                     if isinstance(conn, SSHConnection):
-                        try:
-                            conn.sftp.remove(archive["destination_path"])
-                        except:
-                            pass  # File might not exist
+                        conn.sftp.remove(archive["destination_path"])
                     else:
                         full_path = os.path.join(conn.mount_point, archive["destination_path"].lstrip("/"))
                         if os.path.exists(full_path):
@@ -484,7 +464,6 @@ def apply_retention_policy(job_id: str, job_config: Dict, data_dir: Path):
 
     with open(archives_file, "w") as f:
         json.dump(archives, f, indent=2)
-
 
 def import_existing_backups(data_dir: Path) -> List[Dict]:
     """Scan /data/backup_module for unlisted .tar.gz files and add to archives"""
@@ -529,7 +508,6 @@ def import_existing_backups(data_dir: Path) -> List[Dict]:
         json.dump(archives, f, indent=2)
 
     return imported
-
 
 def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
     """
@@ -656,7 +634,6 @@ def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
 
     except Exception as e:
         import traceback
-
         error_msg = str(e)
         logger.error(f"Backup worker failed for job {job_id}: {error_msg}\n{traceback.format_exc()}")
         duration = time.time() - start_time
@@ -684,7 +661,6 @@ def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
     finally:
         if temp_dir and os.path.exists(temp_dir):
             shutil.rmtree(temp_dir, ignore_errors=True)
-
 
 def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compress, status_queue, job_id, temp_dir):
     """Perform full backup with per-job folder structure"""
@@ -753,7 +729,6 @@ def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compres
         status_queue.put({"job_id": job_id, "status": "failed", "progress": 0, "message": f"Backup failed: {str(e)}"})
         raise
 
-
 def perform_incremental_backup(source_conn, dest_conn, source_paths, dest_path, compress, status_queue, job_id):
     """Perform incremental backup (only changed files)"""
     try:
@@ -792,7 +767,6 @@ def perform_incremental_backup(source_conn, dest_conn, source_paths, dest_path, 
     except Exception as e:
         status_queue.put({"job_id": job_id, "status": "failed", "progress": 0, "message": f"Backup failed: {str(e)}"})
         raise
-
 
 def perform_sync_backup(source_conn, dest_conn, source_paths, dest_path, status_queue, job_id):
     """Perform rsync-based sync backup"""
@@ -839,7 +813,6 @@ def perform_sync_backup(source_conn, dest_conn, source_paths, dest_path, status_
         status_queue.put({"job_id": job_id, "status": "failed", "progress": 0, "message": f"Sync failed: {str(e)}"})
         raise
 
-
 def download_via_rsync(ssh_conn, remote_path, local_path, incremental=False):
     """Download using rsync over SSH (with SFTP fallback)"""
     os.makedirs(local_path, exist_ok=True)
@@ -871,11 +844,9 @@ def download_via_rsync(ssh_conn, remote_path, local_path, incremental=False):
     except subprocess.CalledProcessError as e:
         raise Exception(f"rsync failed (exit code {e.returncode}): {e.stderr or e.stdout}")
 
-
 def download_via_sftp(ssh_conn, remote_path, local_path):
     """Download using SFTP"""
     import stat
-
     try:
         remote_stat = ssh_conn.sftp.stat(remote_path)
         if stat.S_ISDIR(remote_stat.st_mode):
@@ -891,7 +862,6 @@ def download_via_sftp(ssh_conn, remote_path, local_path):
             ssh_conn.get_file(remote_path, os.path.join(local_path, os.path.basename(remote_path)))
     except Exception as e:
         raise Exception(f"SFTP download failed: {str(e)}")
-
 
 def upload_via_rsync(ssh_conn, local_path, remote_path):
     """Upload using rsync over SSH (with SFTP fallback)"""
@@ -921,17 +891,14 @@ def upload_via_rsync(ssh_conn, local_path, remote_path):
     except subprocess.CalledProcessError as e:
         raise Exception(f"rsync failed (exit code {e.returncode}): {e.stderr or e.stdout}")
 
-
 def upload_via_sftp(ssh_conn, local_path, remote_path):
     """Upload using SFTP"""
     import stat
-
     try:
         try:
             ssh_conn.sftp.stat(remote_path)
         except:
             ssh_conn.sftp.mkdir(remote_path)
-
         if os.path.isdir(local_path):
             for item in os.listdir(local_path):
                 local_item = os.path.join(local_path, item)
@@ -945,7 +912,6 @@ def upload_via_sftp(ssh_conn, local_path, remote_path):
     except Exception as e:
         raise Exception(f"SFTP upload failed: {str(e)}")
 
-
 def sync_directories(source, dest):
     """Sync directories (incremental copy)"""
     os.makedirs(dest, exist_ok=True)
@@ -958,7 +924,6 @@ def sync_directories(source, dest):
             dest_file = os.path.join(dest_root, file)
             if not os.path.exists(dest_file) or os.path.getmtime(source_file) > os.path.getmtime(dest_file):
                 shutil.copy2(source_file, dest_file)
-
 
 def restore_worker(restore_id: str, restore_config: Dict, status_queue: Queue):
     """
@@ -1090,7 +1055,6 @@ def restore_worker(restore_id: str, restore_config: Dict, status_queue: Queue):
 
     except Exception as e:
         import traceback
-
         logger.error(f"Restore worker failed: {str(e)}\n{traceback.format_exc()}")
         status_queue.put(
             {
@@ -1115,7 +1079,6 @@ def restore_worker(restore_id: str, restore_config: Dict, status_queue: Queue):
     finally:
         if temp_dir and os.path.exists(temp_dir):
             shutil.rmtree(temp_dir, ignore_errors=True)
-
 
 class BackupManager:
     """Main backup manager - runs in Jarvis main process"""
@@ -1340,7 +1303,6 @@ class BackupManager:
     def import_archives(self) -> List[Dict]:
         return import_existing_backups(self.data_dir)
 
-
 async def init_backup_module(app):
     global backup_manager
     data_dir = app.get("data_dir", "/data") + "/backup_module"
@@ -1348,12 +1310,10 @@ async def init_backup_module(app):
     await backup_manager.start()
     logger.info("Backup module initialized")
 
-
 async def cleanup_backup_module(app):
     global backup_manager
     if backup_manager:
         await backup_manager.stop()
-
 
 async def test_connection(request):
     try:
@@ -1367,7 +1327,6 @@ async def test_connection(request):
     except Exception as e:
         logger.error(f"Connection test failed: {e}")
         return web.json_response({"success": False, "message": str(e)}, status=500)
-
 
 async def browse_directory(request):
     try:
@@ -1386,7 +1345,6 @@ async def browse_directory(request):
         logger.error(f"Directory browse failed: {e}")
         return web.json_response({"success": False, "message": str(e)}, status=500)
 
-
 async def create_backup_job(request):
     try:
         data = await request.json()
@@ -1395,7 +1353,6 @@ async def create_backup_job(request):
     except Exception as e:
         logger.error(f"Job creation failed: {e}")
         return web.json_response({"success": False, "message": str(e)}, status=500)
-
 
 async def run_backup_job(request):
     try:
@@ -1409,7 +1366,6 @@ async def run_backup_job(request):
         logger.error(f"Job run failed: {e}")
         return web.json_response({"success": False, "message": str(e)}, status=500)
 
-
 async def get_job_status(request):
     try:
         job_id = request.match_info["job_id"]
@@ -1419,7 +1375,6 @@ async def get_job_status(request):
         logger.error(f"Get status failed: {e}")
         return web.json_response({"success": False, "message": str(e)}, status=500)
 
-
 async def get_all_jobs(request):
     try:
         jobs_dict = backup_manager.get_all_jobs()
@@ -1428,7 +1383,6 @@ async def get_all_jobs(request):
     except Exception as e:
         logger.error(f"Get jobs failed: {e}")
         return web.json_response({"success": False, "message": str(e)}, status=500)
-
 
 async def delete_backup_job(request):
     try:
@@ -1442,7 +1396,6 @@ async def delete_backup_job(request):
         logger.error(f"Job deletion failed: {e}")
         return web.json_response({"success": False, "message": str(e)}, status=500)
 
-
 async def get_servers(request):
     try:
         servers = backup_manager.get_all_servers()
@@ -1453,7 +1406,6 @@ async def get_servers(request):
         logger.error(f"Failed to get servers: {e}")
         return web.json_response({"error": str(e)}, status=500)
 
-
 async def add_server(request):
     try:
         data = await request.json()
@@ -1462,7 +1414,6 @@ async def add_server(request):
     except Exception as e:
         logger.error(f"Failed to add server: {e}")
         return web.json_response({"error": str(e)}, status=500)
-
 
 async def delete_server(request):
     try:
@@ -1476,7 +1427,6 @@ async def delete_server(request):
         logger.error(f"Failed to delete server: {e}")
         return web.json_response({"error": str(e)}, status=500)
 
-
 async def get_archives(request):
     try:
         archives = backup_manager.get_all_archives()
@@ -1484,7 +1434,6 @@ async def get_archives(request):
     except Exception as e:
         logger.error(f"Failed to get archives: {e}")
         return web.json_response({"error": str(e)}, status=500)
-
 
 async def delete_archive(request):
     try:
@@ -1497,7 +1446,6 @@ async def delete_archive(request):
     except Exception as e:
         logger.error(f"Failed to delete archive: {e}")
         return web.json_response({"error": str(e)}, status=500)
-
 
 async def restore_backup(request):
     try:
@@ -1517,7 +1465,6 @@ async def restore_backup(request):
         logger.error(f"Restore failed: {e}")
         return web.json_response({"error": str(e)}, status=500)
 
-
 async def import_archives(request):
     try:
         imported = backup_manager.import_archives()
@@ -1525,7 +1472,6 @@ async def import_archives(request):
     except Exception as e:
         logger.error(f"Import archives failed: {e}")
         return web.json_response({"error": str(e)}, status=500)
-
 
 def setup_routes(app):
     app.router.add_post("/api/backup/jobs", create_backup_job)
