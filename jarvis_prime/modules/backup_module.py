@@ -1260,20 +1260,27 @@ class BackupManager:
                 return json.load(f)
         return []
     
-    def add_server(self, server_config: Dict) -> str:
-        """Add a new server configuration"""
-        server_id = str(uuid.uuid4())
-        server_config['id'] = server_id
-        
-        servers = self.get_all_servers()
-        servers.append(server_config)
-        
-        servers_file = self.data_dir / 'backup_servers.json'
-        with open(servers_file, 'w') as f:
-            json.dump(servers, f, indent=2)
-        
-        logger.info(f"Added server {server_id}")
-        return server_id
+  def add_server(self, server_config: Dict) -> str:
+    """Add a new server configuration"""
+    server_id = str(uuid.uuid4())
+    server_config['id'] = server_id
+
+    # Ensure server_type is persisted (fixes missing restore target)
+    if "server_type" not in server_config or not server_config["server_type"]:
+        conn_type = server_config.get("type", "")
+        server_config["server_type"] = "source" if conn_type == "ssh" else "destination"
+
+    servers = self.get_all_servers()
+    servers.append(server_config)
+
+    servers_file = self.data_dir / 'backup_servers.json'
+    with open(servers_file, 'w') as f:
+        json.dump(servers, f, indent=2)
+
+    logger.info(f"Added server {server_id} ({server_config['server_type']})")
+    return server_id
+
+
     
     def delete_server(self, server_id: str) -> bool:
         """Delete a server configuration"""
