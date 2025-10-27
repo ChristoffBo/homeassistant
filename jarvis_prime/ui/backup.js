@@ -984,16 +984,15 @@
     
     // Populate destination servers
     const select = document.getElementById('backup-restore-destination');
-  select.innerHTML = '<option value="">Select destination server...</option>';
+    select.innerHTML = '<option value="">Select destination server...</option>';
 
-  const allServers = [...backupState.sourceServers, ...backupState.destinationServers];
-  allServers.forEach((server) => {
+    const allServers = [...backupState.sourceServers, ...backupState.destinationServers];
+    allServers.forEach((server) => {
     const option = document.createElement('option');
     option.value = server.id;
     option.textContent = `${server.name} (${server.host})`;
     select.appendChild(option);
   });
-    });
   };
 
   window.backupCloseRestoreModal = function() {
