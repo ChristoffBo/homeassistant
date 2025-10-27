@@ -681,17 +681,18 @@ def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
             })
             
             source_paths_str = ", ".join(source_paths[:3]) + (f" +{len(source_paths) - 3} more" if len(source_paths) > 3 else "")
-            archive_path = os.path.join(temp_dir, f"backup_{datetime.now().strftime('%Y-%m-%d_%H%M')}.tar.gz") if compress else temp_dir
-            size_mb = os.path.getsize(archive_path) / (1024 * 1024) if os.path.exists(archive_path) and compress else 0
-            create_archive_record(job_id, job_config, duration, size_mb, data_dir, str(destination_path / f"{datetime.now().strftime('%Y-%m-%d_%H%M')}.tar.gz"))
-            apply_retention_policy(job_id, job_config, data_dir, dest_conn)
+            archive_path = os.path.join(temp_dir, f"backup_{datetime.now().strftime('%Y-%m-%d_%H%M%S')}.tar.gz") if compress else temp_dir
+            if compress and os.path.exists(archive_path):
+                size_mb = os.path.getsize(archive_path) / (1024 * 1024)
+                create_archive_record(job_id, job_config, duration, size_mb, data_dir, str(destination_path / f"backup_{datetime.now().strftime('%Y-%m-%d_%H%M%S')}.tar.gz"))
+                apply_retention_policy(job_id, job_config, data_dir, dest_conn)
             backup_fanout_notify(
                 job_id=job_id,
                 job_name=job_name,
                 status='success',
                 source_path=source_paths_str,
                 dest_path=str(destination_path),
-                size_mb=size_mb,
+                size_mb=size_mb if compress else 0,
                 duration=duration,
             )
         else:
@@ -705,7 +706,7 @@ def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
         logger.error(f"Backup worker failed for job {job_id}: {error_msg}")
         logger.error(f"Full traceback:\n{error_trace}")
         
-        duration = time.time() - start_time
+        duration = time.time() - job_config.get('start_time', time.time())
         
         status_queue.put({
             'job_id': job_id,
@@ -730,9 +731,8 @@ def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
 def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compress, status_queue, job_id, temp_dir):
     """Perform full backup with per-job folder structure"""
     try:
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
-        job_name = dest_path.name
-        archive_name = f"backup_{timestamp}.tar.gz" if compress else f"backup_{timestamp}"
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        archive_name = f"backup_{timestamp}.tar.gz"
         archive_path = os.path.join(temp_dir, archive_name)
 
         for idx, source_path in enumerate(source_paths):
@@ -759,10 +759,10 @@ def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compres
                 'message': 'Compressing backup...'
             })
             with tarfile.open(archive_path, "w:gz") as tar:
-                tar.add(temp_dir, arcname=job_name)
+                tar.add(temp_dir, arcname=os.path.basename(temp_dir))
             if not os.path.exists(archive_path):
                 raise Exception(f"Failed to create archive at {archive_path}")
-            shutil.rmtree(temp_dir, ignore_errors=True)
+            shutil.move(temp_dir, os.path.join(tempfile.gettempdir(), f"temp_{uuid.uuid4()}"))  # Preserve temp_dir until upload
             upload_file = archive_path
             is_archive = True
         else:
