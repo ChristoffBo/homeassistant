@@ -411,7 +411,7 @@
       sourceSelect.appendChild(option);
     });
     
-    backupState.destinationServers.forEach(server => {
+    backupState.servers.forEach(server => {
       const option = document.createElement('option');
       option.value = server.id;
       option.textContent = `${server.name} (${server.host})`;
