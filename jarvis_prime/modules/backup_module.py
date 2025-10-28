@@ -4,7 +4,6 @@ Jarvis Prime - Backup Module
 Agentless backup system with SSH/SMB/NFS support
 Runs in separate process to avoid blocking main Jarvis
 """
-
 import os
 import json
 import asyncio
@@ -28,7 +27,6 @@ logger = logging.getLogger(__name__)
 manager = Manager()
 status_queue = Queue()
 
-
 def backup_fanout_notify(job_id: str, job_name: str, status: str, source_path: str = None,
                          dest_path: str = None, size_mb: float = None, duration: float = None,
                          error: str = None, restore: bool = False):
@@ -38,22 +36,22 @@ def backup_fanout_notify(job_id: str, job_name: str, status: str, source_path: s
     try:
         import sys
         import textwrap
-        
+       
         # Add parent directory to path to import bot
         sys.path.insert(0, str(Path(__file__).resolve().parent))
-        
+       
         from bot import process_incoming
-        
+       
         # Build message
         kind = "Restore" if restore else "Backup"
         emoji = "✅" if status == "success" else "❌"
         title = f"{emoji} {kind} {job_name}"
-        
+       
         message_parts = [
             f"**Status:** {status.upper()}",
             f"**Job ID:** {job_id}"
         ]
-        
+       
         if source_path:
             message_parts.append(f"**Source:** {source_path}")
         if dest_path:
@@ -64,13 +62,13 @@ def backup_fanout_notify(job_id: str, job_name: str, status: str, source_path: s
             message_parts.append(f"**Duration:** {duration:.1f}s")
         if error:
             message_parts.append(f"**Error:** {error}")
-        
+       
         message = "\n".join(f"• {part}" for part in message_parts)
-        
+       
         priority = 3 if status == "success" else 8
         process_incoming(title, message, source="backup", priority=priority)
         logger.info(f"{kind} notification sent for job {job_id}")
-        
+       
     except Exception as e:
         # Fallback to error notification if available
         try:
@@ -79,10 +77,9 @@ def backup_fanout_notify(job_id: str, job_name: str, status: str, source_path: s
         except Exception:
             logger.error(f"{kind} fanout failed: {e}")
 
-
 class BackupConnection:
     """Base class for backup connections"""
-    
+   
     def __init__(self, connection_type: str, host: str, username: str, password: str, **kwargs):
         self.connection_type = connection_type
         self.host = host
@@ -92,28 +89,27 @@ class BackupConnection:
         self.share = kwargs.get('share')
         self.export_path = kwargs.get('export_path')
         self.connected = False
-        
+       
     def connect(self):
         """Connect to remote system"""
         raise NotImplementedError
-        
+       
     def disconnect(self):
         """Disconnect from remote system"""
         raise NotImplementedError
-        
+       
     def list_directory(self, path: str) -> List[Dict]:
         """List directory contents"""
         raise NotImplementedError
 
-
 class SSHConnection(BackupConnection):
     """SSH/SFTP connection handler"""
-    
+   
     def __init__(self, host: str, username: str, password: str, port: int = 22):
         super().__init__('ssh', host, username, password, port=port)
         self.client = None
         self.sftp = None
-        
+       
     def connect(self):
         """Connect via SSH"""
         try:
@@ -130,11 +126,11 @@ class SSHConnection(BackupConnection):
             self.connected = True
             logger.info(f"SSH connected to {self.host}")
             return True
-            
+           
         except Exception as e:
             logger.error(f"SSH connection failed to {self.host}: {e}")
             return False
-            
+           
     def disconnect(self):
         """Disconnect SSH"""
         try:
@@ -145,7 +141,7 @@ class SSHConnection(BackupConnection):
             self.connected = False
         except:
             pass
-        
+       
     def list_directory(self, path: str) -> List[Dict]:
         """List directory contents via SFTP"""
         items = []
@@ -153,7 +149,7 @@ class SSHConnection(BackupConnection):
             attrs = self.sftp.listdir_attr(path)
         except:
             return []
-        
+       
         for attr in attrs:
             import stat
             item = {
@@ -164,9 +160,9 @@ class SSHConnection(BackupConnection):
                 'mtime': attr.st_mtime if hasattr(attr, 'st_mtime') else 0
             }
             items.append(item)
-            
+           
         return sorted(items, key=lambda x: (not x['is_dir'], x['name']))
-            
+           
     def execute_command(self, command: str) -> tuple:
         """Execute command on remote system"""
         try:
@@ -178,19 +174,18 @@ class SSHConnection(BackupConnection):
             logger.error(f"Command execution failed: {e}")
             return "", str(e)
 
-
 class SMBConnection(BackupConnection):
     """SMB/CIFS connection handler"""
-    
+   
     def __init__(self, host: str, username: str, password: str, share: str, port: int = 445):
         super().__init__('smb', host, username, password, port=port, share=share)
         self.mount_point = None
-        
+       
     def connect(self):
         """Connect via SMB by mounting share"""
         try:
             self.mount_point = tempfile.mkdtemp(prefix='jarvis_smb_')
-            
+           
             mount_cmd = [
                 'mount',
                 '-t', 'cifs',
@@ -198,9 +193,9 @@ class SMBConnection(BackupConnection):
                 self.mount_point,
                 '-o', f'username={self.username},password={self.password},vers=3.0'
             ]
-            
+           
             result = subprocess.run(mount_cmd, capture_output=True, text=True)
-            
+           
             if result.returncode == 0:
                 self.connected = True
                 logger.info(f"SMB connected to //{self.host}/{self.share}")
@@ -208,11 +203,11 @@ class SMBConnection(BackupConnection):
             else:
                 logger.error(f"SMB mount failed: {result.stderr}")
                 return False
-                
+               
         except Exception as e:
             logger.error(f"SMB connection failed: {e}")
             return False
-            
+           
     def disconnect(self):
         """Disconnect SMB"""
         try:
@@ -222,17 +217,17 @@ class SMBConnection(BackupConnection):
             self.connected = False
         except:
             pass
-        
+       
     def list_directory(self, path: str) -> List[Dict]:
         """List directory contents from mounted SMB share"""
         full_path = os.path.join(self.mount_point, path.lstrip('/'))
         items = []
-        
+       
         try:
             for entry in os.listdir(full_path):
                 entry_path = os.path.join(full_path, entry)
                 stat_info = os.stat(entry_path)
-                
+               
                 item = {
                     'name': entry,
                     'path': os.path.join(path, entry),
@@ -243,31 +238,30 @@ class SMBConnection(BackupConnection):
                 items.append(item)
         except:
             pass
-            
+           
         return sorted(items, key=lambda x: (not x['is_dir'], x['name']))
-
 
 class NFSConnection(BackupConnection):
     """NFS connection handler"""
-    
+   
     def __init__(self, host: str, export_path: str, username: str = None, password: str = None):
         super().__init__('nfs', host, username or '', password or '', export_path=export_path)
         self.mount_point = None
-        
+       
     def connect(self):
         """Connect via NFS by mounting export"""
         try:
             self.mount_point = tempfile.mkdtemp(prefix='jarvis_nfs_')
-            
+           
             mount_cmd = [
                 'mount',
                 '-t', 'nfs',
                 f'{self.host}:{self.export_path}',
                 self.mount_point
             ]
-            
+           
             result = subprocess.run(mount_cmd, capture_output=True, text=True)
-            
+           
             if result.returncode == 0:
                 self.connected = True
                 logger.info(f"NFS connected to {self.host}:{self.export_path}")
@@ -275,11 +269,11 @@ class NFSConnection(BackupConnection):
             else:
                 logger.error(f"NFS mount failed: {result.stderr}")
                 return False
-                
+               
         except Exception as e:
             logger.error(f"NFS connection failed: {e}")
             return False
-            
+           
     def disconnect(self):
         """Disconnect NFS"""
         try:
@@ -289,17 +283,17 @@ class NFSConnection(BackupConnection):
             self.connected = False
         except:
             pass
-        
+       
     def list_directory(self, path: str) -> List[Dict]:
         """List directory contents from mounted NFS export"""
         try:
             full_path = os.path.join(self.mount_point, path.lstrip('/'))
             items = []
-            
+           
             for entry in os.listdir(full_path):
                 entry_path = os.path.join(full_path, entry)
                 stat_info = os.stat(entry_path)
-                
+               
                 item = {
                     'name': entry,
                     'path': os.path.join(path, entry),
@@ -308,13 +302,12 @@ class NFSConnection(BackupConnection):
                     'mtime': stat_info.st_mtime
                 }
                 items.append(item)
-                
+               
             return sorted(items, key=lambda x: (not x['is_dir'], x['name']))
-            
+           
         except Exception as e:
             logger.error(f"Failed to list NFS directory {path}: {e}")
             return []
-
 
 def create_connection(conn_type: str, **kwargs) -> BackupConnection:
     """Factory function to create connection objects"""
@@ -343,14 +336,13 @@ def create_connection(conn_type: str, **kwargs) -> BackupConnection:
     else:
         raise ValueError(f"Unknown connection type: {conn_type}")
 
-
 def ensure_rsync_installed(ssh_conn):
     """Ensure rsync is installed on remote SSH server"""
     try:
         stdout, stderr = ssh_conn.execute_command('which rsync')
         if stdout.strip():
             return True
-        
+       
         logger.info(f"rsync not found on {ssh_conn.host}, attempting to install...")
         install_cmd = 'sudo apt-get update && sudo apt-get install -y rsync || yum install -y rsync'
         ssh_conn.execute_command(install_cmd)
@@ -363,20 +355,18 @@ def ensure_rsync_installed(ssh_conn):
         logger.error(f"Error checking/installing rsync: {e}")
         return False
 
-
 def get_job_archive_dir(data_dir: Path, job_name: str) -> Path:
     """Get per-job archive directory"""
     job_dir = data_dir / job_name.replace(' ', '_')
     job_dir.mkdir(parents=True, exist_ok=True)
     return job_dir
 
-
 def apply_retention(data_dir: Path, job_name: str, retention_days: int, retention_count: int):
     """Apply retention policy: delete old archives"""
     try:
         job_dir = get_job_archive_dir(data_dir, job_name)
         archives = []
-        
+       
         for f in job_dir.glob("*.tar.gz"):
             try:
                 stat = f.stat()
@@ -386,52 +376,51 @@ def apply_retention(data_dir: Path, job_name: str, retention_days: int, retentio
                 })
             except:
                 continue
-        
+       
         if not archives:
             return
-        
+       
         # Sort by modification time (newest first)
         archives.sort(key=lambda x: x['mtime'], reverse=True)
-        
+       
         cutoff = datetime.now() - timedelta(days=retention_days)
-        
+       
         to_delete = []
-        
+       
         # Delete by age
         for arch in archives:
             if datetime.fromtimestamp(arch['mtime']) < cutoff:
                 to_delete.append(arch['path'])
-        
+       
         # Delete by count (keep latest N)
         if len(archives) > retention_count:
             for arch in archives[retention_count:]:
                 if arch['path'] not in to_delete:
                     to_delete.append(arch['path'])
-        
+       
         for path in to_delete:
             try:
                 path.unlink()
                 logger.info(f"Deleted old archive: {path}")
             except Exception as e:
                 logger.error(f"Failed to delete {path}: {e}")
-                
+               
     except Exception as e:
         logger.error(f"Retention cleanup failed: {e}")
 
-
-def create_archive_record(archive_id: str, job_id: str, job_config: Dict, duration: float, 
+def create_archive_record(archive_id: str, job_id: str, job_config: Dict, duration: float,
                          archive_path: Path, size_mb: float, data_dir: Path):
     """Create archive record after successful backup"""
     archives_file = data_dir / 'backup_archives.json'
-    
+   
     if archives_file.exists():
         with open(archives_file, 'r') as f:
             archives = json.load(f)
     else:
         archives = []
-    
+   
     timestamp = datetime.now()
-    
+   
     archive = {
         'id': archive_id,
         'job_id': job_id,
@@ -448,25 +437,24 @@ def create_archive_record(archive_id: str, job_id: str, job_config: Dict, durati
         'duration': duration,
         'status': 'completed'
     }
-    
+   
     archives.append(archive)
-    
+   
     with open(archives_file, 'w') as f:
         json.dump(archives, f, indent=2)
-    
+   
     logger.info(f"Created archive record {archive_id}")
-
 
 def import_existing_archives(data_dir: Path):
     """Scan for .tar.gz not in backup_archives.json and import them"""
     archives_file = data_dir / 'backup_archives.json'
     existing_paths = set()
-    
+   
     if archives_file.exists():
         with open(archives_file, 'r') as f:
             existing = json.load(f)
             existing_paths = {a.get('archive_path') for a in existing if a.get('archive_path')}
-    
+   
     imported = 0
     for job_dir in data_dir.iterdir():
         if not job_dir.is_dir() or job_dir.name.startswith('.'):
@@ -476,7 +464,7 @@ def import_existing_archives(data_dir: Path):
                 # Try to infer job name
                 job_name = job_dir.name.replace('_', ' ')
                 archive_id = str(uuid.uuid4())
-                
+               
                 record = {
                     'id': archive_id,
                     'job_id': None,
@@ -493,7 +481,7 @@ def import_existing_archives(data_dir: Path):
                     'duration': 0,
                     'status': 'imported'
                 }
-                
+               
                 with open(archives_file, 'a' if archives_file.exists() else 'w') as f:
                     if archives_file.exists():
                         existing = json.load(f)
@@ -503,20 +491,18 @@ def import_existing_archives(data_dir: Path):
                     else:
                         json.dump([record], f, indent=2)
                 imported += 1
-    
+   
     return imported
-
 
 def verify_tar_integrity(archive_path: Path) -> bool:
     """Verify tar.gz integrity"""
     try:
         with tarfile.open(archive_path, "r:gz") as tar:
-            tar.getmembers()  # Triggers integrity check
+            tar.getmembers() # Triggers integrity check
         return True
     except Exception as e:
         logger.error(f"Tar integrity check failed for {archive_path}: {e}")
         return False
-
 
 def safe_add(tar, path, arcname=""):
     """Safely add file or directory to tar, skipping on permission errors"""
@@ -527,7 +513,6 @@ def safe_add(tar, path, arcname=""):
     except Exception as e:
         logger.warning(f"Skipped {path}: {e}")
 
-
 def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
     """
     Worker function that runs in separate process
@@ -535,89 +520,89 @@ def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
     """
     start_time = time.time()
     job_config['start_time'] = start_time
-    
+   
     try:
         logger.info(f"Backup worker started for job {job_id}")
-        
+       
         data_dir = Path(job_config.get('_data_dir', '/data/backup_module'))
         servers_file = data_dir / 'backup_servers.json'
-        
+       
         if not servers_file.exists():
             raise Exception(f"No servers configured. Looking in: {servers_file}")
-        
+       
         with open(servers_file, 'r') as f:
             all_servers = json.load(f)
-        
+       
         source_server_id = job_config.get('source_server_id')
         if not source_server_id:
             raise Exception("No source server specified")
-        
+       
         source_server = next((s for s in all_servers if s.get('id') == source_server_id), None)
         if not source_server:
             raise Exception(f"Source server '{source_server_id}' not found")
-        
+       
         dest_server_id = job_config.get('destination_server_id')
         if not dest_server_id:
             raise Exception("No destination server specified")
-            
+           
         dest_server = next((s for s in all_servers if s.get('id') == dest_server_id), None)
         if not dest_server:
             raise Exception(f"Destination server '{dest_server_id}' not found")
-        
+       
         job_name = job_config.get('name', 'Unknown Job')
         job_archive_dir = get_job_archive_dir(data_dir, job_name)
-        
+       
         status_queue.put({
             'job_id': job_id,
             'status': 'running',
             'progress': 0,
             'message': f'Connecting to source: {source_server["name"]}...'
         })
-        
+       
         source_conn = create_connection(source_server['type'], **source_server)
         if not source_conn.connect():
             raise Exception(f"Failed to connect to source {source_server['name']}")
-        
+       
         if isinstance(source_conn, SSHConnection):
             ensure_rsync_installed(source_conn)
-            
+           
         status_queue.put({
             'job_id': job_id,
             'status': 'running',
             'progress': 10,
             'message': f'Connecting to destination: {dest_server["name"]}...'
         })
-        
+       
         dest_conn = create_connection(dest_server['type'], **dest_server)
         if not dest_conn.connect():
             source_conn.disconnect()
             raise Exception(f"Failed to connect to destination {dest_server['name']}")
-        
+       
         if isinstance(dest_conn, SSHConnection):
             ensure_rsync_installed(dest_conn)
-            
+           
         status_queue.put({
             'job_id': job_id,
             'status': 'running',
             'progress': 20,
             'message': 'Starting backup...'
         })
-        
+       
         if job_config.get('stop_containers') and isinstance(source_conn, SSHConnection):
             for container in job_config.get('containers', []):
                 source_conn.execute_command(f"docker stop {container}")
                 time.sleep(2)
-        
+       
         source_paths = job_config.get('paths') or job_config.get('source_paths', [])
         if not source_paths:
             raise Exception("No source paths specified")
-        
+       
         destination_path = job_config.get('destination_path', '/backups')
         compress = job_config.get('compress', True)
         sync_mode = job_config.get('sync_mode', False)
-        
+       
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        
+       
         if sync_mode:
             success = perform_sync_mode(
                 source_conn, dest_conn, source_paths, destination_path,
@@ -634,22 +619,22 @@ def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
                 source_conn, dest_conn, source_paths, destination_path,
                 status_queue, job_id, job_archive_dir
             )
-        
+       
         if job_config.get('stop_containers') and isinstance(source_conn, SSHConnection):
             for container in job_config.get('containers', []):
                 source_conn.execute_command(f"docker start {container}")
-        
+       
         source_conn.disconnect()
         dest_conn.disconnect()
-        
+       
         duration = time.time() - start_time
-        
+       
         if success:
             # Apply retention
             retention_days = job_config.get('retention_days', 30)
             retention_count = job_config.get('retention_count', 5)
             apply_retention(data_dir, job_name, retention_days, retention_count)
-            
+           
             status_queue.put({
                 'job_id': job_id,
                 'status': 'completed',
@@ -657,11 +642,11 @@ def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
                 'message': 'Backup completed',
                 'completed_at': datetime.now().isoformat()
             })
-            
+           
             source_paths_str = ", ".join(source_paths[:3])
             if len(source_paths) > 3:
                 source_paths_str += f" +{len(source_paths)-3} more"
-            
+           
             backup_fanout_notify(
                 job_id=job_id,
                 job_name=job_name,
@@ -672,15 +657,15 @@ def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
             )
         else:
             raise Exception("Backup failed during execution")
-            
+           
     except Exception as e:
         import traceback
         error_msg = str(e)
         error_trace = traceback.format_exc()
         logger.error(f"Backup failed: {error_msg}\n{error_trace}")
-        
+       
         duration = time.time() - start_time
-        
+       
         status_queue.put({
             'job_id': job_id,
             'status': 'failed',
@@ -688,13 +673,13 @@ def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
             'message': f'Backup failed: {error_msg}',
             'failed_at': datetime.now().isoformat()
         })
-        
+       
         try:
             source_paths = job_config.get('paths') or job_config.get('source_paths', [])
             source_paths_str = ", ".join(source_paths[:3])
             if len(source_paths) > 3:
                 source_paths_str += f" +{len(source_paths)-3} more"
-            
+           
             backup_fanout_notify(
                 job_id=job_id,
                 job_name=job_config.get('name', 'Unknown Job'),
@@ -706,7 +691,6 @@ def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
             )
         except:
             pass
-
 
 def perform_sync_mode(source_conn, dest_conn, source_paths, dest_path, status_queue, job_id,
                      job_archive_dir, timestamp):
@@ -720,7 +704,7 @@ def perform_sync_mode(source_conn, dest_conn, source_paths, dest_path, status_qu
                 'progress': progress,
                 'message': f'Syncing {source_path}...'
             })
-            
+           
             if isinstance(source_conn, SSHConnection) and isinstance(dest_conn, SSHConnection):
                 temp_dir = tempfile.mkdtemp(prefix='jarvis_sync_')
                 download_via_rsync(source_conn, source_path, temp_dir, incremental=True)
@@ -739,7 +723,6 @@ def perform_sync_mode(source_conn, dest_conn, source_paths, dest_path, status_qu
             'message': f'Sync failed: {str(e)}'
         })
         raise
-
 
 def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compress,
                        status_queue, job_id, job_archive_dir, timestamp,
@@ -795,7 +778,6 @@ def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compres
     except Exception as e:
         raise Exception(f"Full backup failed: {str(e)}") from e
 
-
 def perform_incremental_backup(source_conn, dest_conn, source_paths, dest_path,
                               status_queue, job_id, job_archive_dir):
     """Perform incremental backup"""
@@ -808,7 +790,7 @@ def perform_incremental_backup(source_conn, dest_conn, source_paths, dest_path,
                 'progress': progress,
                 'message': f'Updating {source_path}...'
             })
-            
+           
             if isinstance(source_conn, SSHConnection) and isinstance(dest_conn, SSHConnection):
                 temp_dir = tempfile.mkdtemp(prefix='jarvis_sync_')
                 download_via_rsync(source_conn, source_path, temp_dir, incremental=True)
@@ -822,7 +804,6 @@ def perform_incremental_backup(source_conn, dest_conn, source_paths, dest_path,
     except Exception as e:
         raise Exception(f"Incremental backup failed: {str(e)}") from e
 
-
 def download_via_rsync(ssh_conn, remote_path, local_path, incremental=False):
     """Download using rsync"""
     os.makedirs(local_path, exist_ok=True)
@@ -832,11 +813,11 @@ def download_via_rsync(ssh_conn, remote_path, local_path, incremental=False):
         has_rsync = True
     except:
         has_rsync = False
-    
+   
     if not has_rsync:
         download_via_sftp(ssh_conn, remote_path, local_path)
         return
-    
+   
     cmd = [
         'rsync', '-avz', '--progress',
         '-e', f'sshpass -p "{ssh_conn.password}" ssh -o StrictHostKeyChecking=no -p {ssh_conn.port}',
@@ -845,7 +826,6 @@ def download_via_rsync(ssh_conn, remote_path, local_path, incremental=False):
     if incremental:
         cmd.insert(2, '--update')
     subprocess.run(cmd, check=True)
-
 
 def download_via_sftp(ssh_conn, remote_path, local_path):
     """Fallback SFTP download"""
@@ -866,7 +846,6 @@ def download_via_sftp(ssh_conn, remote_path, local_path):
     except Exception as e:
         raise Exception(f"SFTP download failed: {e}")
 
-
 def upload_via_rsync(ssh_conn, local_path, remote_path):
     """Upload using rsync"""
     try:
@@ -875,11 +854,11 @@ def upload_via_rsync(ssh_conn, local_path, remote_path):
         has_rsync = True
     except:
         has_rsync = False
-    
+   
     if not has_rsync:
         upload_via_sftp(ssh_conn, local_path, remote_path)
         return
-    
+   
     cmd = [
         'rsync', '-avz', '--progress',
         '-e', f'sshpass -p "{ssh_conn.password}" ssh -o StrictHostKeyChecking=no -p {ssh_conn.port}',
@@ -887,7 +866,6 @@ def upload_via_rsync(ssh_conn, local_path, remote_path):
         f'{ssh_conn.username}@{ssh_conn.host}:{remote_path}/'
     ]
     subprocess.run(cmd, check=True)
-
 
 def upload_via_sftp(ssh_conn, local_path, remote_path):
     """Fallback SFTP upload"""
@@ -897,7 +875,7 @@ def upload_via_sftp(ssh_conn, local_path, remote_path):
             ssh_conn.sftp.stat(remote_path)
         except:
             ssh_conn.sftp.mkdir(remote_path)
-        
+       
         if os.path.isdir(local_path):
             for item in os.listdir(local_path):
                 l_item = os.path.join(local_path, item)
@@ -910,7 +888,6 @@ def upload_via_sftp(ssh_conn, local_path, remote_path):
             ssh_conn.sftp.put(local_path, os.path.join(remote_path, os.path.basename(local_path)))
     except Exception as e:
         raise Exception(f"SFTP upload failed: {e}")
-
 
 def sync_directories(source, dest):
     """Sync directories incrementally"""
@@ -925,12 +902,11 @@ def sync_directories(source, dest):
             if not os.path.exists(d_file) or os.path.getmtime(s_file) > os.path.getmtime(d_file):
                 shutil.copy2(s_file, d_file)
 
-
 def restore_worker(restore_id: str, restore_config: Dict, status_queue: Queue):
     """Worker for restore operations"""
     start_time = time.time()
     temp_dir = None
-    
+   
     try:
         logger.info(f"Restore worker started for {restore_id}")
         archive = restore_config['archive']
@@ -939,76 +915,76 @@ def restore_worker(restore_id: str, restore_config: Dict, status_queue: Queue):
         dest_path = restore_config.get('dest_path')
         restore_to_original = dest_path in [None, '', 'original']
         data_dir = Path(restore_config['_data_dir'])
-        
+       
         status_queue.put({
             'restore_id': restore_id,
             'status': 'running',
             'progress': 10,
             'message': 'Loading configuration...'
         })
-        
+       
         servers_file = data_dir / 'backup_servers.json'
         with open(servers_file, 'r') as f:
             all_servers = json.load(f)
-        
+       
         source_server_id = archive.get('dest_server_id')
         source_server = next((s for s in all_servers if s['id'] == source_server_id), None)
         if not source_server:
             raise Exception("Backup storage server not found")
-        
+       
         dest_server = next((s for s in all_servers if s['id'] == dest_server_id), None)
         if not dest_server:
             raise Exception("Restore destination not found")
-        
+       
         archive_path = Path(archive['archive_path'])
         if not archive_path.exists():
             raise Exception(f"Archive not found: {archive_path}")
-        
+       
         if not verify_tar_integrity(archive_path):
             raise Exception("Archive is corrupted")
-        
+       
         status_queue.put({
             'restore_id': restore_id,
             'status': 'running',
             'progress': 30,
             'message': 'Connecting to source...'
         })
-        
+       
         source_conn = create_connection(source_server['type'], **source_server)
         if not source_conn.connect():
             raise Exception("Failed to connect to backup storage")
-        
+       
         status_queue.put({
             'restore_id': restore_id,
             'status': 'running',
             'progress': 50,
             'message': 'Connecting to destination...'
         })
-        
+       
         dest_conn = create_connection(dest_server['type'], **dest_server)
         if not dest_conn.connect():
             source_conn.disconnect()
             raise Exception("Failed to connect to restore destination")
-        
+       
         temp_dir = tempfile.mkdtemp(prefix='jarvis_restore_')
-        
+       
         status_queue.put({
             'restore_id': restore_id,
             'status': 'running',
             'progress': 60,
             'message': 'Extracting archive...'
         })
-        
+       
         with tarfile.open(archive_path, "r:gz") as tar:
             tar.extractall(path=temp_dir)
-        
+       
         status_queue.put({
             'restore_id': restore_id,
             'status': 'running',
             'progress': 80,
             'message': 'Restoring files...'
         })
-        
+       
         if restore_to_original:
             source_paths = archive.get('source_paths', [])
             if not source_paths:
@@ -1039,12 +1015,12 @@ def restore_worker(restore_id: str, restore_config: Dict, status_queue: Queue):
                         shutil.copytree(src, dst, dirs_exist_ok=True)
                     else:
                         shutil.copy2(src, dst)
-        
+       
         source_conn.disconnect()
         dest_conn.disconnect()
-        
+       
         duration = time.time() - start_time
-        
+       
         status_queue.put({
             'restore_id': restore_id,
             'status': 'completed',
@@ -1052,7 +1028,7 @@ def restore_worker(restore_id: str, restore_config: Dict, status_queue: Queue):
             'message': f'Restore completed in {duration:.1f}s',
             'completed_at': datetime.now().isoformat()
         })
-        
+       
         backup_fanout_notify(
             job_id=restore_id,
             job_name=archive.get('job_name', 'Restore'),
@@ -1061,7 +1037,7 @@ def restore_worker(restore_id: str, restore_config: Dict, status_queue: Queue):
             duration=duration,
             restore=True
         )
-        
+       
     except Exception as e:
         logger.error(f"Restore failed: {e}")
         status_queue.put({
@@ -1085,10 +1061,9 @@ def restore_worker(restore_id: str, restore_config: Dict, status_queue: Queue):
             except:
                 pass
 
-
 class BackupManager:
     """Main backup manager"""
-    
+   
     def __init__(self, data_dir: str):
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -1098,31 +1073,33 @@ class BackupManager:
         self.statuses = self._load_statuses()
         self.worker_processes = {}
         self.status_updater = None
-        
+        # Cache servers in memory for fast access
+        self.servers = {s['id']: s for s in self.get_all_servers()}
+       
     def _load_jobs(self):
         if self.jobs_file.exists():
             with open(self.jobs_file, 'r') as f:
                 return json.load(f)
         return {}
-        
+       
     def _save_jobs(self):
         with open(self.jobs_file, 'w') as f:
             json.dump(self.jobs, f, indent=2)
-            
+           
     def _load_statuses(self):
         if self.status_file.exists():
             with open(self.status_file, 'r') as f:
                 return json.load(f)
         return {}
-        
+       
     def _save_statuses(self):
         with open(self.status_file, 'w') as f:
             json.dump(self.statuses, f, indent=2)
-            
+           
     async def start(self):
         self.status_updater = asyncio.create_task(self._status_updater())
         logger.info("Backup manager started")
-        
+       
     async def stop(self):
         if self.status_updater:
             self.status_updater.cancel()
@@ -1131,7 +1108,7 @@ class BackupManager:
                 process.terminate()
                 process.join(timeout=5)
         logger.info("Backup manager stopped")
-        
+       
     async def _status_updater(self):
         while True:
             try:
@@ -1151,7 +1128,7 @@ class BackupManager:
             except Exception as e:
                 logger.error(f"Status updater error: {e}")
                 await asyncio.sleep(1)
-                
+               
     def create_job(self, job_config: Dict) -> str:
         job_id = str(uuid.uuid4())
         job_config['id'] = job_id
@@ -1159,7 +1136,7 @@ class BackupManager:
         self.jobs[job_id] = job_config
         self._save_jobs()
         return job_id
-        
+       
     def run_job(self, job_id: str) -> bool:
         if job_id not in self.jobs:
             return False
@@ -1176,41 +1153,106 @@ class BackupManager:
         }
         self._save_statuses()
         return True
-        
+       
     def get_job_status(self, job_id: str) -> Dict:
         return self.statuses.get(job_id, {})
-        
+       
     def get_all_jobs(self) -> Dict:
         return self.jobs
-        
+       
     def delete_job(self, job_id: str) -> bool:
-        """Delete job definition and its archived files"""
-        if job_id not in self.jobs:
+        """Delete a job, its metadata, and its remote backup folder on the destination server."""
+        job = self.jobs.get(job_id)
+        if not job:
+            logger.warning(f"Job {job_id} not found.")
             return False
-        job_name = self.jobs[job_id].get('name', f'job_{job_id}')
-        del self.jobs[job_id]
+
+        job_name = job.get("name", f"job_{job_id}")
+        dest_server_id = job.get("destination_server_id")
+        dest_path = job.get("destination_path")
+
+        # 1️⃣ Connect to destination server and delete backup folder
+        if dest_server_id and dest_path:
+            dest_server = self.servers.get(dest_server_id)
+            if dest_server:
+                try:
+                    server_type = dest_server.get("type")
+                    logger.info(f"Deleting backup from destination server ({server_type}) at {dest_path}")
+
+                    if server_type == "ssh":
+                        import paramiko
+                        ssh = paramiko.SSHClient()
+                        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                        ssh.connect(
+                            dest_server["host"],
+                            port=int(dest_server.get("port", 22)),
+                            username=dest_server["username"],
+                            password=dest_server["password"],
+                            timeout=10,
+                        )
+
+                        remote_dir = f"{dest_path.rstrip('/')}/{job_name}"
+                        ssh.exec_command(f"rm -rf '{remote_dir}'")
+                        ssh.close()
+                        logger.info(f"Deleted remote folder: {remote_dir}")
+
+                    elif server_type == "smb":
+                        # SMB cleanup
+                        from smb.SMBConnection import SMBConnection
+                        conn = SMBConnection(
+                            dest_server["username"], dest_server["password"],
+                            "jarvis", dest_server["host"],
+                            use_ntlm_v2=True, is_direct_tcp=True
+                        )
+                        connected = conn.connect(dest_server["host"], int(dest_server.get("port", 445)))
+                        if connected:
+                            share = dest_server["share"]
+                            remote_dir = f"{dest_path.strip('/')}/{job_name}"
+                            for f in conn.listPath(share, remote_dir):
+                                conn.deleteFiles(share, f"{remote_dir}/{f.filename}")
+                            conn.deleteDirectory(share, remote_dir)
+                            conn.close()
+                            logger.info(f"Deleted SMB folder: {remote_dir}")
+
+                    elif server_type == "nfs":
+                        # NFS mount cleanup (if mounted locally)
+                        local_mount = Path("/mnt/nfs") / dest_server["export_path"].strip("/")
+                        remote_dir = local_mount / job_name
+                        if remote_dir.exists():
+                            shutil.rmtree(remote_dir)
+                            logger.info(f"Deleted NFS folder: {remote_dir}")
+
+                except Exception as e:
+                    logger.error(f"Failed to delete remote backup folder for {job_name}: {e}")
+            else:
+                logger.warning(f"Destination server not found for job {job_id}")
+
+        # 2️⃣ Delete local metadata
+        self.jobs.pop(job_id, None)
         self._save_jobs()
-        # Remove from status file if present
+
         if job_id in self.statuses:
             del self.statuses[job_id]
             self._save_statuses()
-        # --- NEW: delete physical backup folder for this job ---
-        try:
-            job_dir = get_job_archive_dir(self.data_dir, job_name)
-            if job_dir.exists():
-                shutil.rmtree(job_dir)
-                logger.info(f"Deleted backup directory for job: {job_name}")
-        except Exception as e:
-            logger.warning(f"Could not remove job archive folder for {job_name}: {e}")
+
+        # 3️⃣ Delete local archive folder (mirror)
+        local_dir = get_job_archive_dir(self.data_dir, job_name)
+        if local_dir.exists():
+            try:
+                shutil.rmtree(local_dir)
+                logger.info(f"Deleted local archive folder: {local_dir}")
+            except Exception as e:
+                logger.error(f"Failed to delete local archive folder {local_dir}: {e}")
+
         return True
-    
+   
     def get_all_servers(self) -> List[Dict]:
         servers_file = self.data_dir / 'backup_servers.json'
         if servers_file.exists():
             with open(servers_file, 'r') as f:
                 return json.load(f)
         return []
-    
+   
     def add_server(self, server_config: Dict) -> str:
         server_id = str(uuid.uuid4())
         server_config['id'] = server_id
@@ -1218,24 +1260,28 @@ class BackupManager:
         servers.append(server_config)
         with open(self.data_dir / 'backup_servers.json', 'w') as f:
             json.dump(servers, f, indent=2)
+        # Update cache
+        self.servers[server_id] = server_config
         return server_id
-    
+   
     def delete_server(self, server_id: str) -> bool:
         servers = self.get_all_servers()
         filtered = [s for s in servers if s.get('id') != server_id]
         if len(filtered) < len(servers):
             with open(self.data_dir / 'backup_servers.json', 'w') as f:
                 json.dump(filtered, f, indent=2)
+            # Update cache
+            self.servers.pop(server_id, None)
             return True
         return False
-    
+   
     def get_all_archives(self) -> List[Dict]:
         archives_file = self.data_dir / 'backup_archives.json'
         if archives_file.exists():
             with open(archives_file, 'r') as f:
                 return json.load(f)
         return []
-    
+   
     def delete_archive(self, archive_id: str) -> bool:
         archives = self.get_all_archives()
         filtered = [a for a in archives if a.get('id') != archive_id]
@@ -1252,14 +1298,14 @@ class BackupManager:
                     logger.warning(f"Failed to delete archive file {archive['archive_path']}: {e}")
             return True
         return False
-    
+   
     def start_restore(self, archive_id: str, dest_server_id: str, dest_path: str,
                      selective_items: list = None) -> str:
         archives = self.get_all_archives()
         archive = next((a for a in archives if a['id'] == archive_id), None)
         if not archive:
             raise Exception("Archive not found")
-        
+       
         restore_id = str(uuid.uuid4())
         restore_config = {
             'restore_id': restore_id,
@@ -1269,11 +1315,11 @@ class BackupManager:
             'selective_items': selective_items or [],
             '_data_dir': str(self.data_dir)
         }
-        
+       
         process = Process(target=restore_worker, args=(restore_id, restore_config, status_queue))
         process.start()
         self.worker_processes[restore_id] = process
-        
+       
         self.statuses[restore_id] = {
             'restore_id': restore_id, 'status': 'queued', 'progress': 0,
             'message': 'Restore queued', 'started_at': datetime.now().isoformat()
@@ -1284,7 +1330,6 @@ class BackupManager:
     def import_archives(self):
         """Import existing .tar.gz files"""
         return import_existing_archives(self.data_dir)
-
 
 # API Routes
 backup_manager = None
@@ -1425,25 +1470,24 @@ async def import_archives(request):
     except Exception as e:
         return web.json_response({'error': str(e)}, status=500)
 
-
 def setup_routes(app):
     app.router.add_post('/api/backup/jobs', create_backup_job)
     app.router.add_get('/api/backup/jobs', get_all_jobs)
     app.router.add_post('/api/backup/jobs/{job_id}/run', run_backup_job)
     app.router.add_get('/api/backup/jobs/{job_id}/status', get_job_status)
     app.router.add_delete('/api/backup/jobs/{job_id}', delete_backup_job)
-    
+   
     app.router.add_get('/api/backup/servers', get_servers)
     app.router.add_post('/api/backup/servers', add_server)
     app.router.add_delete('/api/backup/servers/{server_id}', delete_server)
-    
+   
     app.router.add_get('/api/backup/archives', get_archives)
     app.router.add_delete('/api/backup/archives/{archive_id}', delete_archive)
     app.router.add_post('/api/backup/import-archives', import_archives)
-    
+   
     app.router.add_post('/api/backup/test-connection', test_connection)
     app.router.add_post('/api/backup/browse', browse_directory)
     app.router.add_post('/api/backup/restore', restore_backup)
-    
+   
     app.on_startup.append(init_backup_module)
     app.on_cleanup.append(cleanup_backup_module)
