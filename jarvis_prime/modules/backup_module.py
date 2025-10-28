@@ -535,7 +535,6 @@ def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
     """
     start_time = time.time()
     job_config['start_time'] = start_time
-    temp_dir = None
     
     try:
         logger.info(f"Backup worker started for job {job_id}")
@@ -617,7 +616,6 @@ def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
         compress = job_config.get('compress', True)
         sync_mode = job_config.get('sync_mode', False)
         
-        temp_dir = tempfile.mkdtemp(prefix='jarvis_backup_')
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         
         if sync_mode:
@@ -628,13 +626,13 @@ def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
         elif job_config.get('backup_type', 'incremental') == 'full':
             success = perform_full_backup(
                 source_conn, dest_conn, source_paths, destination_path,
-                compress, status_queue, job_id, temp_dir, job_archive_dir, timestamp,
+                compress, status_queue, job_id, job_archive_dir, timestamp,
                 job_config, data_dir
             )
         else:
             success = perform_incremental_backup(
                 source_conn, dest_conn, source_paths, destination_path,
-                status_queue, job_id, temp_dir, job_archive_dir
+                status_queue, job_id, job_archive_dir
             )
         
         if job_config.get('stop_containers') and isinstance(source_conn, SSHConnection):
@@ -708,12 +706,6 @@ def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
             )
         except:
             pass
-    finally:
-        if temp_dir and os.path.exists(temp_dir):
-            try:
-                shutil.rmtree(temp_dir)
-            except:
-                pass
 
 
 def perform_sync_mode(source_conn, dest_conn, source_paths, dest_path, status_queue, job_id,
@@ -750,10 +742,14 @@ def perform_sync_mode(source_conn, dest_conn, source_paths, dest_path, status_qu
 
 
 def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compress,
-                       status_queue, job_id, temp_dir, job_archive_dir, timestamp,
+                       status_queue, job_id, job_archive_dir, timestamp,
                        job_config, data_dir):
-    """Perform full backup with tar.gz using safe_add"""
+    """Perform full backup with per-job subfolder and tar.gz"""
     try:
+        # --- NEW: create per-job subfolder ---
+        job_subfolder = job_archive_dir / timestamp
+        os.makedirs(job_subfolder, exist_ok=True)
+
         for idx, source_path in enumerate(source_paths):
             progress = 30 + (idx * 40 // len(source_paths))
             status_queue.put({
@@ -762,15 +758,15 @@ def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compres
                 'progress': progress,
                 'message': f'Copying {source_path}...'
             })
-            
+
+            dest_local = job_subfolder / os.path.basename(source_path.strip('/'))
             if isinstance(source_conn, SSHConnection):
-                download_via_rsync(source_conn, source_path, temp_dir)
+                download_via_rsync(source_conn, source_path, str(dest_local))
             else:
                 source_full = os.path.join(source_conn.mount_point, source_path.lstrip('/'))
-                dest_full = os.path.join(temp_dir, os.path.basename(source_path))
-                shutil.copytree(source_full, dest_full, dirs_exist_ok=True)
+                shutil.copytree(source_full, dest_local, dirs_exist_ok=True)
                 
-        archive_path = job_archive_dir / f'backup_{timestamp}.tar.gz'
+        archive_path = job_subfolder / f'backup_{timestamp}.tar.gz'
         
         if compress:
             status_queue.put({
@@ -781,18 +777,17 @@ def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compres
             })
             
             with tarfile.open(archive_path, "w:gz") as tar:
-                for root, dirs, files in os.walk(temp_dir):
+                for root, dirs, files in os.walk(job_subfolder):
                     for name in files + dirs:
                         item_path = os.path.join(root, name)
-                        rel_path = os.path.relpath(item_path, temp_dir)
+                        rel_path = os.path.relpath(item_path, job_subfolder)
                         safe_add(tar, item_path, arcname=rel_path)
             
             size_mb = archive_path.stat().st_size / (1024*1024)
         else:
-            size_mb = sum(f.stat().st_size for f in Path(temp_dir).rglob('*') if f.is_file()) / (1024*1024)
-            archive_path = job_archive_dir / f'backup_{timestamp}'
-            shutil.move(temp_dir, archive_path)
-            temp_dir = None
+            size_mb = sum(f.stat().st_size for f in job_subfolder.rglob('*') if f.is_file()) / (1024*1024)
+            # No compression: keep folder as-is
+            pass
         
         archive_id = str(uuid.uuid4())
         duration = time.time() - job_config['start_time']
@@ -805,7 +800,7 @@ def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compres
 
 
 def perform_incremental_backup(source_conn, dest_conn, source_paths, dest_path,
-                              status_queue, job_id, temp_dir, job_archive_dir):
+                              status_queue, job_id, job_archive_dir):
     """Perform incremental backup"""
     try:
         for idx, source_path in enumerate(source_paths):
@@ -943,7 +938,9 @@ def restore_worker(restore_id: str, restore_config: Dict, status_queue: Queue):
         logger.info(f"Restore worker started for {restore_id}")
         archive = restore_config['archive']
         dest_server_id = restore_config['dest_server_id']
-        dest_path = restore_config['dest_path']
+        # --- NEW: auto-restore to original source paths if requested ---
+        dest_path = restore_config.get('dest_path')
+        restore_to_original = dest_path in [None, '', 'original']
         data_dir = Path(restore_config['_data_dir'])
         
         status_queue.put({
@@ -1015,18 +1012,36 @@ def restore_worker(restore_id: str, restore_config: Dict, status_queue: Queue):
             'message': 'Restoring files...'
         })
         
-        if isinstance(dest_conn, SSHConnection):
-            upload_via_sftp(dest_conn, temp_dir, dest_path)
-        else:
-            dest_full = os.path.join(dest_conn.mount_point, dest_path.lstrip('/'))
-            os.makedirs(dest_full, exist_ok=True)
-            for item in os.listdir(temp_dir):
-                src = os.path.join(temp_dir, item)
-                dst = os.path.join(dest_full, item)
-                if os.path.isdir(src):
-                    shutil.copytree(src, dst, dirs_exist_ok=True)
+        if restore_to_original:
+            source_paths = archive.get('source_paths', [])
+            if not source_paths:
+                raise Exception("No source paths stored for restore-to-original mode.")
+            for src in source_paths:
+                logger.info(f"Restoring to original path: {src}")
+                if isinstance(dest_conn, SSHConnection):
+                    upload_via_sftp(dest_conn, temp_dir, src)
                 else:
-                    shutil.copy2(src, dst)
+                    dest_full = os.path.join(dest_conn.mount_point, src.lstrip('/'))
+                    os.makedirs(dest_full, exist_ok=True)
+                    for item in os.listdir(temp_dir):
+                        s_item = os.path.join(temp_dir, item)
+                        if os.path.isdir(s_item):
+                            shutil.copytree(s_item, dest_full, dirs_exist_ok=True)
+                        else:
+                            shutil.copy2(s_item, dest_full)
+        else:
+            if isinstance(dest_conn, SSHConnection):
+                upload_via_sftp(dest_conn, temp_dir, dest_path)
+            else:
+                dest_full = os.path.join(dest_conn.mount_point, dest_path.lstrip('/'))
+                os.makedirs(dest_full, exist_ok=True)
+                for item in os.listdir(temp_dir):
+                    src = os.path.join(temp_dir, item)
+                    dst = os.path.join(dest_full, item)
+                    if os.path.isdir(src):
+                        shutil.copytree(src, dst, dirs_exist_ok=True)
+                    else:
+                        shutil.copy2(src, dst)
         
         source_conn.disconnect()
         dest_conn.disconnect()
@@ -1172,14 +1187,25 @@ class BackupManager:
         return self.jobs
         
     def delete_job(self, job_id: str) -> bool:
-        if job_id in self.jobs:
-            del self.jobs[job_id]
-            self._save_jobs()
-            if job_id in self.statuses:
-                del self.statuses[job_id]
-                self._save_statuses()
-            return True
-        return False
+        """Delete job definition and its archived files"""
+        if job_id not in self.jobs:
+            return False
+        job_name = self.jobs[job_id].get('name', f'job_{job_id}')
+        del self.jobs[job_id]
+        self._save_jobs()
+        # Remove from status file if present
+        if job_id in self.statuses:
+            del self.statuses[job_id]
+            self._save_statuses()
+        # --- NEW: delete physical backup folder for this job ---
+        try:
+            job_dir = get_job_archive_dir(self.data_dir, job_name)
+            if job_dir.exists():
+                shutil.rmtree(job_dir)
+                logger.info(f"Deleted backup directory for job: {job_name}")
+        except Exception as e:
+            logger.warning(f"Could not remove job archive folder for {job_name}: {e}")
+        return True
     
     def get_all_servers(self) -> List[Dict]:
         servers_file = self.data_dir / 'backup_servers.json'
@@ -1380,7 +1406,7 @@ async def restore_backup(request):
         restore_id = backup_manager.start_restore(
             data['archive_id'],
             data['destination_server_id'],
-            data['destination_path'],
+            data.get('destination_path', ''),
             data.get('selective_items', [])
         )
         return web.json_response({'success': True, 'restore_id': restore_id})
