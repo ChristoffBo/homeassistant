@@ -1242,6 +1242,14 @@ class BackupManager:
         if len(filtered) < len(archives):
             with open(self.data_dir / 'backup_archives.json', 'w') as f:
                 json.dump(filtered, f, indent=2)
+            # Remove physical file
+            archive = next((a for a in archives if a['id'] == archive_id), None)
+            if archive and Path(archive['archive_path']).exists():
+                try:
+                    Path(archive['archive_path']).unlink()
+                    logger.info(f"Deleted archive file: {archive['archive_path']}")
+                except Exception as e:
+                    logger.warning(f"Failed to delete archive file {archive['archive_path']}: {e}")
             return True
         return False
     
