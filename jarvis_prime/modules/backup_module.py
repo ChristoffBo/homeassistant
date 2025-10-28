@@ -749,7 +749,7 @@ def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compres
         # --- NEW: create per-job subfolder ---
         job_subfolder = job_archive_dir / timestamp
         os.makedirs(job_subfolder, exist_ok=True)
-
+        temp_data_dir = tempfile.mkdtemp(prefix='jarvis_backup_tmp_')
         for idx, source_path in enumerate(source_paths):
             progress = 30 + (idx * 40 // len(source_paths))
             status_queue.put({
@@ -758,43 +758,40 @@ def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compres
                 'progress': progress,
                 'message': f'Copying {source_path}...'
             })
-
-            dest_local = job_subfolder / os.path.basename(source_path.strip('/'))
+            dest_local = Path(temp_data_dir) / os.path.basename(source_path.strip('/'))
             if isinstance(source_conn, SSHConnection):
                 download_via_rsync(source_conn, source_path, str(dest_local))
             else:
                 source_full = os.path.join(source_conn.mount_point, source_path.lstrip('/'))
                 shutil.copytree(source_full, dest_local, dirs_exist_ok=True)
-                
         archive_path = job_subfolder / f'backup_{timestamp}.tar.gz'
-        
-        if compress:
-            status_queue.put({
-                'job_id': job_id,
-                'status': 'running',
-                'progress': 75,
-                'message': 'Compressing archive...'
-            })
-            
-            with tarfile.open(archive_path, "w:gz") as tar:
-                for root, dirs, files in os.walk(job_subfolder):
-                    for name in files + dirs:
-                        item_path = os.path.join(root, name)
-                        rel_path = os.path.relpath(item_path, job_subfolder)
-                        safe_add(tar, item_path, arcname=rel_path)
-            
-            size_mb = archive_path.stat().st_size / (1024*1024)
+        status_queue.put({
+            'job_id': job_id,
+            'status': 'running',
+            'progress': 75,
+            'message': 'Compressing archive...'
+        })
+        # Build tar explicitly from temp directory
+        with tarfile.open(archive_path, "w:gz") as tar:
+            for root, dirs, files in os.walk(temp_data_dir):
+                for name in files:
+                    item_path = os.path.join(root, name)
+                    rel_path = os.path.relpath(item_path, temp_data_dir)
+                    safe_add(tar, item_path, arcname=rel_path)
+            tar.close() # force flush
+        size_mb = archive_path.stat().st_size / (1024 * 1024)
+        # Upload to destination (if remote)
+        if isinstance(dest_conn, SSHConnection):
+            upload_via_sftp(dest_conn, str(archive_path), dest_path)
+        elif hasattr(dest_conn, "mount_point"):
+            shutil.copy2(archive_path, os.path.join(dest_conn.mount_point, dest_path.lstrip('/')))
         else:
-            size_mb = sum(f.stat().st_size for f in job_subfolder.rglob('*') if f.is_file()) / (1024*1024)
-            # No compression: keep folder as-is
-            pass
-        
+            logger.warning("Unknown destination type: archive not uploaded")
         archive_id = str(uuid.uuid4())
         duration = time.time() - job_config['start_time']
         create_archive_record(archive_id, job_id, job_config, duration, archive_path, size_mb, data_dir)
-        
+        shutil.rmtree(temp_data_dir, ignore_errors=True)
         return True
-        
     except Exception as e:
         raise Exception(f"Full backup failed: {str(e)}") from e
 
