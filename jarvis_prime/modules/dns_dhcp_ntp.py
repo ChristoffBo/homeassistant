@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 
 """
-ULTIMATE DNS + DHCPv4/v6 + NTP (JARVIS HEADLESS EXTENDED)
-Lean. Fast. RFC-Perfect. Technitium Obsolete.
-Self-Healing Network Brain. Headless. Extended. Eternal.
+ULTIMATE DNS + DHCPv4/v6 + NTP (JARVIS ULTIMATE EXTENDED)
+Lean. Fast. RFC-Perfect. Technitium Eclipsed.
+Self-Healing Network Brain. Headless. Ultimate. Eternal.
 """
 
 import asyncio
@@ -19,6 +19,7 @@ import jwt
 import random
 import hashlib
 import gzip
+import subprocess
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional, Tuple
 from collections import defaultdict, deque
@@ -109,7 +110,7 @@ class ConfigModel(BaseModel):
     dns_port: conint(ge=1025, le=65535) = 5353
     dot_port: conint(ge=1025, le=65535) = 8530
     doh_path: str = "/dns-query"
-    doh_proxy_url: Optional[str] = None  # New: proxy for DoH
+    doh_proxy_url: Optional[str] = None
     ntp_port: conint(ge=1025, le=65535) = 8123
     dhcp_interface: str = "eth0"
     dhcp_gateway: IPvAnyAddress = "10.0.0.1"
@@ -117,8 +118,8 @@ class ConfigModel(BaseModel):
     dhcp_range: Dict[str, IPvAnyAddress] = {"start": "10.0.0.50", "end": "10.0.0.250"}
     dhcp_lease_time: conint(ge=60) = 86400
     global_forwarders: List[str] = ["https://1.1.1.1/dns-query"]
-    cache_ttl_override: conint(ge=0) = 3600  # New: force TTL
-    static_leases: Dict[str, str] = {}  # New: mac -> ip
+    cache_ttl_override: conint(ge=0) = 3600
+    static_leases: Dict[str, str] = {}
     blocklists: List[str] = []
     recursion_acl: List[str] = ["::1", "127.0.0.1", "10.0.0.0/8"]
     dnssec: bool = True
@@ -126,6 +127,65 @@ class ConfigModel(BaseModel):
     qps_burst: conint(ge=1) = 100
     stale_ttl: conint(ge=0) = 86400
     ntp_peers: List[str] = ["pool.ntp.org"]
+    advertise_ntp: bool = True  # New
+
+    # Presets
+    doh_presets: Dict[str, str] = {
+        "Cloudflare": "https://1.1.1.1/dns-query",
+        "Cloudflare Family": "https://family.cloudflare-dns.com/dns-query",
+        "Google": "https://dns.google/dns-query",
+        "Quad9": "https://dns.quad9.net/dns-query",
+        "AdGuard": "https://dns.adguard.com/dns-query",
+        "NextDNS": "https://dns.nextdns.io",
+        "CleanBrowsing (Family)": "https://family-filter-dns.cleanbrowsing.org/dns-query",
+        "CleanBrowsing (Adult)": "https://adult-filter-dns.cleanbrowsing.org/dns-query",
+        "Mullvad": "https://doh.mullvad.net/dns-query",
+        "LibreDNS": "https://doh.libredns.gr/dns-query",
+        "OpenDNS": "https://doh.opendns.com/dns-query",
+        "DNS.SB": "https://doh.dns.sb/dns-query",
+        "AliDNS": "https://dns.alidns.com/dns-query",
+        "Yandex Safe": "https://dns.yandex.com/dns-query"
+    }
+    dot_presets: Dict[str, str] = {
+        "Cloudflare": "1.1.1.1",
+        "Cloudflare Family": "1.1.1.3",
+        "Google": "8.8.8.8",
+        "Quad9": "9.9.9.9",
+        "AdGuard": "94.140.14.14",
+        "NextDNS": "45.90.28.0",
+        "CleanBrowsing (Family)": "185.228.168.168",
+        "CleanBrowsing (Adult)": "185.228.168.10",
+        "Mullvad": "194.242.2.2",
+        "LibreDNS": "116.203.115.192",
+        "OpenDNS": "208.67.222.222",
+        "DNS.SB": "185.222.222.222",
+        "AliDNS": "223.5.5.5",
+        "Yandex Safe": "77.88.8.88"
+    }
+
+    # UI Metadata
+    ui_labels: Dict[str, str] = {
+        "bind_ip": "Bind IP Address",
+        "dns_port": "DNS Port",
+        "dot_port": "DoT Port",
+        "doh_proxy_url": "DoH Proxy URL",
+        "global_forwarders": "DNS Forwarders",
+        "cache_ttl_override": "Cache TTL Override (seconds)",
+        "dhcp_interface": "DHCP Interface",
+        "dhcp_gateway": "DHCP Gateway",
+        "dhcp_range": "DHCP Range",
+        "static_leases": "Static Leases",
+        "blocklists": "Blocklists",
+        "ntp_peers": "NTP Peers",
+        "advertise_ntp": "Advertise as NTP"
+    }
+    ui_sections: Dict[str, List[str]] = {
+        "dns": ["bind_ip", "dns_port", "dot_port", "global_forwarders", "cache_ttl_override"],
+        "dohdot": ["doh_presets", "dot_presets", "doh_proxy_url"],
+        "dhcp": ["dhcp_interface", "dhcp_gateway", "dhcp_range", "dhcp_lease_time", "static_leases"],
+        "ntp": ["ntp_port", "ntp_peers", "advertise_ntp"],
+        "security": ["dnssec", "recursion_acl", "qps_limit", "qps_burst"]
+    }
 
     @validator('dhcp_range')
     def validate_range(cls, v):
@@ -185,7 +245,7 @@ class UltimateDNSModule:
             tg.create_task(self.prefetch_loop())
             tg.create_task(self.stats_broadcaster())
             tg.create_task(self.log_rotation_task())
-        log.info("Jarvis Network Core Extended Headless Active")
+        log.info("Jarvis Ultimate Network Core Active")
 
     async def load_config(self):
         async with DB.execute("SELECT value FROM config WHERE key='config'") as cur:
@@ -286,26 +346,35 @@ class UltimateDNSModule:
         def handle_dhcp(pkt):
             try:
                 mac = pkt[Ether].src
+                options_base = [("message-type", "offer"), ("server_id", CONFIG["dhcp_gateway"]), ("lease_time", CONFIG["dhcp_lease_time"])]
+                if CONFIG.get("advertise_ntp", True):
+                    options_base.append(("ntp_servers", CONFIG["dhcp_gateway"]))
+                options_base.append("end")
+                ack_options_base = [("message-type", "ack"), ("server_id", CONFIG["dhcp_gateway"]), ("lease_time", CONFIG["dhcp_lease_time"])]
+                if CONFIG.get("advertise_ntp", True):
+                    ack_options_base.append(("ntp_servers", CONFIG["dhcp_gateway"]))
+                ack_options_base.append("end")
+
                 if mac in CONFIG["static_leases"]:
                     ip = CONFIG["static_leases"][mac]
                     if DHCP in pkt and pkt[DHCP].options[0][1] == 1:  # DISCOVER
-                        offer = Ether(dst=mac)/IP(src=CONFIG["dhcp_gateway"], dst="255.255.255.255")/UDP(sport=67, dport=68)/BOOTP(op=2, yiaddr=ip, siaddr=CONFIG["dhcp_gateway"], chaddr=pkt[BOOTP].chaddr)/DHCP(options=[("message-type","offer"),("server_id",CONFIG["dhcp_gateway"]),("lease_time",CONFIG["dhcp_lease_time"]), "end"])
+                        offer = Ether(dst=mac)/IP(src=CONFIG["dhcp_gateway"], dst="255.255.255.255")/UDP(sport=67, dport=68)/BOOTP(op=2, yiaddr=ip, siaddr=CONFIG["dhcp_gateway"], chaddr=pkt[BOOTP].chaddr)/DHCP(options=options_base)
                         sendp(offer, iface=CONFIG["dhcp_interface"], verbose=0)
                     elif DHCP in pkt and pkt[DHCP].options[0][1] == 3:  # REQUEST
                         req_ip = [opt[1] for opt in pkt[DHCP].options if opt[0] == "requested_addr"][0]
                         if req_ip == ip:
-                            ack = Ether(dst=mac)/IP(src=CONFIG["dhcp_gateway"], dst=ip)/UDP(sport=67, dport=68)/BOOTP(op=2, yiaddr=ip, siaddr=CONFIG["dhcp_gateway"], chaddr=pkt[BOOTP].chaddr)/DHCP(options=[("message-type","ack"),("server_id",CONFIG["dhcp_gateway"]),("lease_time",CONFIG["dhcp_lease_time"]), "end"])
+                            ack = Ether(dst=mac)/IP(src=CONFIG["dhcp_gateway"], dst=ip)/UDP(sport=67, dport=68)/BOOTP(op=2, yiaddr=ip, siaddr=CONFIG["dhcp_gateway"], chaddr=pkt[BOOTP].chaddr)/DHCP(options=ack_options_base)
                             sendp(ack, iface=CONFIG["dhcp_interface"], verbose=0)
                 else:
                     if DHCP in pkt and pkt[DHCP].options[0][1] == 1:  # DISCOVER
                         offer_ip = self.allocate_ip(mac)
                         if offer_ip:
-                            offer = Ether(dst=mac)/IP(src=CONFIG["dhcp_gateway"], dst="255.255.255.255")/UDP(sport=67, dport=68)/BOOTP(op=2, yiaddr=offer_ip, siaddr=CONFIG["dhcp_gateway"], chaddr=pkt[BOOTP].chaddr)/DHCP(options=[("message-type","offer"),("server_id",CONFIG["dhcp_gateway"]),("lease_time",CONFIG["dhcp_lease_time"]), "end"])
+                            offer = Ether(dst=mac)/IP(src=CONFIG["dhcp_gateway"], dst="255.255.255.255")/UDP(sport=67, dport=68)/BOOTP(op=2, yiaddr=offer_ip, siaddr=CONFIG["dhcp_gateway"], chaddr=pkt[BOOTP].chaddr)/DHCP(options=options_base)
                             sendp(offer, iface=CONFIG["dhcp_interface"], verbose=0)
                     elif DHCP in pkt and pkt[DHCP].options[0][1] == 3:  # REQUEST
                         req_ip = pkt[BOOTP].ciaddr or [opt[1] for opt in pkt[DHCP].options if opt[0] == "requested_addr"][0]
                         if self.reserve_ip(mac, req_ip):
-                            ack = Ether(dst=mac)/IP(src=CONFIG["dhcp_gateway"], dst=req_ip)/UDP(sport=67, dport=68)/BOOTP(op=2, yiaddr=req_ip, siaddr=CONFIG["dhcp_gateway"], chaddr=pkt[BOOTP].chaddr)/DHCP(options=[("message-type","ack"),("server_id",CONFIG["dhcp_gateway"]),("lease_time",CONFIG["dhcp_lease_time"]), "end"])
+                            ack = Ether(dst=mac)/IP(src=CONFIG["dhcp_gateway"], dst=req_ip)/UDP(sport=67, dport=68)/BOOTP(op=2, yiaddr=req_ip, siaddr=CONFIG["dhcp_gateway"], chaddr=pkt[BOOTP].chaddr)/DHCP(options=ack_options_base)
                             sendp(ack, iface=CONFIG["dhcp_interface"], verbose=0)
             except Exception as e:
                 log.warning(f"DHCP packet error: {e}")
@@ -419,7 +488,8 @@ class UltimateDNSModule:
                 "static_leases": CONFIG["static_leases"],
                 "cache_ttl_override": CONFIG["cache_ttl_override"],
                 "forwarders": CONFIG["global_forwarders"],
-                "doh_proxy": CONFIG["doh_proxy_url"]
+                "doh_proxy": CONFIG["doh_proxy_url"],
+                "advertise_ntp": CONFIG["advertise_ntp"]
             }
             for ws in self.ws_clients[:]:
                 try:
@@ -504,6 +574,44 @@ class UltimateDNSModule:
                 while True: await asyncio.sleep(1)
             except WebSocketDisconnect:
                 self.ws_clients.remove(ws)
+
+        # Smart Utilities
+        @self.ui_app.get("/api/test_resolver")
+        async def test_resolver(host: str = "example.com"):
+            try:
+                start = time.time()
+                url = CONFIG["global_forwarders"][0]
+                host_part = url.split("//")[-1].split("/")[0]
+                reader, writer = await asyncio.open_connection(host_part, 443)
+                writer.close()
+                await writer.wait_closed()
+                return {"status": "ok", "latency": round((time.time() - start) * 1000, 2)}
+            except Exception as e:
+                return {"status": "fail", "error": str(e)}
+
+        @self.ui_app.get("/api/scan_network")
+        async def scan_network():
+            net = ipaddress.ip_network(CONFIG["dhcp_subnet"], strict=False)
+            active = []
+            async def ping_host(ip):
+                if ping(str(ip), timeout=0.5):
+                    active.append(str(ip))
+            await asyncio.gather(*(ping_host(ip) for ip in net.hosts()))
+            return {"active": active}
+
+        @self.ui_app.post("/api/ntp_sync")
+        async def ntp_sync():
+            try:
+                peers = " ".join(CONFIG["ntp_peers"])
+                out = subprocess.check_output(["ntpdate", "-q"] + CONFIG["ntp_peers"], stderr=subprocess.STDOUT).decode()
+                return {"status": "ok", "output": out}
+            except Exception as e:
+                return {"status": "fail", "error": str(e)}
+
+        @self.ui_app.post("/api/restart_module", dependencies=[Depends(require_role("admin"))])
+        async def restart_module():
+            import sys
+            os.execv(sys.executable, [sys.executable] + sys.argv)
 
 if __name__ == "__main__":
     module = UltimateDNSModule()
