@@ -2254,131 +2254,56 @@
       </div>
 
       <!-- NEW: BACKUP & RESTORE PANEL -->
-<div id="settings-backup-panel" class="settings-panel orch-panel">
-  <div class="panel">
-    <div class="panel-head">
-      <h3>Backup & Restore</h3>
-    </div>
-    
-    <div style="padding: 20px;">
-      <div style="background: rgba(14, 165, 233, 0.1); border: 1px solid rgba(14, 165, 233, 0.3); border-radius: 8px; padding: 16px; margin-bottom: 24px;">
-        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
-          <span style="font-size: 24px;">💾</span>
-          <span style="color: #0ea5e9; font-weight: 600;">Full System Backup</span>
-        </div>
-        <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 0;">
-          Create a complete backup of your Jarvis Prime installation including database, playbooks, models, and configuration.
-        </p>
-      </div>
-      
-      <div style="margin-bottom: 32px;">
-        <h4 style="margin: 0 0 12px 0; color: var(--text-primary);">Create Backup</h4>
-        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
-          Download a complete backup archive (.tar.gz) containing all system data.
-        </p>
-        <button id="backup-download-btn" class="btn primary" style="width: 100%;">
-          📥 Download Full Backup
-        </button>
-      </div>
-      
-      <div style="padding-top: 24px; border-top: 1px solid var(--surface-border);">
-        <h4 style="margin: 0 0 12px 0; color: var(--text-primary);">Restore Backup</h4>
-        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
-          Upload a backup archive to restore your system. <strong style="color: var(--accent-primary);">This will overwrite all current data.</strong>
-        </p>
-        
-        <div style="background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 6px; padding: 12px; margin-bottom: 16px;">
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <span style="font-size: 18px;">⚠️</span>
-            <span style="color: #f59e0b; font-size: 13px; font-weight: 500;">
-              Jarvis will automatically restart after restore completes
-            </span>
+      <div id="settings-backup-panel" class="settings-panel orch-panel">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Backup & Restore</h3>
           </div>
-        </div>
-        
- <input type="file" id="backup-file-input" accept=".tar.gz,.tgz" style="display: none;">
-<button
-  id="backup-restore-btn"
-  class="btn"
-  style="width: 100%;"
-  onclick="backupOpenRestoreModal()"
->
-  📤 Select Backup File to Restore
-</button>
-
-    <!-- ✅ Full Working Restore Modal -->
-    <div id="backup-restore-modal" class="modal" style="display:none;">
-      <div class="modal-content" style="max-width:600px;">
-        <h2 style="margin-bottom:10px;">Restore Backup</h2>
-
-        <div class="alert warning" style="margin-bottom:12px;">
-          ⚠️ Restoring will overwrite files. Make sure you have a recent backup.
-        </div>
-
-        <div class="form-group">
-          <label>Backup to Restore</label>
-          <div id="restore-archive-name" class="text-primary">N/A</div>
-          <small id="restore-archive-date"></small>
-          <small id="restore-archive-size" style="margin-left:6px;"></small>
-        </div>
-
-        <div class="form-group">
-          <label>Restore Mode</label>
-          <div style="display:flex;gap:10px;margin-top:4px;">
-            <label>
-              <input type="radio" id="restore-to-original" name="restore-mode" checked onchange="backupToggleRestoreLocation()"> Restore to Original Location
-            </label>
-            <label>
-              <input type="radio" id="restore-to-custom" name="restore-mode" onchange="backupToggleRestoreLocation()"> Custom Destination
-            </label>
-          </div>
-          <div id="restore-original-location-text" style="margin-top:6px;color:var(--text-muted);font-size:13px;">Original source path will be used</div>
-        </div>
-
-        <div id="restore-custom-path-group" style="display:none;margin-top:12px;">
-          <div class="form-group">
-            <label>Destination Server</label>
-            <select id="restore-dest-server" class="input"></select>
-          </div>
-          <div class="form-group">
-            <label>Destination Path</label>
-            <div style="display:flex;gap:8px;">
-              <input id="restore-dest-path" class="input" placeholder="/target/folder/" />
-              <button class="btn btn-sm" type="button" onclick="backupBrowseRestoreDestination()">Browse</button>
+          
+          <div style="padding: 20px;">
+            <div style="background: rgba(14, 165, 233, 0.1); border: 1px solid rgba(14, 165, 233, 0.3); border-radius: 8px; padding: 16px; margin-bottom: 24px;">
+              <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+                <span style="font-size: 24px;">💾</span>
+                <span style="color: #0ea5e9; font-weight: 600;">Full System Backup</span>
+              </div>
+              <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 0;">
+                Create a complete backup of your Jarvis Prime installation including database, playbooks, models, and configuration.
+              </p>
+            </div>
+            
+            <div style="margin-bottom: 32px;">
+              <h4 style="margin: 0 0 12px 0; color: var(--text-primary);">Create Backup</h4>
+              <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
+                Download a complete backup archive (.tar.gz) containing all system data.
+              </p>
+              <button id="backup-download-btn" class="btn primary" style="width: 100%;">
+                📥 Download Full Backup
+              </button>
+            </div>
+            
+            <div style="padding-top: 24px; border-top: 1px solid var(--surface-border);">
+              <h4 style="margin: 0 0 12px 0; color: var(--text-primary);">Restore Backup</h4>
+              <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
+                Upload a backup archive to restore your system. <strong style="color: var(--accent-primary);">This will overwrite all current data.</strong>
+              </p>
+              
+              <div style="background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 6px; padding: 12px; margin-bottom: 16px;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span style="font-size: 18px;">⚠️</span>
+                  <span style="color: #f59e0b; font-size: 13px; font-weight: 500;">
+                    Jarvis will automatically restart after restore completes
+                  </span>
+                </div>
+              </div>
+              
+              <input type="file" id="backup-file-input" accept=".tar.gz,.tgz" style="display: none;">
+              <button id="backup-restore-btn" class="btn" style="width: 100%;">
+                📤 Select Backup File to Restore
+              </button>
             </div>
           </div>
         </div>
-
-        <div class="form-group" style="margin-top:12px;">
-          <label>Restore Type</label>
-          <div style="display:flex;gap:10px;">
-            <label>
-              <input type="radio" id="restore-full" name="restore-scope" checked onchange="backupToggleRestoreScope()"> Full Restore
-            </label>
-            <label>
-              <input type="radio" id="restore-selective" name="restore-scope" onchange="backupToggleRestoreScope()"> Selective Restore
-            </label>
-          </div>
-        </div>
-
-        <div id="restore-selective-group" style="display:none;margin-top:8px;">
-          <button class="btn btn-sm" type="button" onclick="backupBrowseBackupContents()">Browse Backup Contents</button>
-          <div id="restore-selected-items" style="margin-top:8px;color:var(--text-muted);font-size:13px;">No items selected</div>
-        </div>
-
-        <div class="form-group" style="margin-top:12px;">
-          <label><input type="checkbox" id="restore-overwrite" checked> Overwrite existing files</label>
-        </div>
-
-        <div style="display:flex;justify-content:space-between;margin-top:18px;">
-          <button class="btn" type="button" onclick="backupCloseRestoreModal()">Cancel</button>
-          <button class="btn danger" type="button" onclick="backupSubmitRestore(event)">Restore Backup</button>
-        </div>
       </div>
-    </div>
-    <!-- ✅ End Restore Modal -->
-  </div>
-</div>
 
       <!-- SENTINEL SETTINGS PANEL -->
       <div id="settings-sentinel-panel" class="settings-panel orch-panel">
