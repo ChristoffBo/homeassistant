@@ -63,7 +63,7 @@
           <span id="system-status-text">Connected</span>
         </div>
         <button id="theme-toggle" class="btn" style="margin-left: 12px; padding: 8px 16px;" title="Toggle Dark Mode">
-          <span id="theme-icon">ðŸŒ™</span>
+          <span id="theme-icon">🌙</span>
         </button>
       </div>
     </div>
@@ -370,7 +370,7 @@
           <div class="preview-header">
             <div>
               <div class="preview-title" id="pv-title">No message selected</div>
-              <div class="preview-meta" id="pv-meta">â€”</div>
+              <div class="preview-meta" id="pv-meta">—</div>
             </div>
           </div>
           <div class="preview-content" id="pv-body">
@@ -617,9 +617,9 @@
           <div class="panel-head">
             <h3>Service Check Templates</h3>
             <div style="display: flex; gap: 8px;">
-              <button class="btn primary" onclick="sentinelUI.syncTemplates()">ðŸ”„ Sync from GitHub</button>
-              <button class="btn primary" onclick="sentinelUI.showUploadTemplateModal()">â¬†ï¸ Upload</button>
-              <button class="btn primary" onclick="sentinelUI.showCreateTemplateModal()">âž• Create</button>
+              <button class="btn primary" onclick="sentinelUI.syncTemplates()">🔄 Sync from GitHub</button>
+              <button class="btn primary" onclick="sentinelUI.showUploadTemplateModal()">⬆️ Upload</button>
+              <button class="btn primary" onclick="sentinelUI.showCreateTemplateModal()">➕ Create</button>
             </div>
           </div>
           <div id="sentinel-templates-list" style="padding: 16px;">
@@ -634,8 +634,8 @@
           <div class="panel-head">
             <h3>Monitoring Configurations</h3>
             <div style="display: flex; gap: 8px;">
-              <button class="btn primary" onclick="sentinelUI.showAddMonitoringModal()">âž• Add Monitoring</button>
-              <button class="btn success" onclick="sentinelUI.startAllMonitoring()">â–¶ï¸ Start All</button>
+              <button class="btn primary" onclick="sentinelUI.showAddMonitoringModal()">➕ Add Monitoring</button>
+              <button class="btn success" onclick="sentinelUI.startAllMonitoring()">▶️ Start All</button>
             </div>
           </div>
           <div id="sentinel-monitoring-list" style="padding: 16px;">
@@ -836,10 +836,10 @@
         <!-- Network Controls -->
         <div style="margin-bottom: 24px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center;">
           <button id="btn-network-scan" class="btn primary" onclick="networkRunScan()">
-            ðŸ” Run Network Scan
+            🔍 Run Network Scan
           </button>
           <button id="btn-toggle-monitoring" class="btn" onclick="networkToggleMonitoringMode()">
-            â–¶ï¸ Start Monitoring
+            ▶️ Start Monitoring
           </button>
           <div style="display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: var(--surface-secondary); border-radius: 8px;">
             <input type="checkbox" id="toggle-alert-new-devices" onchange="networkToggleAlerts()" checked />
@@ -855,7 +855,7 @@
           <div class="panel-head">
             <h3>Discovered Devices</h3>
             <div style="font-size: 14px; color: var(--text-muted);">
-              Click device names to rename â€¢ Check boxes to monitor
+              Click device names to rename • Check boxes to monitor
             </div>
           </div>
           <div style="overflow-x: auto;">
@@ -910,7 +910,7 @@
         </div>
       </div>
 
-      <!-- âœ¨ NEW: INTERNET SPEED TEST PANEL -->
+      <!-- ✨ NEW: INTERNET SPEED TEST PANEL -->
       <div id="analytics-internet" class="orch-panel">
         <!-- Speed Test Stats Cards -->
         <div class="metrics-grid" style="margin-bottom: 24px;">
@@ -946,20 +946,20 @@
         <!-- Speed Test Actions -->
         <div style="display: flex; gap: 1rem; margin-bottom: 2rem; flex-wrap: wrap;">
           <button id="speed-test-btn" class="btn primary" onclick="analyticsRunSpeedTest()">
-            ðŸš€ Run Test Now
+            🚀 Run Test Now
           </button>
           <button id="speed-monitoring-toggle" class="btn btn-success" onclick="analyticsToggleSpeedMonitoring()">
-            â–¶ï¸ Start Auto-Testing
+            ▶️ Start Auto-Testing
           </button>
           <button class="btn secondary" onclick="analyticsLoadInternetDashboard()">
-            ðŸ”„ Refresh
+            🔄 Refresh
           </button>
         </div>
 
         <!-- Schedule Configuration -->
         <div class="panel" style="margin-bottom: 2rem;">
           <div class="panel-head">
-            <h3>â° Test Schedule</h3>
+            <h3>⏰ Test Schedule</h3>
           </div>
           <div class="panel-body">
             <!-- Notification Toggle -->
@@ -972,7 +972,7 @@
                   onchange="analyticsToggleNotifyOnEveryTest()"
                   style="width: 20px; height: 20px; cursor: pointer;"
                 />
-                <span style="font-weight: 500;">ðŸ“¢ Notify on Every Test</span>
+                <span style="font-weight: 500;">📢 Notify on Every Test</span>
               </label>
               <span style="color: #888; font-size: 0.9rem;">When OFF, only get alerts for problems</span>
             </div>
@@ -980,10 +980,10 @@
             <!-- Mode Selection -->
             <div style="display: flex; gap: 1rem; margin-bottom: 1.5rem;">
               <button id="schedule-mode-interval" class="btn active" onclick="analyticsSwitchScheduleMode('interval')" style="flex: 1;">
-                â±ï¸ Interval Mode
+                ⏱️ Interval Mode
               </button>
               <button id="schedule-mode-scheduled" class="btn" onclick="analyticsSwitchScheduleMode('scheduled')" style="flex: 1;">
-                ðŸ• Scheduled Times
+                🕐 Scheduled Times
               </button>
             </div>
 
@@ -1015,7 +1015,7 @@
                   style="flex: 1;"
                 />
                 <button class="btn btn-success" onclick="analyticsAddScheduledTime()">
-                  âž• Add
+                  ➕ Add
                 </button>
               </div>
               
@@ -1097,7 +1097,7 @@
       <!-- HA Readonly Banner -->
       <div id="settings-readonly-banner" style="display: none; background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 8px; padding: 16px; margin-bottom: 24px;">
         <div style="display: flex; align-items: center; gap: 12px;">
-          <span style="font-size: 24px;">âš ï¸</span>
+          <span style="font-size: 24px;">⚠️</span>
           <div>
             <div style="color: #f59e0b; font-weight: 600; margin-bottom: 4px;">Home Assistant Mode - Read Only</div>
             <div style="color: var(--text-muted); font-size: 14px;">
@@ -1135,7 +1135,7 @@
             
             <div class="form-group">
               <label class="form-label">Bot Icon</label>
-              <input type="text" id="set-bot-icon" placeholder="ðŸ§ ">
+              <input type="text" id="set-bot-icon" placeholder="🧠">
             </div>
             
             <div class="form-group">
@@ -1469,17 +1469,17 @@
             </div>
             
             <div class="form-group">
-              <label class="form-label">Hot Temperature Threshold (Â°C)</label>
+              <label class="form-label">Hot Temperature Threshold (°C)</label>
               <input type="number" id="set-llm-enviroguard-hot-c" placeholder="30">
             </div>
             
             <div class="form-group">
-              <label class="form-label">Normal Temperature (Â°C)</label>
+              <label class="form-label">Normal Temperature (°C)</label>
               <input type="number" id="set-llm-enviroguard-normal-c" placeholder="22">
             </div>
             
             <div class="form-group">
-              <label class="form-label">Cold Temperature Threshold (Â°C)</label>
+              <label class="form-label">Cold Temperature Threshold (°C)</label>
               <input type="number" id="set-llm-enviroguard-cold-c" placeholder="10">
             </div>
 			<div class="form-group">
@@ -1491,7 +1491,7 @@
             </div>
             
             <div class="form-group">
-              <label class="form-label">Hysteresis (Â°C)</label>
+              <label class="form-label">Hysteresis (°C)</label>
               <input type="number" id="set-llm-enviroguard-hysteresis-c" placeholder="2">
               <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
                 Temperature buffer to prevent rapid switching
@@ -1499,7 +1499,7 @@
             </div>
             
             <div class="form-group">
-              <label class="form-label">Off Temperature (Â°C)</label>
+              <label class="form-label">Off Temperature (°C)</label>
               <input type="number" id="set-llm-enviroguard-off-c" placeholder="42">
               <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
                 Temperature threshold to disable LLM completely
@@ -1507,7 +1507,7 @@
             </div>
             
             <div class="form-group">
-              <label class="form-label">Boost Temperature (Â°C)</label>
+              <label class="form-label">Boost Temperature (°C)</label>
               <input type="number" id="set-llm-enviroguard-boost-c" placeholder="16">
               <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
                 Temperature threshold for boost performance mode
@@ -2254,133 +2254,129 @@
       </div>
 
       <!-- NEW: BACKUP & RESTORE PANEL -->
-      <div id="settings-backup-panel" class="settings-panel orch-panel">
-        <div class="panel">
-          <div class="panel-head">
-            <h3>Backup & Restore</h3>
+<div id="settings-backup-panel" class="settings-panel orch-panel">
+  <div class="panel">
+    <div class="panel-head">
+      <h3>Backup & Restore</h3>
+    </div>
+    
+    <div style="padding: 20px;">
+      <div style="background: rgba(14, 165, 233, 0.1); border: 1px solid rgba(14, 165, 233, 0.3); border-radius: 8px; padding: 16px; margin-bottom: 24px;">
+        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+          <span style="font-size: 24px;">💾</span>
+          <span style="color: #0ea5e9; font-weight: 600;">Full System Backup</span>
+        </div>
+        <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 0;">
+          Create a complete backup of your Jarvis Prime installation including database, playbooks, models, and configuration.
+        </p>
+      </div>
+      
+      <div style="margin-bottom: 32px;">
+        <h4 style="margin: 0 0 12px 0; color: var(--text-primary);">Create Backup</h4>
+        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
+          Download a complete backup archive (.tar.gz) containing all system data.
+        </p>
+        <button id="backup-download-btn" class="btn primary" style="width: 100%;">
+          📥 Download Full Backup
+        </button>
+      </div>
+      
+      <div style="padding-top: 24px; border-top: 1px solid var(--surface-border);">
+        <h4 style="margin: 0 0 12px 0; color: var(--text-primary);">Restore Backup</h4>
+        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
+          Upload a backup archive to restore your system. <strong style="color: var(--accent-primary);">This will overwrite all current data.</strong>
+        </p>
+        
+        <div style="background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 6px; padding: 12px; margin-bottom: 16px;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-size: 18px;">⚠️</span>
+            <span style="color: #f59e0b; font-size: 13px; font-weight: 500;">
+              Jarvis will automatically restart after restore completes
+            </span>
           </div>
-          
-          <div style="padding: 20px;">
-            <div style="background: rgba(14, 165, 233, 0.1); border: 1px solid rgba(14, 165, 233, 0.3); border-radius: 8px; padding: 16px; margin-bottom: 24px;">
-              <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
-                <span style="font-size: 24px;">ðŸ’¾</span>
-                <span style="color: #0ea5e9; font-weight: 600;">Full System Backup</span>
-              </div>
-              <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 0;">
-                Create a complete backup of your Jarvis Prime installation including database, playbooks, models, and configuration.
-              </p>
-            </div>
-            
-            <div style="margin-bottom: 32px;">
-              <h4 style="margin: 0 0 12px 0; color: var(--text-primary);">Create Backup</h4>
-              <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
-                Download a complete backup archive (.tar.gz) containing all system data.
-              </p>
-              <button id="backup-download-btn" class="btn primary" style="width: 100%;">
-                ðŸ“¥ Download Full Backup
-              </button>
-            </div>
-            
-            <div style="padding-top: 24px; border-top: 1px solid var(--surface-border);">
-              <h4 style="margin: 0 0 12px 0; color: var(--text-primary);">Restore Backup</h4>
-              <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
-                Upload a backup archive to restore your system. <strong style="color: var(--accent-primary);">This will overwrite all current data.</strong>
-              </p>
-              
-              <div style="background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 6px; padding: 12px; margin-bottom: 16px;">
-                <div style="display: flex; align-items: center; gap: 8px;">
-                  <span style="font-size: 18px;">âš ï¸</span>
-                  <span style="color: #f59e0b; font-size: 13px; font-weight: 500;">
-                    Jarvis will automatically restart after restore completes
-                  </span>
-                </div>
-              </div>
-              
-              <input type="file" id="backup-file-input" accept=".tar.gz,.tgz" style="display: none;">
-              <button id="backup-restore-btn" class="btn" style="width: 100%;">
-                ðŸ“¤ Select Backup File to Restore
-              </button>
+        </div>
+        
+        <input type="file" id="backup-file-input" accept=".tar.gz,.tgz" style="display: none;">
+        <button id="backup-restore-btn" class="btn" style="width: 100%;">
+          📤 Select Backup File to Restore
+        </button>
+      </div>
+    </div>
+
+    <!-- ✅ Full Working Restore Modal -->
+    <div id="backup-restore-modal" class="modal" style="display:none;">
+      <div class="modal-content" style="max-width:600px;">
+        <h2 style="margin-bottom:10px;">Restore Backup</h2>
+
+        <div class="alert warning" style="margin-bottom:12px;">
+          ⚠️ Restoring will overwrite files. Make sure you have a recent backup.
+        </div>
+
+        <div class="form-group">
+          <label>Backup to Restore</label>
+          <div id="restore-archive-name" class="text-primary">N/A</div>
+          <small id="restore-archive-date"></small>
+          <small id="restore-archive-size" style="margin-left:6px;"></small>
+        </div>
+
+        <div class="form-group">
+          <label>Restore Mode</label>
+          <div style="display:flex;gap:10px;margin-top:4px;">
+            <label>
+              <input type="radio" id="restore-to-original" name="restore-mode" checked onchange="backupToggleRestoreLocation()"> Restore to Original Location
+            </label>
+            <label>
+              <input type="radio" id="restore-to-custom" name="restore-mode" onchange="backupToggleRestoreLocation()"> Custom Destination
+            </label>
+          </div>
+          <div id="restore-original-location-text" style="margin-top:6px;color:var(--text-muted);font-size:13px;">Original source path will be used</div>
+        </div>
+
+        <div id="restore-custom-path-group" style="display:none;margin-top:12px;">
+          <div class="form-group">
+            <label>Destination Server</label>
+            <select id="restore-dest-server" class="input"></select>
+          </div>
+          <div class="form-group">
+            <label>Destination Path</label>
+            <div style="display:flex;gap:8px;">
+              <input id="restore-dest-path" class="input" placeholder="/target/folder/" />
+              <button class="btn btn-sm" type="button" onclick="backupBrowseRestoreDestination()">Browse</button>
             </div>
           </div>
         </div>
-      </div>
-<!-- ✅ FULL WORKING RESTORE MODAL (Jarvis Prime Backup) -->
-<div id="backup-restore-modal" class="modal" style="display:none;">
-  <div class="modal-content" style="max-width:600px;">
-    <h2 style="margin-bottom:10px;">Restore Backup</h2>
 
-    <div class="alert warning" style="margin-bottom:12px;">
-      ⚠️ Restoring will overwrite files. Make sure you have a recent backup.
-    </div>
+        <div class="form-group" style="margin-top:12px;">
+          <label>Restore Type</label>
+          <div style="display:flex;gap:10px;">
+            <label>
+              <input type="radio" id="restore-full" name="restore-scope" checked onchange="backupToggleRestoreScope()"> Full Restore
+            </label>
+            <label>
+              <input type="radio" id="restore-selective" name="restore-scope" onchange="backupToggleRestoreScope()"> Selective Restore
+            </label>
+          </div>
+        </div>
 
-    <div class="form-group">
-      <label>Backup to Restore</label>
-      <div id="restore-archive-name" class="text-primary">N/A</div>
-      <small id="restore-archive-date"></small>
-      <small id="restore-archive-size" style="margin-left:6px;"></small>
-    </div>
+        <div id="restore-selective-group" style="display:none;margin-top:8px;">
+          <button class="btn btn-sm" type="button" onclick="backupBrowseBackupContents()">Browse Backup Contents</button>
+          <div id="restore-selected-items" style="margin-top:8px;color:var(--text-muted);font-size:13px;">No items selected</div>
+        </div>
 
-    <div class="form-group">
-      <label>Restore Mode</label>
-      <div style="display:flex;gap:10px;margin-top:4px;">
-        <label>
-          <input type="radio" id="restore-to-original" name="restore-mode" checked
-                 onchange="backupToggleRestoreLocation()"> Restore to Original Location
-        </label>
-        <label>
-          <input type="radio" id="restore-to-custom" name="restore-mode"
-                 onchange="backupToggleRestoreLocation()"> Custom Destination
-        </label>
-      </div>
-      <div id="restore-original-location-text"
-           style="margin-top:6px;color:var(--text-muted);font-size:13px;">Original source path will be used</div>
-    </div>
+        <div class="form-group" style="margin-top:12px;">
+          <label><input type="checkbox" id="restore-overwrite" checked> Overwrite existing files</label>
+        </div>
 
-    <div id="restore-custom-path-group" style="display:none;margin-top:12px;">
-      <div class="form-group">
-        <label>Destination Server</label>
-        <select id="restore-dest-server" class="input"></select>
-      </div>
-      <div class="form-group">
-        <label>Destination Path</label>
-        <div style="display:flex;gap:8px;">
-          <input id="restore-dest-path" class="input" placeholder="/target/folder/" />
-          <button class="btn btn-sm" type="button" onclick="backupBrowseRestoreDestination()">Browse</button>
+        <div style="display:flex;justify-content:space-between;margin-top:18px;">
+          <button class="btn" type="button" onclick="backupCloseRestoreModal()">Cancel</button>
+          <button class="btn danger" type="button" onclick="backupSubmitRestore(event)">Restore Backup</button>
         </div>
       </div>
     </div>
-
-    <div class="form-group" style="margin-top:12px;">
-      <label>Restore Type</label>
-      <div style="display:flex;gap:10px;">
-        <label>
-          <input type="radio" id="restore-full" name="restore-scope" checked
-                 onchange="backupToggleRestoreScope()"> Full Restore
-        </label>
-        <label>
-          <input type="radio" id="restore-selective" name="restore-scope"
-                 onchange="backupToggleRestoreScope()"> Selective Restore
-        </label>
-      </div>
-    </div>
-
-    <div id="restore-selective-group" style="display:none;margin-top:8px;">
-      <button class="btn btn-sm" type="button" onclick="backupBrowseBackupContents()">Browse Backup Contents</button>
-      <div id="restore-selected-items"
-           style="margin-top:8px;color:var(--text-muted);font-size:13px;">No items selected</div>
-    </div>
-
-    <div class="form-group" style="margin-top:12px;">
-      <label><input type="checkbox" id="restore-overwrite" checked> Overwrite existing files</label>
-    </div>
-
-    <div style="display:flex;justify-content:space-between;margin-top:18px;">
-      <button class="btn" type="button" onclick="backupCloseRestoreModal()">Cancel</button>
-      <button class="btn danger" type="button" onclick="backupSubmitRestore(event)">Restore Backup</button>
-    </div>
+    <!-- ✅ End Restore Modal -->
   </div>
 </div>
-<!-- ✅ END RESTORE MODAL -->
+
       <!-- SENTINEL SETTINGS PANEL -->
       <div id="settings-sentinel-panel" class="settings-panel orch-panel">
         <div class="panel">
@@ -2391,7 +2387,7 @@
           <div style="padding: 20px;">
             <div style="background: rgba(139, 92, 246, 0.1); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 8px; padding: 16px; margin-bottom: 24px;">
               <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
-                <span style="font-size: 24px;">ðŸ› ï¸</span>
+                <span style="font-size: 24px;">🛠️</span>
                 <span style="color: #8b5cf6; font-weight: 600;">Autonomous Service Monitoring</span>
               </div>
               <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 0;">
@@ -2438,14 +2434,14 @@
             
             <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; padding: 16px;">
               <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
-                <span style="font-size: 24px;">âš ï¸</span>
+                <span style="font-size: 24px;">⚠️</span>
                 <span style="color: #ef4444; font-weight: 600;">Reset Statistics</span>
               </div>
               <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 12px;">
                 Reset all Sentinel dashboard statistics (total checks, repairs made, etc.) to zero. Execution history will be preserved.
               </p>
               <button id="sentinel-reset-stats-btn" class="btn danger" style="width: 100%;" onclick="sentinelResetStats()">
-                ðŸ—‘ï¸ Reset All Statistics
+                🗑️ Reset All Statistics
               </button>
             </div>
           </div>
@@ -2462,7 +2458,7 @@
     <section id="backup" class="tab-panel">
       <div class="panel-header">
         <div class="panel-title">
-          <h1>ðŸ”„ Backup Manager</h1>
+          <h1>🔄 Backup Manager</h1>
           <div class="panel-subtitle">Agentless backup system with SSH/SMB/NFS support</div>
         </div>
       </div>
@@ -2549,7 +2545,7 @@
           <!-- Source Servers -->
           <div class="glass-card">
             <div class="card-header">
-              <h3 class="card-title">ðŸ“‚ Source Servers</h3>
+              <h3 class="card-title">📂 Source Servers</h3>
               <button class="btn primary btn-sm" onclick="backupOpenServerModal('source')">Add Source</button>
             </div>
             <div class="card-body">
@@ -2565,7 +2561,7 @@
           <!-- Destination Servers -->
           <div class="glass-card">
             <div class="card-header">
-              <h3 class="card-title">ðŸ’¾ Destination Servers</h3>
+              <h3 class="card-title">💾 Destination Servers</h3>
               <button class="btn primary btn-sm" onclick="backupOpenServerModal('destination')">Add Destination</button>
             </div>
             <div class="card-body">
@@ -2587,7 +2583,7 @@
 
         <div class="glass-card">
           <div class="card-header">
-            <h3 class="card-title">ðŸ“… Active Jobs</h3>
+            <h3 class="card-title">📅 Active Jobs</h3>
             <button class="btn primary btn-sm" onclick="backupOpenJobModal()">Create Job</button>
           </div>
           <div class="card-body">
@@ -2608,7 +2604,7 @@
 
         <div class="glass-card">
           <div class="card-header">
-            <h3 class="card-title">ðŸ“¦ Available Backups</h3>
+            <h3 class="card-title">📦 Available Backups</h3>
             <div style="display: flex; gap: 8px;">
               <input type="text" id="backup-search" placeholder="Search backups..." style="padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--surface-secondary); color: var(--text-primary); min-width: 250px;">
               <button class="btn btn-sm" onclick="backupRefreshArchives()">
@@ -2649,7 +2645,7 @@
     <div class="modal-content">
       <div class="modal-header">
         <h2>Add Server</h2>
-        <button class="btn" onclick="orchCloseServerModal()">âœ•</button>
+        <button class="btn" onclick="orchCloseServerModal()">✕</button>
       </div>
       <form id="server-form" onsubmit="orchSaveServer(event)">
         <div class="form-group">
@@ -2692,7 +2688,7 @@
     <div class="modal-content">
       <div class="modal-header">
         <h2>Edit Server</h2>
-        <button class="btn" onclick="orchCloseEditServerModal()">âœ•</button>
+        <button class="btn" onclick="orchCloseEditServerModal()">✕</button>
       </div>
       <form id="edit-server-form" onsubmit="orchUpdateServer(event)">
         <input type="hidden" id="edit-srv-id">
@@ -2739,7 +2735,7 @@
     <div class="modal-content">
       <div class="modal-header">
         <h2>Create Schedule</h2>
-        <button class="btn" onclick="orchCloseScheduleModal()">âœ•</button>
+        <button class="btn" onclick="orchCloseScheduleModal()">✕</button>
       </div>
       <form id="schedule-form" onsubmit="orchSaveSchedule(event)">
         <div class="form-group">
@@ -2802,7 +2798,7 @@
     <div class="modal-content" style="max-width: 600px;">
       <div class="modal-header">
         <h2>Manage History</h2>
-        <button class="btn" onclick="orchCloseHistoryModal()">âœ•</button>
+        <button class="btn" onclick="orchCloseHistoryModal()">✕</button>
       </div>
       
       <div class="form-group">
@@ -2818,13 +2814,13 @@
       <div style="background: var(--surface-tertiary); border-radius: 8px; padding: 16px; margin: 20px 0;">
         <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
           <span style="color: var(--text-muted); font-size: 14px;">Total Entries:</span>
-          <span id="history-total" style="color: var(--text-primary); font-weight: 600;">â€”</span>
+          <span id="history-total" style="color: var(--text-primary); font-weight: 600;">—</span>
         </div>
       </div>
 
       <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; padding: 16px;">
         <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
-          <span style="font-size: 24px;">âš ï¸</span>
+          <span style="font-size: 24px;">⚠️</span>
           <span style="color: #ef4444; font-weight: 600;">Danger Zone</span>
         </div>
         <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 12px;">
@@ -2843,25 +2839,25 @@
     <div class="modal-content" style="max-width: 900px;">
       <div class="modal-header">
         <h2 id="job-output-title">Job Output</h2>
-        <button class="btn" onclick="orchCloseJobOutputModal()">âœ•</button>
+        <button class="btn" onclick="orchCloseJobOutputModal()">✕</button>
       </div>
       <div style="margin-bottom: 16px;">
         <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; padding: 12px; background: var(--surface-tertiary); border-radius: 8px;">
           <div>
             <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 4px;">Status</div>
-            <div id="job-output-status">â€”</div>
+            <div id="job-output-status">—</div>
           </div>
           <div>
             <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 4px;">Exit Code</div>
-            <div id="job-output-exit-code">â€”</div>
+            <div id="job-output-exit-code">—</div>
           </div>
           <div>
             <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 4px;">Started</div>
-            <div id="job-output-started">â€”</div>
+            <div id="job-output-started">—</div>
           </div>
           <div>
             <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 4px;">Completed</div>
-            <div id="job-output-completed">â€”</div>
+            <div id="job-output-completed">—</div>
           </div>
         </div>
       </div>
@@ -2881,7 +2877,7 @@
     <div class="modal-content">
       <div class="modal-header">
         <h2 id="analytics-service-modal-title">Add Service</h2>
-        <button class="btn" onclick="analyticsCloseServiceModal()">âœ•</button>
+        <button class="btn" onclick="analyticsCloseServiceModal()">✕</button>
       </div>
       <form id="analytics-service-form" onsubmit="analyticsSaveService(event)">
         <input type="hidden" id="analytics-service-id">
@@ -2895,7 +2891,7 @@
           <label class="form-label">Endpoint *</label>
           <input type="text" id="analytics-service-endpoint" required placeholder="http://homeassistant.local:8123 or 192.168.1.100:22 or 8.8.8.8">
           <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
-            HTTP: Full URL with protocol â€¢ TCP: host:port â€¢ Ping: hostname or IP
+            HTTP: Full URL with protocol • TCP: host:port • Ping: hostname or IP
           </div>
         </div>
         
@@ -2925,7 +2921,7 @@
         
         <!-- NEW: RETRY & FLAP PROTECTION SECTION -->
         <div style="margin: 24px 0; padding: 16px; background: rgba(14, 165, 233, 0.08); border: 1px solid rgba(14, 165, 233, 0.2); border-radius: 8px;">
-          <h4 style="margin: 0 0 12px 0; color: var(--text-primary); font-size: 14px; font-weight: 600;">â— Retry & Flap Protection</h4>
+          <h4 style="margin: 0 0 12px 0; color: var(--text-primary); font-size: 14px; font-weight: 600;">❗ Retry & Flap Protection</h4>
           
           <div class="form-group" style="margin-bottom: 12px;">
             <label class="form-label">Retries</label>
@@ -2977,11 +2973,11 @@
   </div>
 
   <!-- ALL SENTINEL MODALS (keeping them all from your file) - shortened for brevity -->
-  <div id="sentinel-add-server-modal" class="modal"><div class="modal-content"><div class="modal-header"><h2>Add SSH Server</h2><button class="btn" onclick="closeModal()">âœ•</button></div><form id="sentinel-add-server-form" onsubmit="event.preventDefault(); sentinelUI.addServer(sentinelUI.getFormData('sentinel-add-server-form'));"><div class="form-group"><label class="form-label">Server ID *</label><input type="text" name="id" required placeholder="web-server-01"><div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">Unique identifier (letters, numbers, hyphens only)</div></div><div class="form-group"><label class="form-label">Hostname / IP *</label><input type="text" name="host" required placeholder="192.168.1.100"></div><div class="form-group"><label class="form-label">SSH Port</label><input type="number" name="port" value="22" min="1" max="65535"></div><div class="form-group"><label class="form-label">Username *</label><input type="text" name="username" required placeholder="root"></div><div class="form-group"><label class="form-label">Password *</label><input type="password" name="password" required placeholder="SSH password"></div><div class="form-group"><label class="form-label">Description</label><input type="text" name="description" placeholder="Production web server"></div><div class="modal-footer"><button type="button" class="btn" onclick="closeModal()">Cancel</button><button type="submit" class="btn primary">Add Server</button></div></form></div></div>
+  <div id="sentinel-add-server-modal" class="modal"><div class="modal-content"><div class="modal-header"><h2>Add SSH Server</h2><button class="btn" onclick="closeModal()">✕</button></div><form id="sentinel-add-server-form" onsubmit="event.preventDefault(); sentinelUI.addServer(sentinelUI.getFormData('sentinel-add-server-form'));"><div class="form-group"><label class="form-label">Server ID *</label><input type="text" name="id" required placeholder="web-server-01"><div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">Unique identifier (letters, numbers, hyphens only)</div></div><div class="form-group"><label class="form-label">Hostname / IP *</label><input type="text" name="host" required placeholder="192.168.1.100"></div><div class="form-group"><label class="form-label">SSH Port</label><input type="number" name="port" value="22" min="1" max="65535"></div><div class="form-group"><label class="form-label">Username *</label><input type="text" name="username" required placeholder="root"></div><div class="form-group"><label class="form-label">Password *</label><input type="password" name="password" required placeholder="SSH password"></div><div class="form-group"><label class="form-label">Description</label><input type="text" name="description" placeholder="Production web server"></div><div class="modal-footer"><button type="button" class="btn" onclick="closeModal()">Cancel</button><button type="submit" class="btn primary">Add Server</button></div></form></div></div>
 
 <div id="toast"></div>
 
-<!-- ðŸ” Auth Overlay -->
+<!-- 🔐 Auth Overlay -->
 <div id="auth-overlay"></div>
 <script>
 (async () => {
@@ -3015,7 +3011,7 @@
   <div class="modal-content" style="max-width: 600px;">
     <div class="modal-header">
       <h2 id="backup-server-modal-title">Add Server</h2>
-      <button class="btn" onclick="backupCloseServerModal()">âœ•</button>
+      <button class="btn" onclick="backupCloseServerModal()">✕</button>
     </div>
     <form id="backup-server-form" onsubmit="backupSaveServer(event)">
       <input type="hidden" id="backup-server-type">
@@ -3117,7 +3113,7 @@
   <div class="modal-content" style="max-width: 700px;">
     <div class="modal-header">
       <h2>Create Backup Job</h2>
-      <button class="btn" onclick="backupCloseJobModal()">âœ•</button>
+      <button class="btn" onclick="backupCloseJobModal()">✕</button>
     </div>
     <form id="backup-job-form" onsubmit="backupCreateJob(event)">
       
@@ -3236,11 +3232,11 @@
   <div class="modal-content" style="max-width: 600px;">
     <div class="modal-header">
       <h2>Restore Backup</h2>
-      <button class="btn" onclick="backupCloseRestoreModal()">âœ•</button>
+      <button class="btn" onclick="backupCloseRestoreModal()">✕</button>
     </div>
     <div style="padding: 24px;">
       <div style="margin-bottom: 24px; padding: 16px; background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 8px; display: flex; gap: 12px;">
-        <span style="font-size: 24px;">âš ï¸</span>
+        <span style="font-size: 24px;">⚠️</span>
         <div>
           <strong style="color: #f59e0b;">Warning</strong>
           <p style="color: var(--text-muted); margin-top: 4px; font-size: 14px;">
@@ -3293,7 +3289,7 @@
   <div class="modal-content" style="max-width: 800px;">
     <div class="modal-header">
       <h2 id="backup-job-details-title">Job Details</h2>
-      <button class="btn" onclick="backupCloseJobDetailsModal()">âœ•</button>
+      <button class="btn" onclick="backupCloseJobDetailsModal()">✕</button>
     </div>
     <div id="backup-job-details-content" style="padding: 24px;">
       <!-- Job details will be populated here -->
@@ -3316,7 +3312,7 @@
   <div class="modal-content" style="max-width: 1000px; max-height: 80vh;">
     <div class="modal-header">
       <h2 id="backup-explorer-modal-title">File Explorer</h2>
-      <button class="btn" onclick="backupCloseFileExplorer()">âœ•</button>
+      <button class="btn" onclick="backupCloseFileExplorer()">✕</button>
     </div>
     <div style="padding: 24px;">
       
@@ -3336,7 +3332,7 @@
       </div>
 
       <div style="margin-top: 16px; padding: 12px; background: rgba(14, 165, 233, 0.1); border-radius: 6px; color: #0ea5e9; font-size: 13px;">
-        <strong>ðŸ’¡ Tip:</strong> Click folder names to navigate deeper. Click "Select" on any file or folder to add it to your backup. You can select multiple items.
+        <strong>💡 Tip:</strong> Click folder names to navigate deeper. Click "Select" on any file or folder to add it to your backup. You can select multiple items.
       </div>
 
       <div class="modal-footer">
@@ -3352,7 +3348,7 @@
   <div class="modal-content" style="max-width: 600px;">
     <div class="modal-header">
       <h2>Edit Server</h2>
-      <button class="btn" onclick="backupCloseEditServerModal()">âœ•</button>
+      <button class="btn" onclick="backupCloseEditServerModal()">✕</button>
     </div>
     <form id="backup-edit-server-form" onsubmit="backupUpdateServer(event)">
       <input type="hidden" id="backup-edit-server-id">
@@ -3434,7 +3430,7 @@
   <div class="modal-content" style="max-width: 700px;">
     <div class="modal-header">
       <h2>Edit Backup Job</h2>
-      <button class="btn" onclick="backupCloseEditJobModal()">âœ•</button>
+      <button class="btn" onclick="backupCloseEditJobModal()">✕</button>
     </div>
     <form id="backup-edit-job-form" onsubmit="backupUpdateJob(event)">
       <input type="hidden" id="backup-edit-job-id">
@@ -3536,7 +3532,7 @@
   <div class="modal-content" style="max-width: 600px;">
     <div class="modal-header">
       <h2>Restore Backup</h2>
-      <button class="btn" onclick="backupCloseRestoreModal()">âœ•</button>
+      <button class="btn" onclick="backupCloseRestoreModal()">✕</button>
     </div>
     <form onsubmit="backupSubmitRestore(event)" style="padding: 24px;">
       
@@ -3634,7 +3630,7 @@
   <div class="modal-content" style="max-width: 700px;">
     <div class="modal-header">
       <h2>Backup Progress</h2>
-      <button class="btn" onclick="backupCloseProgressModal()">âœ•</button>
+      <button class="btn" onclick="backupCloseProgressModal()">✕</button>
     </div>
     <div style="padding: 24px;">
       
