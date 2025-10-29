@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 
 """
-ULTIMATE DNS + DHCPv4/v6 + NTP (JARVIS ULTIMATE EXTENDED)
+ULTIMATE DNS + DHCPv4/v6 + NTP (JARVIS ULTIMATE EXTENDED + REWRITES + DHCP TOGGLE + FAILOVER + QUERY LOG + METRICS + CACHE API + MULTI-DNS DHCP)
 Lean. Fast. RFC-Perfect. Technitium Eclipsed.
-Self-Healing Network Brain. Headless. Ultimate. Eternal.
+Self-Healing Network Brain. Headless. Ultimate. Rewrites. Toggle. Failover. Logs. Metrics. Cache. Multi-DNS. Eternal.
 """
 
 import asyncio
@@ -34,6 +34,7 @@ import aiosqlite
 import dns.message
 import dns.name
 import dns.rdatatype
+import dns.rdataclass
 import dns.rrset
 import dns.dnssec
 import dns.edns
@@ -49,7 +50,7 @@ except Exception as e:
 from ping3 import ping
 import ipaddress
 from prometheus_client import Counter, Histogram, Gauge, generate_latest, start_http_server
-from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Request, Response, Form
+from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Request, Response, Form, Query
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, validator, IPvAnyAddress, conint
@@ -67,7 +68,7 @@ access_log.addHandler(access_handler)
 
 def gzip_rotate(log_file):
     if os.path.exists(log_file):
-        with open(log_file, 'rb') as f_in, gzip.open(log_file + '.gz', 'wb') as f_out:
+        with open(log_file, 'rb') as-Hung f_in, gzip.open(log_file + '.gz', 'wb') as f_out:
             f_out.writelines(f_in)
         os.remove(log_file)
 
@@ -113,13 +114,22 @@ class ConfigModel(BaseModel):
     doh_proxy_url: Optional[str] = None
     ntp_port: conint(ge=1025, le=65535) = 8123
     dhcp_interface: str = "eth0"
+    dhcp_enabled: bool = True
     dhcp_gateway: IPvAnyAddress = "10.0.0.1"
+    dhcp_dns_servers: List[str] = ["10.0.0.1", "1.1.1.1", "8.8.8.8"]
     dhcp_subnet: IPvAnyAddress = "10.0.0.0/24"
     dhcp_range: Dict[str, IPvAnyAddress] = {"start": "10.0.0.50", "end": "10.0.0.250"}
     dhcp_lease_time: conint(ge=60) = 86400
-    global_forwarders: List[str] = ["https://1.1.1.1/dns-query"]
+    global_forwarders: List[str] = [
+        "https://1.1.1.1/dns-query",
+        "https://dns.google/dns-query",
+        "https://dns.quad9.net/dns-query",
+        "https://dns.adguard.com/dns-query",
+        "https://dns.nextdns.io"
+    ]
     cache_ttl_override: conint(ge=0) = 3600
     static_leases: Dict[str, str] = {}
+    rewrite_rules: Dict[str, str] = {}
     blocklists: List[str] = []
     recursion_acl: List[str] = ["::1", "127.0.0.1", "10.0.0.0/8"]
     dnssec: bool = True
@@ -127,7 +137,7 @@ class ConfigModel(BaseModel):
     qps_burst: conint(ge=1) = 100
     stale_ttl: conint(ge=0) = 86400
     ntp_peers: List[str] = ["pool.ntp.org"]
-    advertise_ntp: bool = True  # New
+    advertise_ntp: bool = True
 
     # Presets
     doh_presets: Dict[str, str] = {
@@ -171,18 +181,21 @@ class ConfigModel(BaseModel):
         "doh_proxy_url": "DoH Proxy URL",
         "global_forwarders": "DNS Forwarders",
         "cache_ttl_override": "Cache TTL Override (seconds)",
+        "dhcp_enabled": "Enable DHCP",
         "dhcp_interface": "DHCP Interface",
         "dhcp_gateway": "DHCP Gateway",
+        "dhcp_dns_servers": "DHCP DNS Servers",
         "dhcp_range": "DHCP Range",
         "static_leases": "Static Leases",
+        "rewrite_rules": "DNS Rewrites (hostname → IP)",
         "blocklists": "Blocklists",
         "ntp_peers": "NTP Peers",
         "advertise_ntp": "Advertise as NTP"
     }
     ui_sections: Dict[str, List[str]] = {
-        "dns": ["bind_ip", "dns_port", "dot_port", "global_forwarders", "cache_ttl_override"],
+        "dns": ["bind_ip", "dns_port", "dot_port", "global_forwarders", "cache_ttl_override", "rewrite_rules"],
         "dohdot": ["doh_presets", "dot_presets", "doh_proxy_url"],
-        "dhcp": ["dhcp_interface", "dhcp_gateway", "dhcp_range", "dhcp_lease_time", "static_leases"],
+        "dhcp": ["dhcp_enabled", "dhcp_interface", "dhcp_gateway", "dhcp_dns_servers", "dhcp_range", "dhcp_lease_time", "static_leases"],
         "ntp": ["ntp_port", "ntp_peers", "advertise_ntp"],
         "security": ["dnssec", "recursion_acl", "qps_limit", "qps_burst"]
     }
@@ -238,14 +251,14 @@ class UltimateDNSModule:
             tg.create_task(self.start_dns_tcp())
             tg.create_task(self.start_dot())
             tg.create_task(self.ntp_server())
-            if SCAPY_AVAILABLE:
+            if CONFIG.get("dhcp_enabled", True) and SCAPY_AVAILABLE:
                 tg.create_task(self.dhcpv4_server())
             else:
-                log.info("DHCPv4 disabled (scapy unavailable)")
+                log.info("DHCPv4 disabled (either manually or scapy unavailable)")
             tg.create_task(self.prefetch_loop())
             tg.create_task(self.stats_broadcaster())
             tg.create_task(self.log_rotation_task())
-        log.info("Jarvis Ultimate Network Core Active")
+        log.info("Jarvis Ultimate Network Core with Multi-DNS DHCP Active")
 
     async def load_config(self):
         async with DB.execute("SELECT value FROM config WHERE key='config'") as cur:
@@ -346,11 +359,21 @@ class UltimateDNSModule:
         def handle_dhcp(pkt):
             try:
                 mac = pkt[Ether].src
-                options_base = [("message-type", "offer"), ("server_id", CONFIG["dhcp_gateway"]), ("lease_time", CONFIG["dhcp_lease_time"])]
+                options_base = [
+                    ("message-type", "offer"),
+                    ("server_id", CONFIG["dhcp_gateway"]),
+                    ("lease_time", CONFIG["dhcp_lease_time"]),
+                    ("name_server", CONFIG["dhcp_dns_servers"])
+                ]
                 if CONFIG.get("advertise_ntp", True):
                     options_base.append(("ntp_servers", CONFIG["dhcp_gateway"]))
                 options_base.append("end")
-                ack_options_base = [("message-type", "ack"), ("server_id", CONFIG["dhcp_gateway"]), ("lease_time", CONFIG["dhcp_lease_time"])]
+                ack_options_base = [
+                    ("message-type", "ack"),
+                    ("server_id", CONFIG["dhcp_gateway"]),
+                    ("lease_time", CONFIG["dhcp_lease_time"]),
+                    ("name_server", CONFIG["dhcp_dns_servers"])
+                ]
                 if CONFIG.get("advertise_ntp", True):
                     ack_options_base.append(("ntp_servers", CONFIG["dhcp_gateway"]))
                 ack_options_base.append("end")
@@ -407,6 +430,19 @@ class UltimateDNSModule:
             qname = str(msg.question[0].name).rstrip('.').lower()
             qtype = dns.rdatatype.to_text(msg.question[0].rdtype)
 
+            # === DNS REWRITE OVERRIDE ===
+            if qname in CONFIG.get("rewrite_rules", {}):
+                ip = CONFIG["rewrite_rules"][qname]
+                response = msg.make_response()
+                ttl = CONFIG["cache_ttl_override"] or 3600
+                rrset = dns.rrset.from_text(qname, ttl, dns.rdataclass.IN, dns.rdatatype.A, ip)
+                response.answer.append(rrset)
+                CACHE_HIT.inc()
+                access_log.info("", extra={"client": client[0], "qname": qname, "qtype": "A", "rcode": "REWRITE", "latency": 0})
+                if sock:
+                    sock.sendto(response.to_wire(), client)
+                return response
+
             ip = client[0]
             now = time.time()
             rl = rate_limiter[ip]
@@ -438,26 +474,38 @@ class UltimateDNSModule:
             if key in cache_db and cache_db[key]["expiry"] > time.time():
                 response = dns.message.from_wire(cache_db[key]["data"])
                 CACHE_HIT.inc()
+                access_log.info("", extra={"client": ip, "qname": qname, "qtype": qtype, "rcode": "CACHE", "latency": time.time() - start})
             else:
                 headers = {}
                 if CONFIG["doh_proxy_url"]:
                     headers["X-Forwarded-For"] = ip
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(CONFIG["global_forwarders"][0], data=wire, proxy=CONFIG["doh_proxy_url"], headers=headers) as resp:
-                        resp_data = await resp.read()
-                        response = dns.message.from_wire(resp_data)
-                        ttl = CONFIG["cache_ttl_override"]
-                        if response.answer and not ttl:
-                            ttl = response.answer[0].ttl
-                        elif not ttl:
-                            ttl = 3600
-                        cache_db[key] = {"data": resp_data, "expiry": time.time() + ttl}
-                CACHE_MISS.inc()
-                CACHE_SIZE.set(len(cache_db))
+                response = None
+                for fwd in CONFIG["global_forwarders"]:
+                    try:
+                        async with aiohttp.ClientSession() as session:
+                            async with session.post(fwd, data=wire, proxy=CONFIG["doh_proxy_url"], headers=headers, timeout=2) as resp:
+                                if resp.status == 200:
+                                    resp_data = await resp.read()
+                                    response = dns.message.from_wire(resp_data)
+                                    ttl = CONFIG["cache_ttl_override"] or 3600
+                                    cache_db[key] = {"data": resp_data, "expiry": time.time() + ttl}
+                                    CACHE_MISS.inc()
+                                    CACHE_SIZE.set(len(cache_db))
+                                    break
+                    except Exception as e:
+                        log.warning(f"Forwarder {fwd} failed: {e}")
+                if response is None:
+                    response = msg.make_response()
+                    response.set_rcode(dns.rcode.SERVFAIL)
+                    access_log.info("", extra={"client": ip, "qname": qname, "qtype": qtype, "rcode": "SERVFAIL", "latency": time.time() - start})
 
             QUERY_COUNTER.labels(qtype=qtype, status="success").inc()
             QUERY_LATENCY.observe(time.time() - start)
-            access_log.info("", extra={"client": ip, "qname": qname, "qtype": qtype, "rcode": response.rcode(), "latency": time.time() - start})
+            if "rcode" not in locals() or response.rcode() == dns.rcode.NOERROR:
+                rcode_str = dns.rcode.to_text(response.rcode())
+            else:
+                rcode_str = locals()["rcode"]
+            access_log.info("", extra={"client": ip, "qname": qname, "qtype": qtype, "rcode": rcode_str, "latency": time.time() - start})
             if sock:
                 sock.sendto(response.to_wire(), client)
             return response
@@ -486,10 +534,12 @@ class UltimateDNSModule:
                 "leases": {ip: {k: v for k, v in lease.items() if k != "static"} for ip, lease in leases_db.items()},
                 "blocklist": list(blocklist),
                 "static_leases": CONFIG["static_leases"],
+                "rewrite_rules": CONFIG["rewrite_rules"],
                 "cache_ttl_override": CONFIG["cache_ttl_override"],
                 "forwarders": CONFIG["global_forwarders"],
                 "doh_proxy": CONFIG["doh_proxy_url"],
-                "advertise_ntp": CONFIG["advertise_ntp"]
+                "advertise_ntp": CONFIG["advertise_ntp"],
+                "dhcp_enabled": CONFIG["dhcp_enabled"]
             }
             for ws in self.ws_clients[:]:
                 try:
@@ -525,6 +575,59 @@ class UltimateDNSModule:
         @self.ui_app.get("/metrics")
         async def metrics():
             return Response(generate_latest(), media_type="text/plain")
+
+        @self.ui_app.get("/api/logs")
+        async def get_logs(limit: int = 200):
+            log_path = "/data/logs/access.log"
+            if not os.path.exists(log_path):
+                return []
+            with open(log_path, "r") as f:
+                lines = f.readlines()[-limit:]
+            logs = []
+            for line in lines:
+                line = line.strip()
+                if line:
+                    try:
+                        logs.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+            return logs
+
+        @self.ui_app.get("/api/stats")
+        async def stats_summary():
+            return {
+                "query_total": sum(v for _, v in QUERY_COUNTER._value.get().items()),
+                "cache_entries": len(cache_db),
+                "cache_hits": CACHE_HIT._value.get(),
+                "cache_misses": CACHE_MISS._value.get(),
+                "blocked": BLOCK_COUNTER._value.get(),
+                "refused": REFUSE_COUNTER._value.get(),
+                "active_leases": len(leases_db),
+                "ntp_drift": NTP_DRIFT._value.get(),
+                "ntp_jitter": NTP_JITTER._value.get(),
+                "dhcp_enabled": CONFIG["dhcp_enabled"],
+                "forwarders": CONFIG["global_forwarders"],
+                "blocklist_size": len(blocklist),
+                "rewrite_rules": len(CONFIG.get("rewrite_rules", {})),
+            }
+
+        @self.ui_app.get("/api/cache")
+        async def get_cache_summary(limit: int = 50):
+            now = time.time()
+            entries = [
+                {"qname": k.split("|")[0],
+                 "qtype": k.split("|")[1],
+                 "expires_in": round(v["expiry"] - now)}
+                for k, v in list(cache_db.items())[-limit:]
+            ]
+            return {"entries": entries, "total": len(cache_db)}
+
+        @self.ui_app.delete("/api/cache")
+        async def flush_cache():
+            count = len(cache_db)
+            cache_db.clear()
+            CACHE_SIZE.set(0)
+            return {"status": "flushed", "removed": count}
 
         @self.ui_app.post("/api/blocklist", dependencies=[Depends(require_role("operator"))])
         async def add_blocklist(domain: str = Form(...)):
@@ -602,7 +705,6 @@ class UltimateDNSModule:
         @self.ui_app.post("/api/ntp_sync")
         async def ntp_sync():
             try:
-                peers = " ".join(CONFIG["ntp_peers"])
                 out = subprocess.check_output(["ntpdate", "-q"] + CONFIG["ntp_peers"], stderr=subprocess.STDOUT).decode()
                 return {"status": "ok", "output": out}
             except Exception as e:
