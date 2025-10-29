@@ -819,9 +819,20 @@
     }
   };
 
-  window.backupOpenRestoreModal = function(archive) {
+  window.backupOpenRestoreModal = async function(archive) {
     backupState.currentRestoreArchive = archive;
     
+    // === FORCE LOAD SERVERS IF EMPTY ===
+    if (backupState.servers.length === 0) {
+      try {
+        await backupLoadServers();
+      } catch (e) {
+        toast('Failed to load servers for restore', 'error');
+        return;
+      }
+    }
+    // === END FORCE LOAD ===
+
     // Populate modal
     document.getElementById('restore-archive-name').textContent = archive.job_name || archive.id;
     document.getElementById('restore-archive-date').textContent = archive.created_at ? new Date(archive.created_at).toLocaleString() : 'N/A';
