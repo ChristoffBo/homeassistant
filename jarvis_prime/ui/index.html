@@ -3056,7 +3056,124 @@
           <option value="">Select source server...</option>
         </select>
       </div>
+</select>
+    </div>
 
+    <!-- === FULL RESTORE MODAL - PASTE THIS ENTIRE BLOCK HERE === -->
+<!-- FULL WORKING RESTORE MODAL -->
+<div id="backup-restore-modal" class="modal">
+  <div class="modal-content" style="max-width: 600px;">
+    <div class="modal-header">
+      <h2>Restore Backup</h2>
+      <button class="btn" onclick="backupCloseRestoreModal()">X</button>
+    </div>
+    <div style="padding: 24px;">
+      
+      <!-- Warning -->
+      <div style="margin-bottom: 24px; padding: 16px; background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 8px; display: flex; gap: 12px;">
+        <span style="font-size: 24px;">Warning</span>
+        <div>
+          <strong style="color: #f59e0b;">Warning</strong>
+          <p style="color: var(--text-muted); margin-top: 4px; font-size: 14px;">
+            Restoring will overwrite existing files at the destination. Make sure you have a recent backup before proceeding.
+          </p>
+        </div>
+      </div>
+
+      <!-- Archive Info -->
+      <div class="form-group">
+        <label class="form-label">Backup to Restore</label>
+        <div id="restore-archive-name" style="font-weight: 600; color: var(--text-primary); padding: 12px; background: var(--surface-secondary); border-radius: 6px;"></div>
+        <div style="margin-top: 8px; font-size: 13px; color: var(--text-muted);">
+          <span id="restore-archive-date"></span> • <span id="restore-archive-size"></span>
+        </div>
+        <div style="margin-top: 8px;">
+          <strong>Original paths:</strong>
+          <pre id="restore-original-paths" style="margin: 0; font-size: 12px; color: var(--text-muted); white-space: pre-wrap; max-height: 60px; overflow-y: auto;"></pre>
+        </div>
+      </div>
+
+      <!-- Restore Location -->
+      <div class="form-group">
+        <label class="form-label">Restore Location</label>
+        <div class="checkbox-group">
+          <input type="radio" id="restore-to-original" name="restore-location" checked onchange="backupToggleRestoreLocation()">
+          <label for="restore-to-original">
+            Restore to original location
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;" id="restore-original-location-text">
+              Loading...
+            </div>
+          </label>
+        </div>
+        <div class="checkbox-group">
+          <input type="radio" id="restore-to-custom" name="restore-location" onchange="backupToggleRestoreLocation()">
+          <label for="restore-to-custom">Restore to custom location</label>
+        </div>
+      </div>
+
+      <!-- Custom Location Fields -->
+      <div id="restore-custom-path-group" style="display: none;">
+        <div class="form-group">
+          <label class="form-label">Destination Server *</label>
+          <select id="restore-dest-server">
+            <option value="">Select destination server...</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Destination Path *</label>
+          <div style="display: flex; gap: 8px;">
+            <input type="text" id="restore-dest-path" placeholder="/restore/location" style="flex: 1;">
+            <button type="button" class="btn" onclick="backupBrowseRestoreDestination()">Browse</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Restore Scope -->
+      <div class="form-group">
+        <label class="form-label">What to Restore</label>
+        <div class="checkbox-group">
+          <input type="radio" id="restore-full" name="restore-scope" checked onchange="backupToggleRestoreScope()">
+          <label for="restore-full">Restore entire backup</label>
+        </div>
+        <div class="checkbox-group">
+          <input type="radio" id="restore-selective" name="restore-scope" onchange="backupToggleRestoreScope()">
+          <label for="restore-selective">Select specific files/folders</label>
+        </div>
+      </div>
+
+      <!-- Selective Restore -->
+      <div id="restore-selective-group" style="display: none;">
+        <div class="form-group">
+          <label class="form-label">Select Items</label>
+          <button type="button" class="btn" onclick="backupBrowseBackupContents()" style="width: 100%;">Browse Backup Contents</button>
+          <div id="restore-selected-items" style="margin-top: 8px; padding: 8px; background: var(--surface-secondary); border-radius: 4px; min-height: 40px; font-size: 13px; color: var(--text-muted);">
+            No items selected
+          </div>
+        </div>
+      </div>
+
+      <!-- Overwrite -->
+      <div class="form-group">
+        <div class="checkbox-group">
+          <input type="checkbox" id="restore-overwrite" checked>
+          <label for="restore-overwrite">Overwrite existing files</label>
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <div class="modal-footer">
+        <button type="button" class="btn" onclick="backupCloseRestoreModal()">Cancel</button>
+        <button type="submit" class="btn danger" onclick="backupSubmitRestore(event)">
+          Restore Backup
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+    <!-- === END FULL RESTORE MODAL === -->
+
+    <div class="form-group">
+      <label class="form-label">Source Paths *</label>
       <div class="form-group">
         <label class="form-label">Source Paths *</label>
         <div style="display: flex; gap: 8px; margin-bottom: 8px;">
