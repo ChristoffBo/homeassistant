@@ -20,7 +20,8 @@
     selectedDestination: '',
     currentBrowseServer: null,
     currentBrowsePath: '/',
-    explorerSide: 'source' // 'source' or 'destination'
+    explorerSide: 'source', // 'source' or 'destination'
+    restoreSelectedItems: [] // NEW: Track selective restore items
   };
 
   /* =============== UTILITY =============== */
@@ -320,7 +321,7 @@
     if (index > -1) {
       backupState.selectedPaths.splice(index, 1);
     } else {
-      if (backupState.explorerSide === 'destination') {
+      if (backupState.explorerSide === 'destination' || backupState.explorerSide === 'restore-dest') {
         // Only one destination folder (must be directory)
         if (!isDir) {
           toast('Destination must be a folder, not a file', 'error');
@@ -819,10 +820,12 @@
     }
   };
 
+  // === FIXED: Made async + force load + safe dropdown + selective restore ===
   window.backupOpenRestoreModal = async function(archive) {
     backupState.currentRestoreArchive = archive;
-    
-    // === FORCE LOAD SERVERS IF EMPTY OR FAILED ===
+    backupState.restoreSelectedItems = []; // Reset selective items
+
+    // === FORCE LOAD SERVERS IF EMPTY ===
     if (backupState.servers.length === 0) {
       toast('Loading servers for restore...', 'info');
       try {
@@ -855,7 +858,7 @@
     
     document.getElementById('restore-original-location-text').textContent = originalLocationText;
     
-    // Populate ALL servers in dropdown (not just destinations)
+    // === SAFE DROPDOWN POPULATION ===
     const serverSelect = document.getElementById('restore-dest-server');
     serverSelect.innerHTML = '<option value="">Select destination server...</option>';
     backupState.servers.forEach(server => {
@@ -868,6 +871,10 @@
     // Set default to original location
     document.getElementById('restore-to-original').checked = true;
     document.getElementById('restore-custom-path-group').style.display = 'none';
+    document.getElementById('restore-full').checked = true;
+    document.getElementById('restore-selective-group').style.display = 'none';
+    document.getElementById('restore-selected-items').innerHTML = 'No items selected';
+    document.getElementById('restore-selected-items').style.color = 'var(--text-muted)';
     
     document.getElementById('backup-restore-modal').style.display = 'flex';
   };
