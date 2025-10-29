@@ -822,12 +822,17 @@
   window.backupOpenRestoreModal = async function(archive) {
     backupState.currentRestoreArchive = archive;
     
-    // === FORCE LOAD SERVERS IF EMPTY ===
+    // === FORCE LOAD SERVERS IF EMPTY OR FAILED ===
     if (backupState.servers.length === 0) {
+      toast('Loading servers for restore...', 'info');
       try {
         await backupLoadServers();
+        if (backupState.servers.length === 0) {
+          toast('No servers configured. Add servers first.', 'error');
+          return;
+        }
       } catch (e) {
-        toast('Failed to load servers for restore', 'error');
+        toast('Failed to load servers: ' + e.message, 'error');
         return;
       }
     }
@@ -854,7 +859,10 @@
     const serverSelect = document.getElementById('restore-dest-server');
     serverSelect.innerHTML = '<option value="">Select destination server...</option>';
     backupState.servers.forEach(server => {
-      serverSelect.innerHTML += `<option value="${server.id}">${server.name} (${server.host})</option>`;
+      const opt = document.createElement('option');
+      opt.value = server.id;
+      opt.textContent = `${server.name} (${server.host}${server.port ? ':' + server.port : ''})`;
+      serverSelect.appendChild(opt);
     });
     
     // Set default to original location
