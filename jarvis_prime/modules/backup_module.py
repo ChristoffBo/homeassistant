@@ -14,7 +14,7 @@ import shutil
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List
 from aiohttp import web
 import paramiko
 from multiprocessing import Process, Queue, Manager
@@ -31,9 +31,7 @@ status_queue = Queue()
 def backup_fanout_notify(job_id: str, job_name: str, status: str, source_path: str = None,
                          dest_path: str = None, size_mb: float = None, duration: float = None,
                          error: str = None, restore: bool = False):
-    """
-    Fan-out detailed backup/restore job notification through Jarvis Prime's multi-channel system.
-    """
+    """Fan-out detailed backup/restore job notification."""
     try:
         import sys
         sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -62,7 +60,6 @@ def backup_fanout_notify(job_id: str, job_name: str, status: str, source_path: s
         priority = 3 if status == "success" else 8
         process_incoming(title, message, source="backup", priority=priority)
         logger.info(f"{kind} notification sent for job {job_id}")
-
     except Exception as e:
         try:
             from errors import notify_error
@@ -94,7 +91,6 @@ class BackupConnection:
 
 
 class SSHConnection(BackupConnection):
-    """SSH/SFTP connection handler"""
     def __init__(self, host: str, username: str, password: str, port: int = 22):
         super().__init__('ssh', host, username, password, port=port)
         self.client = None
@@ -135,7 +131,6 @@ class SSHConnection(BackupConnection):
             attrs = self.sftp.listdir_attr(path)
         except:
             return []
-
         for attr in attrs:
             import stat
             item = {
@@ -160,7 +155,6 @@ class SSHConnection(BackupConnection):
 
 
 class SMBConnection(BackupConnection):
-    """SMB/CIFS connection handler"""
     def __init__(self, host: str, username: str, password: str, share: str, port: int = 445):
         super().__init__('smb', host, username, password, port=port, share=share)
         self.mount_point = None
@@ -216,7 +210,6 @@ class SMBConnection(BackupConnection):
 
 
 class NFSConnection(BackupConnection):
-    """NFS connection handler"""
     def __init__(self, host: str, export_path: str, username: str = None, password: str = None):
         super().__init__('nfs', host, username or '', password or '', export_path=export_path)
         self.mount_point = None
@@ -1151,38 +1144,46 @@ async def delete_archive(request):
         return web.json_response({'error': str(e)}, status=500)
 
 
+# FIXED: SAFE RESTORE ENDPOINT WITH RACE CONDITION PROTECTION
 async def restore_backup(request):
     try:
         data = await request.json()
         archive_id = data.get('archive_id')
         dest_server_id = data.get('destination_server_id')
         dest_path = data.get('destination_path', '')
-        overwrite = data.get('overwrite', True)
         selective_items = data.get('selective_items', [])
 
         if not archive_id or not dest_server_id:
             return web.json_response({'success': False, 'message': 'Missing archive_id or destination_server_id'}, status=400)
 
+        # Wait for backup_manager to initialize
         global backup_manager
-        if not backup_manager:
-            return web.json_response({'success': False, 'message': 'Backup manager not initialized'}, status=500)
+        for _ in range(30):
+            if backup_manager:
+                break
+            await asyncio.sleep(0.1)
+        else:
+            return web.json_response({'success': False, 'message': 'Backup system not ready'}, status=503)
 
-        restore_id = backup_manager.start_restore(
-            archive_id=archive_id,
-            dest_server_id=dest_server_id,
-            dest_path=dest_path,
-            selective_items=selective_items
-        )
-
-        return web.json_response({
-            'success': True,
-            'restore_id': restore_id,
-            'message': 'Restore started'
-        })
+        try:
+            restore_id = backup_manager.start_restore(
+                archive_id=archive_id,
+                dest_server_id=dest_server_id,
+                dest_path=dest_path,
+                selective_items=selective_items
+            )
+            return web.json_response({
+                'success': True,
+                'restore_id': restore_id,
+                'message': 'Restore started'
+            })
+        except Exception as e:
+            logger.error(f"Restore failed to start: {e}")
+            return web.json_response({'success': False, 'message': str(e)}, status=500)
 
     except Exception as e:
         logger.error(f"Restore API error: {e}")
-        return web.json_response({'success': False, 'message': str(e)}, status=500)
+        return web.json_response({'success': False, 'message': 'Invalid request'}, status=400)
 
 
 async def import_archives(request):
@@ -1194,6 +1195,11 @@ async def import_archives(request):
 
 
 def setup_routes(app):
+    # CRITICAL: Register startup BEFORE routes
+    app.on_startup.append(init_backup_module)
+    app.on_cleanup.append(cleanup_backup_module)
+
+    # Now add routes
     app.router.add_post('/api/backup/jobs', create_backup_job)
     app.router.add_get('/api/backup/jobs', get_all_jobs)
     app.router.add_post('/api/backup/jobs/{job_id}/run', run_backup_job)
@@ -1210,7 +1216,4 @@ def setup_routes(app):
 
     app.router.add_post('/api/backup/test-connection', test_connection)
     app.router.add_post('/api/backup/browse', browse_directory)
-    app.router.add_post('/api/backup/restore', restore_backup)  # FIXED: FULLY IMPLEMENTED
-
-    app.on_startup.append(init_backup_module)
-    app.on_cleanup.append(cleanup_backup_module)
+    app.router.add_post('/api/backup/restore', restore_backup)  # FIXED AND SAFE
