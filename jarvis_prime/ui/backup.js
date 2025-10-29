@@ -118,12 +118,12 @@
       });
       
       if (result.success) {
-        toast('✅ Connection successful!', 'success');
+        toast('Connection successful!', 'success');
       } else {
-        toast('❌ Connection failed: ' + (result.error || 'Unknown error'), 'error');
+        toast('Connection failed: ' + (result.error || 'Unknown error'), 'error');
       }
     } catch (error) {
-      toast('❌ Connection test failed: ' + error.message, 'error');
+      toast('Connection test failed: ' + error.message, 'error');
     }
   };
 
@@ -157,11 +157,11 @@
         body: JSON.stringify(server)
       });
       
-      toast('✅ Server saved successfully', 'success');
+      toast('Server saved successfully', 'success');
       backupCloseServerModal();
       await backupLoadServers();
     } catch (error) {
-      toast('❌ Failed to save server: ' + error.message, 'error');
+      toast('Failed to save server: ' + error.message, 'error');
     }
   };
 
@@ -172,7 +172,7 @@
     const servers = side === 'source' ? backupState.sourceServers : backupState.destinationServers;
     
     if (servers.length === 0) {
-      toast(`❌ No ${side} servers configured`, 'error');
+      toast(`No ${side} servers configured`, 'error');
       return;
     }
     
@@ -231,7 +231,7 @@
       
       renderFileExplorer(result.files || []);
     } catch (error) {
-      toast('❌ Failed to browse: ' + error.message, 'error');
+      toast('Failed to browse: ' + error.message, 'error');
       document.getElementById('backup-explorer-list').innerHTML = '<div class="text-muted">Failed to load directory</div>';
     }
   }
@@ -258,7 +258,7 @@
       const parent = backupState.currentBrowsePath.split('/').slice(0, -1).join('/') || '/';
       html += `
         <tr style="cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.05);" data-action="navigate" data-path="${parent}">
-          <td style="padding: 12px;">📁 ..</td>
+          <td style="padding: 12px;">..</td>
           <td></td>
           <td></td>
           <td></td>
@@ -271,7 +271,7 @@
         ? `/${file.name}` 
         : `${backupState.currentBrowsePath}/${file.name}`;
       
-      const icon = file.is_dir ? '📁' : '📄';
+      const icon = file.is_dir ? '' : '';
       const size = file.is_dir ? '' : formatBytes(file.size);
       const modified = file.mtime ? new Date(file.mtime * 1000).toLocaleString() : '';
       const isSelected = backupState.selectedPaths.includes(fullPath);
@@ -288,7 +288,7 @@
           <td style="padding: 12px; text-align: right; color: var(--text-muted);">${modified}</td>
           <td style="padding: 12px; text-align: center;">
             <button class="btn btn-sm" data-action="select" data-path="${fullPath}" data-is-dir="${file.is_dir}" style="padding: 4px 8px;">
-              ${isSelected ? '✓ Selected' : 'Select'}
+              ${isSelected ? 'Selected' : 'Select'}
             </button>
           </td>
         </tr>
@@ -323,7 +323,7 @@
       if (backupState.explorerSide === 'destination') {
         // Only one destination folder (must be directory)
         if (!isDir) {
-          toast('❌ Destination must be a folder, not a file', 'error');
+          toast('Destination must be a folder, not a file', 'error');
           return;
         }
         backupState.selectedPaths = [path];
@@ -348,7 +348,12 @@
 
   window.backupConfirmSelection = function() {
     if (backupState.selectedPaths.length === 0) {
-      toast('❌ No items selected', 'error');
+      toast('No items selected', 'error');
+      return;
+    }
+
+    if (backupState.explorerSide === 'restore-dest' && backupState.selectedPaths.length === 0) {
+      toast('Please select a destination folder', 'error');
       return;
     }
     
@@ -357,27 +362,27 @@
         ? document.getElementById('backup-edit-job-paths')
         : document.getElementById('backup-job-paths');
       textarea.value = backupState.selectedPaths.join('\n');
-      toast(`✅ Selected ${backupState.selectedPaths.length} items for backup`, 'success');
+      toast(`Selected ${backupState.selectedPaths.length} items for backup`, 'success');
     } else if (backupState.explorerSide === 'destination') {
       const input = backupState.editMode
         ? document.getElementById('backup-edit-job-dest-path')
         : document.getElementById('backup-job-dest-path');
       input.value = backupState.selectedPaths[0] || '/backups';
-      toast(`✅ Destination set to: ${backupState.selectedPaths[0]}`, 'success');
+      toast(`Destination set to: ${backupState.selectedPaths[0]}`, 'success');
     } else if (backupState.explorerSide === 'restore-dest') {
       document.getElementById('restore-dest-path').value = backupState.selectedPaths[0] || '/';
-      toast(`✅ Restore destination set`, 'success');
+      toast(`Restore destination set`, 'success');
     } else if (backupState.explorerSide === 'restore-selective') {
       backupState.restoreSelectedItems = backupState.selectedPaths.slice();
       const itemsDiv = document.getElementById('restore-selected-items');
       if (backupState.restoreSelectedItems.length > 0) {
-        itemsDiv.innerHTML = backupState.restoreSelectedItems.map(p => `<div>✓ ${p}</div>`).join('');
+        itemsDiv.innerHTML = backupState.restoreSelectedItems.map(p => `<div>${p}</div>`).join('');
         itemsDiv.style.color = 'var(--text-primary)';
       } else {
         itemsDiv.innerHTML = 'No items selected';
         itemsDiv.style.color = 'var(--text-muted)';
       }
-      toast(`✅ Selected ${backupState.restoreSelectedItems.length} items to restore`, 'success');
+      toast(`Selected ${backupState.restoreSelectedItems.length} items to restore`, 'success');
     }
     
     backupState.selectedPaths = [];
@@ -444,11 +449,11 @@
         body: JSON.stringify(job)
       });
       
-      toast('✅ Backup job created successfully', 'success');
+      toast('Backup job created successfully', 'success');
       backupCloseJobModal();
       await backupLoadJobs();
     } catch (error) {
-      toast('❌ Failed to create job: ' + error.message, 'error');
+      toast('Failed to create job: ' + error.message, 'error');
     }
   };
 
@@ -561,7 +566,7 @@
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; font-size: 13px; color: var(--text-muted);">
               <div><strong>Schedule:</strong> ${job.schedule}</div>
               <div><strong>Last Run:</strong> ${job.last_run ? formatDate(job.last_run) : 'Never'}</div>
-              <div><strong>Status:</strong> ${job.enabled ? '<span style="color: #10b981;">✅ Active</span>' : '<span style="color: #ef4444;">❌ Disabled</span>'}</div>
+              <div><strong>Status:</strong> ${job.enabled ? '<span style="color: #10b981;">Active</span>' : '<span style="color: #ef4444;">Disabled</span>'}</div>
             </div>
           </div>
           <div style="display: flex; gap: 8px;">
@@ -644,10 +649,10 @@
     
     try {
       await backupFetch(`api/backup/servers/${serverId}`, { method: 'DELETE' });
-      toast('✅ Server deleted', 'success');
+      toast('Server deleted', 'success');
       await backupLoadServers();
     } catch (error) {
-      toast('❌ Failed to delete server: ' + error.message, 'error');
+      toast('Failed to delete server: ' + error.message, 'error');
     }
   };
 
@@ -656,10 +661,10 @@
     
     try {
       await backupFetch(`api/backup/jobs/${jobId}`, { method: 'DELETE' });
-      toast('✅ Job deleted', 'success');
+      toast('Job deleted', 'success');
       await backupLoadJobs();
     } catch (error) {
-      toast('❌ Failed to delete job: ' + error.message, 'error');
+      toast('Failed to delete job: ' + error.message, 'error');
     }
   };
 
@@ -674,7 +679,7 @@
       backupStartProgressPolling(jobId);
       
     } catch (error) {
-      toast('❌ Failed to run job: ' + error.message, 'error');
+      toast('Failed to run job: ' + error.message, 'error');
     }
   };
 
@@ -755,14 +760,14 @@
     
     if (statusText === 'completed') {
       statusColor = '#10b981';
-      statusDisplay = '✅ COMPLETED';
+      statusDisplay = 'COMPLETED';
       document.getElementById('backup-progress-bar').style.background = 'linear-gradient(90deg, #10b981, #059669)';
     } else if (statusText === 'failed') {
       statusColor = '#ef4444';
-      statusDisplay = '❌ FAILED';
+      statusDisplay = 'FAILED';
       document.getElementById('backup-progress-bar').style.background = 'linear-gradient(90deg, #ef4444, #dc2626)';
     } else if (statusText === 'running') {
-      statusDisplay = '⏳ RUNNING';
+      statusDisplay = 'RUNNING';
     }
     
     document.getElementById('backup-progress-status').textContent = statusDisplay;
@@ -807,10 +812,10 @@
     
     try {
       await backupFetch(`api/backup/archives/${archiveId}`, { method: 'DELETE' });
-      toast('✅ Backup deleted', 'success');
+      toast('Backup deleted', 'success');
       backupRefreshArchives();
     } catch (error) {
-      toast('❌ Failed to delete backup: ' + error.message, 'error');
+      toast('Failed to delete backup: ' + error.message, 'error');
     }
   };
 
@@ -865,7 +870,7 @@
   window.backupBrowseRestoreDestination = function() {
     const serverId = document.getElementById('restore-dest-server').value;
     if (!serverId) {
-      toast('❌ Please select a destination server first', 'error');
+      toast('Please select a destination server first', 'error');
       return;
     }
     
@@ -885,14 +890,14 @@
   window.backupBrowseBackupContents = function() {
     const archive = backupState.currentRestoreArchive;
     if (!archive) {
-      toast('❌ No archive selected', 'error');
+      toast('No archive selected', 'error');
       return;
     }
     
     // Find the backup storage server
     const backupServer = backupState.servers.find(s => s.id === archive.dest_server_id);
     if (!backupServer) {
-      toast('❌ Backup storage server not found', 'error');
+      toast('Backup storage server not found', 'error');
       return;
     }
     
@@ -912,7 +917,7 @@
     
     const archive = backupState.currentRestoreArchive;
     if (!archive) {
-      toast('❌ No archive selected', 'error');
+      toast('No archive selected', 'error');
       return;
     }
     
@@ -931,7 +936,7 @@
     }
     
     if (!destServerId || !destPath) {
-      toast('❌ Please select destination server and path', 'error');
+      toast('Please select destination server and path', 'error');
       return;
     }
     
@@ -953,83 +958,13 @@
         body: JSON.stringify(restoreData)
       });
       
-      toast('✅ Restore started!', 'success');
+      toast('Restore started!', 'success');
       backupCloseRestoreModal();
       
       // TODO: Show restore progress modal similar to backup progress
       
     } catch (error) {
-      toast('❌ Failed to start restore: ' + error.message, 'error');
-    }
-  };
-
-  window.backupDeleteArchive = async function(archiveId) {
-    if (!confirm('Delete this backup? This cannot be undone.')) return;
-    
-    try {
-      await backupFetch(`api/backup/archives/${archiveId}`, { method: 'DELETE' });
-      toast('✅ Backup deleted', 'success');
-      await backupRefreshArchives();
-    } catch (error) {
-      toast('❌ Failed to delete backup: ' + error.message, 'error');
-    }
-  };
-
-  /* =============== RESTORE MODAL =============== */
-
-  window.backupOpenRestoreModal = function(archive) {
-    backupState.currentRestoreArchive = archive;
-    document.getElementById('backup-restore-name').textContent = archive.name || archive.id;
-    document.getElementById('backup-restore-modal').style.display = 'flex';
-    
-    // Populate destination servers
-    const select = document.getElementById('backup-restore-destination');
-    select.innerHTML = '<option value="">Select destination server...</option>';
-
-    const allServers = [...backupState.sourceServers, ...backupState.destinationServers];
-    allServers.forEach((server) => {
-    const option = document.createElement('option');
-    option.value = server.id;
-    option.textContent = `${server.name} (${server.host})`;
-    select.appendChild(option);
-  });
-  };
-
-  window.backupCloseRestoreModal = function() {
-    document.getElementById('backup-restore-modal').style.display = 'none';
-  };
-
-  window.backupConfirmRestore = async function() {
-    if (!backupState.currentRestoreArchive) return;
-    
-    const destServerId = document.getElementById('backup-restore-destination').value;
-    const restorePath = document.getElementById('backup-restore-path').value;
-    const overwrite = document.getElementById('backup-restore-overwrite').checked;
-    
-    if (!destServerId || !restorePath) {
-      toast('❌ Please select destination and path', 'error');
-      return;
-    }
-    
-    if (!confirm('Are you sure you want to restore? This will overwrite existing files!')) {
-      return;
-    }
-    
-    try {
-      await backupFetch('api/backup/restore', {
-        method: 'POST',
-        body: JSON.stringify({
-          archive_id: backupState.currentRestoreArchive.id,
-          destination_server_id: destServerId,
-          destination_path: restorePath,
-          overwrite: overwrite
-        })
-      });
-      
-      toast('✅ Restore started successfully', 'success');
-      backupCloseRestoreModal();
-    } catch (error) {
-      toast('❌ Failed to start restore: ' + error.message, 'error');
+      toast('Failed to start restore: ' + error.message, 'error');
     }
   };
 
@@ -1114,11 +1049,11 @@
         body: JSON.stringify(updatedServer)
       });
       
-      toast('✅ Server updated successfully', 'success');
+      toast('Server updated successfully', 'success');
       backupCloseEditServerModal();
       await backupLoadServers();
     } catch (error) {
-      toast('❌ Failed to update server: ' + error.message, 'error');
+      toast('Failed to update server: ' + error.message, 'error');
     }
   };
 
@@ -1184,11 +1119,11 @@
         body: JSON.stringify(updatedJob)
       });
       
-      toast('✅ Job updated successfully', 'success');
+      toast('Job updated successfully', 'success');
       backupCloseEditJobModal();
       await backupLoadJobs();
     } catch (error) {
-      toast('❌ Failed to update job: ' + error.message, 'error');
+      toast('Failed to update job: ' + error.message, 'error');
     }
   };
 
