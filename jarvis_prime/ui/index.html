@@ -2296,12 +2296,15 @@
           </div>
         </div>
         
-        <input type="file" id="backup-file-input" accept=".tar.gz,.tgz" style="display: none;">
-        <button id="backup-restore-btn" class="btn" style="width: 100%;">
-          📤 Select Backup File to Restore
-        </button>
-      </div>
-    </div>
+ <input type="file" id="backup-file-input" accept=".tar.gz,.tgz" style="display: none;">
+<button
+  id="backup-restore-btn"
+  class="btn"
+  style="width: 100%;"
+  onclick="backupOpenRestoreModal()"
+>
+  📤 Select Backup File to Restore
+</button>
 
     <!-- ✅ Full Working Restore Modal -->
     <div id="backup-restore-modal" class="modal" style="display:none;">
