@@ -3599,6 +3599,12 @@
     </div>
   </div>
 </div>
-
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  if (window.backupModule && window.backupModule.init) {
+    window.backupModule.init();
+  }
+});
+</script>
 </body>
 </html>
