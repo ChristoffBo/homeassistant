@@ -3600,9 +3600,18 @@
   </div>
 </div>
 <script>
-document.addEventListener('DOMContentLoaded', () => {
-  if (window.backupModule && window.backupModule.init) {
-    window.backupModule.init();
+<script>
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    if (window.backupModule && typeof window.backupModule.init === 'function') {
+      console.log('[backup] Auto-initializing backup module...');
+      await window.backupModule.init();
+      console.log('[backup] Initialization complete.');
+    } else {
+      console.warn('[backup] Module not found.');
+    }
+  } catch (err) {
+    console.error('[backup] Initialization failed:', err);
   }
 });
 </script>
