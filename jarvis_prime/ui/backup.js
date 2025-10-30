@@ -906,12 +906,21 @@
     console.log('[backup] Opening modal...');
     const modal = document.getElementById('backup-restore-modal');
     console.log('[backup] Modal element:', modal);
-    modal.style.display = 'flex';
-    console.log('[backup] Modal display set to flex, computed style:', window.getComputedStyle(modal).display);
+    
+    if (modal) {
+      modal.classList.add('active');
+      console.log('[backup] Added active class to modal');
+      console.log('[backup] Modal computed display:', window.getComputedStyle(modal).display);
+    } else {
+      console.error('[backup] Modal element not found!');
+    }
   };
 
   window.backupCloseRestoreModal = function() {
-    document.getElementById('backup-restore-modal').style.display = 'none';
+    const modal = document.getElementById('backup-restore-modal');
+    if (modal) {
+      modal.classList.remove('active');
+    }
   };
 
   window.backupToggleRestoreLocation = function() {
