@@ -380,7 +380,7 @@ def delete_remote_directory(conn, remote_path: str):
     """Delete a directory on remote server"""
     try:
         if isinstance(conn, SSHConnection):
-            # ✅ Simplify SSH deletion command — ignore stderr noise from rm
+            # Simplify SSH deletion command — ignore stderr noise from rm
             conn.execute_command(f"rm -rf '{remote_path}' || true")
             logger.info(f"Deleted remote SSH directory: {remote_path}")
         elif isinstance(conn, (SMBConnection, NFSConnection)):
@@ -682,7 +682,7 @@ def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
         if not source_paths:
             raise Exception("No source paths specified")
        
-        destination_path = job_config.get('destination_path', '/backups')
+        destination_path = (job_config.get('destination_path', '/backups') or '/backups').strip()
         compress = job_config.get('compress', True)
         sync_mode = job_config.get('sync_mode', False)
        
@@ -857,11 +857,11 @@ def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compres
         size_mb = archive_path.stat().st_size / (1024 * 1024)
        
         # Upload archive to remote in job_name/timestamp/ structure
-        # ✅ Normalize job name to safe folder form (no spaces)
+        # Normalize job name to safe folder form (no spaces)
         job_name_raw = job_config.get('name', 'Unknown Job')
         job_name_normalized = job_name_raw.replace(' ', '_')
 
-        # ✅ Update log + UI feedback with original name
+        # Update log + UI feedback with original name
         status_queue.put({
             'job_id': job_id,
             'status': 'running',
@@ -869,10 +869,11 @@ def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compres
             'message': f'Creating remote folders for {job_name_raw}...'
         })
 
-        # ✅ Use normalized folder naming on remote (prevents mismatch during deletion)
+        # Use normalized folder naming on remote (prevents mismatch during deletion)
         if isinstance(dest_conn, SSHConnection):
-            remote_job_folder = f"{dest_path.rstrip('/')}/{job_name_normalized}/{timestamp}"
+            remote_job_folder = f"{destination_path.rstrip('/')}/{job_name_normalized}/{timestamp}"
             remote_archive_file = f"{remote_job_folder}/backup_{job_name_normalized}_{timestamp}.tar.gz"
+            logger.debug(f"[DEBUG] Creating remote job folder: '{remote_job_folder}'")
             # Ensure remote directory tree exists via SFTP
             sftp_ensure_dir_tree(dest_conn.sftp, remote_job_folder)
             
@@ -896,7 +897,7 @@ def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compres
                 
         elif hasattr(dest_conn, "mount_point"):
             # For SMB/NFS mounts
-            remote_job_folder = f"{dest_path.rstrip('/')}/{job_name_normalized}/{timestamp}"
+            remote_job_folder = f"{destination_path.rstrip('/')}/{job_name_normalized}/{timestamp}"
             remote_full = os.path.join(dest_conn.mount_point, remote_job_folder.lstrip('/'))
             os.makedirs(remote_full, exist_ok=True)
             
