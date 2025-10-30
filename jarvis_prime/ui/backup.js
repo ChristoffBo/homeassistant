@@ -617,25 +617,29 @@
             </span>
           </td>
           <td>
-            <button class="btn btn-sm restore-btn-${index}" style="padding: 4px 12px;">Restore</button>
-            <button class="btn danger btn-sm delete-btn-${index}" style="padding: 4px 12px; margin-left: 4px;">Delete</button>
+            <button class="btn btn-sm archive-restore-btn" data-index="${index}" style="padding: 4px 12px;">Restore</button>
+            <button class="btn danger btn-sm archive-delete-btn" data-archive-id="${archive.id}" style="padding: 4px 12px; margin-left: 4px;">Delete</button>
           </td>
         </tr>
       `;
     }).join('');
     
-    // Attach event listeners after rendering
-    backupState.archives.forEach((archive, index) => {
-      const restoreBtn = document.querySelector(`.restore-btn-${index}`);
-      const deleteBtn = document.querySelector(`.delete-btn-${index}`);
-      
-      if (restoreBtn) {
-        restoreBtn.addEventListener('click', () => backupOpenRestoreModal(archive));
-      }
-      
-      if (deleteBtn) {
-        deleteBtn.addEventListener('click', () => backupDeleteArchive(archive.id));
-      }
+    // Attach event listeners ONLY to archive table buttons
+    tbody.querySelectorAll('.archive-restore-btn').forEach(btn => {
+      btn.addEventListener('click', function() {
+        const index = parseInt(this.getAttribute('data-index'));
+        const archive = backupState.archives[index];
+        if (archive) {
+          backupOpenRestoreModal(archive);
+        }
+      });
+    });
+    
+    tbody.querySelectorAll('.archive-delete-btn').forEach(btn => {
+      btn.addEventListener('click', function() {
+        const archiveId = this.getAttribute('data-archive-id');
+        backupDeleteArchive(archiveId);
+      });
     });
   }
 
