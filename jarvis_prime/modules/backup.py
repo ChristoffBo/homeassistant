@@ -337,19 +337,33 @@ def create_connection(conn_type: str, **kwargs) -> BackupConnection:
         raise ValueError(f"Unknown connection type: {conn_type}")
 
 def sftp_ensure_dir_tree(sftp, remote_dir: str):
-    """Recursively create directory tree via SFTP (Paramiko)"""
-    parts = remote_dir.strip('/').split('/')
-    path_accum = ''
-    for part in parts:
-        path_accum = f"{path_accum}/{part}" if path_accum else f"/{part}"
-        try:
-            sftp.stat(path_accum)
-        except IOError:
+    """Recursively create directory tree via SFTP (Paramiko) with full tracing"""
+    import posixpath
+    try:
+        # Normalize and ensure leading slash
+        remote_dir = posixpath.normpath("/" + remote_dir.lstrip("/"))
+        logger.debug(f"[TRACE] Ensuring remote directory tree: {remote_dir}")
+
+        # Split into parts and walk down
+        parts = remote_dir.strip("/").split("/")
+        path_accum = ""
+        for part in parts:
+            path_accum = posixpath.join(path_accum, part)
+            current = "/" + path_accum.lstrip("/")
             try:
-                sftp.mkdir(path_accum)
-                logger.info(f"Created remote directory: {path_accum}")
-            except Exception as e:
-                raise Exception(f"Failed to create remote directory {path_accum}: {e}")
+                sftp.stat(current)
+                logger.debug(f"[TRACE] Exists: {current}")
+            except IOError:
+                try:
+                    sftp.mkdir(current)
+                    logger.info(f"[TRACE] Created remote directory: {current}")
+                except Exception as e:
+                    logger.error(f"[TRACE] Failed mkdir {current}: {e}")
+                    raise
+    except Exception as e:
+        logger.error(f"[TRACE] sftp_ensure_dir_tree fatal: {e}")
+        raise
+
 
 def ensure_rsync_installed(ssh_conn):
     """Ensure rsync is installed on remote SSH server"""
@@ -873,9 +887,13 @@ def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compres
         if isinstance(dest_conn, SSHConnection):
             remote_job_folder = f"{destination_path.rstrip('/')}/{job_name_normalized}/{timestamp}"
             remote_archive_file = f"{remote_job_folder}/backup_{job_name_normalized}_{timestamp}.tar.gz"
-            logger.debug(f"[DEBUG] Creating remote job folder: '{remote_job_folder}'")
-            # Ensure remote directory tree exists via SFTP
+            logger.debug(f"[TRACE] About to ensure remote job folder: {remote_job_folder}")
             sftp_ensure_dir_tree(dest_conn.sftp, remote_job_folder)
+            try:
+                dest_conn.sftp.stat(remote_job_folder)
+                logger.debug(f"[TRACE] Verified remote job folder exists: {remote_job_folder}")
+            except IOError as e:
+                logger.error(f"[TRACE] Folder verification failed for {remote_job_folder}: {e}")
             
             # Upload tar.gz via SFTP
             status_queue.put({
