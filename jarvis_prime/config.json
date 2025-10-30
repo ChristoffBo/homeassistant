@@ -1,7 +1,7 @@
 {
   "name": "Jarvis Prime",
   "slug": "jarvis_prime",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "Jarvis Prime is a Unified Homelab Operations Platform",
   "url": "https://github.com/ChristoffBo/homeassistant",
   "startup": "services",
