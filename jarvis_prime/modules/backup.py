@@ -827,15 +827,16 @@ def perform_sync_mode(source_conn, dest_conn, source_paths, dest_path, status_qu
 def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compress,
                        status_queue, job_id, job_archive_dir, timestamp,
                        job_config, data_dir):
-    """Perform full backup with job_name/timestamp/ subfolder structure"""
+    """Perform full backup with consistent subfolder naming and deletion paths"""
     try:
-        # Create timestamped subfolder inside job folder
+        # Prepare structure
+        job_name_raw = job_config.get('name', 'Unknown Job')
+        job_name_normalized = job_name_raw.replace(' ', '_')
         job_subfolder = job_archive_dir / timestamp
         os.makedirs(job_subfolder, exist_ok=True)
         logger.info(f"Created local backup folder: {job_subfolder}")
-        
+
         temp_data_dir = tempfile.mkdtemp(prefix='jarvis_backup_tmp_')
-        
         for idx, source_path in enumerate(source_paths):
             progress = 30 + (idx * 40 // len(source_paths))
             status_queue.put({
@@ -850,86 +851,65 @@ def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compres
             else:
                 source_full = os.path.join(source_conn.mount_point, source_path.lstrip('/'))
                 shutil.copytree(source_full, dest_local, dirs_exist_ok=True)
-        
-        archive_filename = f'backup_{job_config.get("name", "Unknown").replace(" ", "_")}_{timestamp}.tar.gz'
+
+        # Generate archive filename consistently
+        archive_filename = f"{job_name_normalized}_{timestamp}.tar.gz"
         archive_path = job_subfolder / archive_filename
-        status_queue.put({
-            'job_id': job_id,
-            'status': 'running',
-            'progress': 75,
-            'message': 'Compressing archive...'
-        })
-        
+        logger.debug(f"[TRACE] Creating local archive: {archive_path}")
+
         with tarfile.open(archive_path, "w:gz") as tar:
             for root, dirs, files in os.walk(temp_data_dir):
                 for name in files:
                     item_path = os.path.join(root, name)
                     rel_path = os.path.relpath(item_path, temp_data_dir)
                     safe_add(tar, item_path, arcname=rel_path)
-            tar.close()
-        
         size_mb = archive_path.stat().st_size / (1024 * 1024)
-       
-        # Upload archive to remote in job_name/timestamp/ structure
-        # Normalize job name to safe folder form (no spaces)
-        job_name_raw = job_config.get('name', 'Unknown Job')
-        job_name_normalized = job_name_raw.replace(' ', '_')
 
-        # Update log + UI feedback with original name
-        status_queue.put({
-            'job_id': job_id,
-            'status': 'running',
-            'progress': 85,
-            'message': f'Creating remote folders for {job_name_raw}...'
-        })
+        # Remote folder structure
+        remote_job_folder = f"{dest_path.rstrip('/')}/{job_name_normalized}/{timestamp}"
+        remote_archive_file = f"{remote_job_folder}/{archive_filename}"
 
-        # Use normalized folder naming on remote (prevents mismatch during deletion)
+        logger.debug(f"[TRACE] Ensuring remote job folder: {remote_job_folder}")
         if isinstance(dest_conn, SSHConnection):
-            remote_job_folder = f"{destination_path.rstrip('/')}/{job_name_normalized}/{timestamp}"
-            remote_archive_file = f"{remote_job_folder}/backup_{job_name_normalized}_{timestamp}.tar.gz"
-            logger.debug(f"[TRACE] About to ensure remote job folder: {remote_job_folder}")
-            sftp_ensure_dir_tree(dest_conn.sftp, remote_job_folder)
-            try:
-                dest_conn.sftp.stat(remote_job_folder)
-                logger.debug(f"[TRACE] Verified remote job folder exists: {remote_job_folder}")
-            except IOError as e:
-                logger.error(f"[TRACE] Folder verification failed for {remote_job_folder}: {e}")
-            
-            # Upload tar.gz via SFTP
+            # Ensure full tree exists under the same SSH session
+            dest_conn.execute_command(f"mkdir -p '{remote_job_folder}'")
+            stdout, stderr = dest_conn.execute_command(f"ls -ld '{remote_job_folder}'")
+            logger.debug(f"[TRACE] mkdir result: {stdout.strip()} {stderr.strip()}")
+
             status_queue.put({
                 'job_id': job_id,
                 'status': 'running',
                 'progress': 90,
-                'message': f'Uploading backup archive...'
+                'message': 'Uploading backup archive...'
             })
-            
-            logger.info(f"Uploading {archive_path} to {remote_archive_file}")
             dest_conn.sftp.put(str(archive_path), remote_archive_file)
-            
-            # Verify upload
+
+            # Verify upload success
             try:
                 remote_stat = dest_conn.sftp.stat(remote_archive_file)
                 logger.info(f"Upload successful: {remote_archive_file} ({remote_stat.st_size} bytes)")
-            except:
-                raise Exception(f"Upload verification failed for {remote_archive_file}")
-                
+            except Exception as e:
+                raise Exception(f"Upload verification failed for {remote_archive_file}: {e}")
+
         elif hasattr(dest_conn, "mount_point"):
-            # For SMB/NFS mounts
-            remote_job_folder = f"{destination_path.rstrip('/')}/{job_name_normalized}/{timestamp}"
+            # SMB / NFS direct copy
             remote_full = os.path.join(dest_conn.mount_point, remote_job_folder.lstrip('/'))
             os.makedirs(remote_full, exist_ok=True)
-            
-            remote_archive_file_path = os.path.join(remote_full, archive_filename)
-            shutil.copy2(archive_path, remote_archive_file_path)
-            logger.info(f"Copied to remote mount: {remote_archive_file_path}")
+            shutil.copy2(archive_path, os.path.join(remote_full, archive_filename))
+            logger.info(f"Copied archive to remote mount: {remote_full}")
         else:
-            raise Exception("Unknown destination connection type")
-       
+            raise Exception("Unsupported destination connection type")
+
+        # Record archive metadata
         archive_id = str(uuid.uuid4())
         duration = time.time() - job_config['start_time']
-        create_archive_record(archive_id, job_id, job_config, duration, archive_path, size_mb, data_dir, remote_job_folder)
+        create_archive_record(
+            archive_id, job_id, job_config, duration,
+            archive_path, size_mb, data_dir, remote_job_folder
+        )
         shutil.rmtree(temp_data_dir, ignore_errors=True)
         return True
+
     except Exception as e:
         raise Exception(f"Full backup failed: {str(e)}") from e
 
