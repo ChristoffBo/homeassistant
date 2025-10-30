@@ -3273,6 +3273,27 @@
   </div>
 </div>
 
+<div id="backup-restore-modal" class="modal">
+  <div class="modal-content" style="max-width: 600px;">
+    <div class="modal-header">
+      <h2>Restore Backup</h2>
+      <button class="btn" onclick="backupCloseRestoreModal()">✕</button>
+    </div>
+    <div style="padding: 24px;">
+      <div style="margin-bottom: 24px; padding: 16px; background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 8px; display: flex; gap: 12px;">
+        <span style="font-size: 24px;">⚠️</span>
+        <div>
+          <strong style="color: #f59e0b;">Warning</strong>
+          <p style="color: var(--text-muted); margin-top: 4px; font-size: 14px;">
+            Restoring will overwrite existing files at the destination. Make sure you have a recent backup before proceeding.
+          </p>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Backup to Restore</label>
+        <div id="backup-restore-name" style="font-weight: 600; color: var(--text-primary); padding: 12px; background: var(--surface-secondary); border-radius: 6px;"></div>
+      </div>
 
       <div class="form-group">
         <label class="form-label">Restore to Server *</label>
@@ -3552,6 +3573,29 @@
 </div>
 
 <!-- RESTORE MODAL -->
+<div id="backup-restore-modal" class="modal">
+  <div class="modal-content" style="max-width: 600px;">
+    <div class="modal-header">
+      <h2>Restore Backup</h2>
+      <button class="btn" onclick="backupCloseRestoreModal()">✕</button>
+    </div>
+    <form onsubmit="backupSubmitRestore(event)" style="padding: 24px;">
+      
+      <div style="padding: 16px; background: var(--surface-secondary); border-radius: 8px; margin-bottom: 20px;">
+        <div style="display: grid; grid-template-columns: auto 1fr; gap: 12px; font-size: 14px;">
+          <strong>Archive:</strong>
+          <span id="restore-archive-name">-</span>
+          
+          <strong>Date:</strong>
+          <span id="restore-archive-date">-</span>
+          
+          <strong>Size:</strong>
+          <span id="restore-archive-size">-</span>
+          
+          <strong>Original Paths:</strong>
+          <pre id="restore-original-paths" style="margin: 0; font-size: 12px; color: var(--text-muted); white-space: pre-wrap;">-</pre>
+        </div>
+      </div>
 
       <div class="form-group">
         <label class="form-label">Restore Location</label>
