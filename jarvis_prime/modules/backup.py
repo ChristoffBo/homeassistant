@@ -840,35 +840,61 @@ def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compres
        
         # Upload archive to remote in job_name/timestamp/ structure
         job_name = job_config.get('name', 'Unknown Job').replace(' ', '_')
-        remote_job_folder = f"{dest_path.rstrip('/')}/{job_name}/{timestamp}"
-       
+        
         status_queue.put({
             'job_id': job_id,
             'status': 'running',
             'progress': 85,
-            'message': f'Uploading to {remote_job_folder}...'
+            'message': f'Creating remote folders for {job_name}...'
         })
         
         if isinstance(dest_conn, SSHConnection):
-            # Create remote folder structure: dest_path/job_name/timestamp/
-            create_cmd = f"mkdir -p '{remote_job_folder}'"
-            stdout, stderr = dest_conn.execute_command(create_cmd)
-            if stderr:
-                logger.error(f"Failed to create remote folder: {stderr}")
-                raise Exception(f"Failed to create remote folder: {stderr}")
-            logger.info(f"Created remote folder: {remote_job_folder}")
+            # Build remote path: dest_path/job_name/timestamp/
+            remote_job_folder = f"{dest_path.rstrip('/')}/{job_name}/{timestamp}"
+            remote_archive_file = f"{remote_job_folder}/backup_{job_name}_{timestamp}.tar.gz"
             
-            # Upload the tar.gz file
-            remote_archive_path = f"{remote_job_folder}/backup_{timestamp}.tar.gz"
-            dest_conn.sftp.put(str(archive_path), remote_archive_path)
-            logger.info(f"Uploaded to remote: {remote_archive_path}")
+            # Create folder structure on remote via SSH
+            logger.info(f"Creating remote folder structure: {remote_job_folder}")
+            stdout, stderr = dest_conn.execute_command(f"mkdir -p '{remote_job_folder}'")
+            if stderr and "File exists" not in stderr:
+                logger.warning(f"mkdir stderr (ignoring): {stderr}")
+            
+            # Verify folder was created
+            stdout, stderr = dest_conn.execute_command(f"test -d '{remote_job_folder}' && echo 'exists'")
+            if 'exists' not in stdout:
+                raise Exception(f"Failed to create remote folder: {remote_job_folder}")
+            
+            logger.info(f"Remote folder verified: {remote_job_folder}")
+            
+            # Upload tar.gz via SFTP
+            status_queue.put({
+                'job_id': job_id,
+                'status': 'running',
+                'progress': 90,
+                'message': f'Uploading backup archive...'
+            })
+            
+            logger.info(f"Uploading {archive_path} to {remote_archive_file}")
+            dest_conn.sftp.put(str(archive_path), remote_archive_file)
+            
+            # Verify upload
+            try:
+                remote_stat = dest_conn.sftp.stat(remote_archive_file)
+                logger.info(f"Upload successful: {remote_archive_file} ({remote_stat.st_size} bytes)")
+            except:
+                raise Exception(f"Upload verification failed for {remote_archive_file}")
+                
         elif hasattr(dest_conn, "mount_point"):
+            # For SMB/NFS mounts
+            remote_job_folder = f"{dest_path.rstrip('/')}/{job_name}/{timestamp}"
             remote_full = os.path.join(dest_conn.mount_point, remote_job_folder.lstrip('/'))
             os.makedirs(remote_full, exist_ok=True)
-            shutil.copy2(archive_path, remote_full)
-            logger.info(f"Copied to remote mount: {remote_full}/backup_{timestamp}.tar.gz")
+            
+            remote_archive_file = os.path.join(remote_full, f"backup_{job_name}_{timestamp}.tar.gz")
+            shutil.copy2(archive_path, remote_archive_file)
+            logger.info(f"Copied to remote mount: {remote_archive_file}")
         else:
-            logger.warning("Unknown destination type: archive not uploaded")
+            raise Exception("Unknown destination connection type")
        
         archive_id = str(uuid.uuid4())
         duration = time.time() - job_config['start_time']
