@@ -590,10 +590,13 @@
       return;
     }
     
-    // Initialize storage for archive data
+    // Initialize storage for archive data globally
     if (!window.backupArchivesData) window.backupArchivesData = {};
     
-    tbody.innerHTML = backupState.archives.map(archive => {
+    // Clear old data
+    window.backupArchivesData = {};
+    
+    tbody.innerHTML = backupState.archives.map((archive, index) => {
       // Get source server name
       const sourceServer = backupState.servers.find(s => s.id === archive.source_server_id);
       const sourceName = sourceServer ? sourceServer.name : archive.source_server_id || 'Unknown';
@@ -605,9 +608,11 @@
       const sizeBytes = (archive.size_mb || 0) * 1024 * 1024;
       const sizeStr = formatBytes(sizeBytes);
       
-      // Store archive in window object with unique ID
-      const archiveId = 'archive_' + (archive.id || Math.random().toString(36).substr(2, 9));
+      // Store archive with index-based ID for reliability
+      const archiveId = 'archive_' + index + '_' + (archive.id || Date.now());
       window.backupArchivesData[archiveId] = archive;
+      
+      console.log('[backup] Storing archive:', archiveId, archive); // Debug log
       
       return `
         <tr>
@@ -630,15 +635,30 @@
         </tr>
       `;
     }).join('');
+    
+    console.log('[backup] Rendered', backupState.archives.length, 'archives, stored data:', Object.keys(window.backupArchivesData));
   }
   
   // Helper function to open restore modal from stored archive data
   window.backupRestoreFromId = async function(archiveId) {
-    const archive = window.backupArchivesData[archiveId];
-    if (!archive) {
-      toast('Archive data not found', 'error');
+    console.log('[backup] backupRestoreFromId called with:', archiveId);
+    console.log('[backup] Available archive IDs:', Object.keys(window.backupArchivesData || {}));
+    
+    if (!window.backupArchivesData) {
+      console.error('[backup] window.backupArchivesData is not initialized');
+      toast('Archive data storage not initialized', 'error');
       return;
     }
+    
+    const archive = window.backupArchivesData[archiveId];
+    if (!archive) {
+      console.error('[backup] Archive not found:', archiveId);
+      console.error('[backup] Available archives:', window.backupArchivesData);
+      toast('Archive data not found. Try refreshing the page.', 'error');
+      return;
+    }
+    
+    console.log('[backup] Archive found:', archive);
     await backupOpenRestoreModal(archive);
   };
 
