@@ -840,25 +840,34 @@
 
   // === FIXED: Made async + force load + safe dropdown + selective restore ===
   window.backupOpenRestoreModal = async function(archive) {
+    console.log('[backup] backupOpenRestoreModal called with:', archive);
+    
     backupState.currentRestoreArchive = archive;
     backupState.restoreSelectedItems = []; // Reset selective items
 
     // === FORCE LOAD SERVERS IF EMPTY ===
     if (backupState.servers.length === 0) {
+      console.log('[backup] No servers loaded, loading now...');
       toast('Loading servers for restore...', 'info');
       try {
         await backupLoadServers();
+        console.log('[backup] Servers loaded:', backupState.servers.length);
         if (backupState.servers.length === 0) {
           toast('No servers configured. Add servers first.', 'error');
           return;
         }
       } catch (e) {
+        console.error('[backup] Failed to load servers:', e);
         toast('Failed to load servers: ' + e.message, 'error');
         return;
       }
+    } else {
+      console.log('[backup] Servers already loaded:', backupState.servers.length);
     }
     // === END FORCE LOAD ===
 
+    console.log('[backup] Populating modal fields...');
+    
     // Populate modal
     document.getElementById('restore-archive-name').textContent = archive.job_name || archive.id;
     document.getElementById('restore-archive-date').textContent = archive.created_at ? new Date(archive.created_at).toLocaleString() : 'N/A';
@@ -894,7 +903,11 @@
     document.getElementById('restore-selected-items').innerHTML = 'No items selected';
     document.getElementById('restore-selected-items').style.color = 'var(--text-muted)';
     
-    document.getElementById('backup-restore-modal').style.display = 'flex';
+    console.log('[backup] Opening modal...');
+    const modal = document.getElementById('backup-restore-modal');
+    console.log('[backup] Modal element:', modal);
+    modal.style.display = 'flex';
+    console.log('[backup] Modal display set to flex, computed style:', window.getComputedStyle(modal).display);
   };
 
   window.backupCloseRestoreModal = function() {
