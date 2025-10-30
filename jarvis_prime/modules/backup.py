@@ -380,64 +380,71 @@ def delete_remote_directory(conn, remote_path: str):
 
 def apply_retention(data_dir: Path, job_name: str, retention_days: int, retention_count: int,
                    dest_server_config: Dict, dest_path: str):
-    """Apply retention policy: delete old archives from both local and remote"""
+    """Apply retention policy: delete old timestamped backup folders from both local and remote"""
     try:
         job_dir = get_job_archive_dir(data_dir, job_name)
-        archives = []
+        
+        # Find all timestamped subfolders
+        timestamp_folders = []
+        for folder in job_dir.iterdir():
+            if folder.is_dir():
+                try:
+                    # Timestamp folders are named YYYYMMDD_HHMMSS
+                    stat_info = folder.stat()
+                    timestamp_folders.append({
+                        'path': folder,
+                        'name': folder.name,
+                        'mtime': stat_info.st_mtime
+                    })
+                except:
+                    continue
        
-        # Get local archives
-        for f in job_dir.glob("**/backup_*.tar.gz"):
-            try:
-                stat_info = f.stat()
-                archives.append({
-                    'path': f,
-                    'mtime': stat_info.st_mtime,
-                    'timestamp': f.parent.name  # folder name is timestamp
-                })
-            except:
-                continue
-       
-        if not archives:
+        if not timestamp_folders:
+            logger.info(f"No backup folders found for retention cleanup in {job_name}")
             return
        
         # Sort by modification time (newest first)
-        archives.sort(key=lambda x: x['mtime'], reverse=True)
+        timestamp_folders.sort(key=lambda x: x['mtime'], reverse=True)
        
         cutoff = datetime.now() - timedelta(days=retention_days)
        
         to_delete = []
        
         # Delete by age
-        for arch in archives:
-            if datetime.fromtimestamp(arch['mtime']) < cutoff:
-                to_delete.append(arch)
+        for folder in timestamp_folders:
+            if datetime.fromtimestamp(folder['mtime']) < cutoff:
+                to_delete.append(folder)
        
         # Delete by count (keep latest N)
-        if len(archives) > retention_count:
-            for arch in archives[retention_count:]:
-                if arch not in to_delete:
-                    to_delete.append(arch)
+        if len(timestamp_folders) > retention_count:
+            for folder in timestamp_folders[retention_count:]:
+                if folder not in to_delete:
+                    to_delete.append(folder)
        
         if not to_delete:
+            logger.info(f"No backups to delete for {job_name} (retention: {retention_days}d, keep: {retention_count})")
             return
        
-        # Connect to destination server to delete remote archives
+        logger.info(f"Retention cleanup for {job_name}: deleting {len(to_delete)} old backups")
+       
+        # Connect to destination server to delete remote folders
         dest_conn = None
         try:
             dest_conn = create_connection(dest_server_config['type'], **dest_server_config)
             if dest_conn.connect():
-                for arch in to_delete:
-                    # Delete local
+                for folder_info in to_delete:
+                    timestamp_name = folder_info['name']
+                    
+                    # Delete local folder
                     try:
-                        arch['path'].unlink()
-                        logger.info(f"Deleted local archive: {arch['path']}")
+                        shutil.rmtree(folder_info['path'])
+                        logger.info(f"Deleted local backup folder: {folder_info['path']}")
                     except Exception as e:
-                        logger.error(f"Failed to delete local {arch['path']}: {e}")
+                        logger.error(f"Failed to delete local folder {folder_info['path']}: {e}")
                    
-                    # Delete remote folder for this timestamp
+                    # Delete remote folder
                     try:
-                        timestamp_folder = arch['timestamp']
-                        remote_folder = f"{dest_path.rstrip('/')}/{job_name}/{timestamp_folder}"
+                        remote_folder = f"{dest_path.rstrip('/')}/{job_name}/{timestamp_name}"
                        
                         if isinstance(dest_conn, SSHConnection):
                             dest_conn.execute_command(f"rm -rf '{remote_folder}'")
@@ -446,18 +453,20 @@ def apply_retention(data_dir: Path, job_name: str, retention_days: int, retentio
                             if os.path.exists(full_path):
                                 shutil.rmtree(full_path)
                        
-                        logger.info(f"Deleted remote archive folder: {remote_folder}")
+                        logger.info(f"Deleted remote backup folder: {remote_folder}")
                     except Exception as e:
                         logger.error(f"Failed to delete remote folder {remote_folder}: {e}")
+                
+                dest_conn.disconnect()
                
         except Exception as e:
             logger.error(f"Failed to connect to destination for retention cleanup: {e}")
         finally:
-            if dest_conn:
+            if dest_conn and dest_conn.connected:
                 dest_conn.disconnect()
                
     except Exception as e:
-        logger.error(f"Retention cleanup failed: {e}")
+        logger.error(f"Retention cleanup failed for {job_name}: {e}")
 
 def create_archive_record(archive_id: str, job_id: str, job_config: Dict, duration: float,
                          archive_path: Path, size_mb: float, data_dir: Path):
@@ -780,11 +789,15 @@ def perform_sync_mode(source_conn, dest_conn, source_paths, dest_path, status_qu
 def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compress,
                        status_queue, job_id, job_archive_dir, timestamp,
                        job_config, data_dir):
-    """Perform full backup with per-job subfolder and tar.gz"""
+    """Perform full backup with job_name/timestamp/ subfolder structure"""
     try:
+        # Create timestamped subfolder inside job folder
         job_subfolder = job_archive_dir / timestamp
         os.makedirs(job_subfolder, exist_ok=True)
+        logger.info(f"Created local backup folder: {job_subfolder}")
+        
         temp_data_dir = tempfile.mkdtemp(prefix='jarvis_backup_tmp_')
+        
         for idx, source_path in enumerate(source_paths):
             progress = 30 + (idx * 40 // len(source_paths))
             status_queue.put({
@@ -799,6 +812,7 @@ def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compres
             else:
                 source_full = os.path.join(source_conn.mount_point, source_path.lstrip('/'))
                 shutil.copytree(source_full, dest_local, dirs_exist_ok=True)
+        
         archive_path = job_subfolder / f'backup_{timestamp}.tar.gz'
         status_queue.put({
             'job_id': job_id,
@@ -806,6 +820,7 @@ def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compres
             'progress': 75,
             'message': 'Compressing archive...'
         })
+        
         with tarfile.open(archive_path, "w:gz") as tar:
             for root, dirs, files in os.walk(temp_data_dir):
                 for name in files:
@@ -813,20 +828,30 @@ def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compres
                     rel_path = os.path.relpath(item_path, temp_data_dir)
                     safe_add(tar, item_path, arcname=rel_path)
             tar.close()
+        
         size_mb = archive_path.stat().st_size / (1024 * 1024)
        
-        # Upload archive to remote destination in timestamped folder
+        # Upload archive to remote in job_name/timestamp/ structure
         job_name = job_config.get('name', 'Unknown Job')
-        remote_job_path = f"{dest_path.rstrip('/')}/{job_name}/{timestamp}"
+        remote_job_folder = f"{dest_path.rstrip('/')}/{job_name}/{timestamp}"
        
+        status_queue.put({
+            'job_id': job_id,
+            'status': 'running',
+            'progress': 85,
+            'message': 'Uploading to remote...'
+        })
+        
         if isinstance(dest_conn, SSHConnection):
-            # Create remote folder structure
-            dest_conn.execute_command(f"mkdir -p '{remote_job_path}'")
-            upload_via_sftp(dest_conn, str(archive_path), remote_job_path)
+            # Create remote folder structure: dest_path/job_name/timestamp/
+            dest_conn.execute_command(f"mkdir -p '{remote_job_folder}'")
+            upload_via_sftp(dest_conn, str(archive_path), remote_job_folder)
+            logger.info(f"Uploaded to remote: {remote_job_folder}/backup_{timestamp}.tar.gz")
         elif hasattr(dest_conn, "mount_point"):
-            remote_full = os.path.join(dest_conn.mount_point, remote_job_path.lstrip('/'))
+            remote_full = os.path.join(dest_conn.mount_point, remote_job_folder.lstrip('/'))
             os.makedirs(remote_full, exist_ok=True)
             shutil.copy2(archive_path, remote_full)
+            logger.info(f"Copied to remote mount: {remote_full}/backup_{timestamp}.tar.gz")
         else:
             logger.warning("Unknown destination type: archive not uploaded")
        
