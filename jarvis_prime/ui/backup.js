@@ -15,7 +15,6 @@
     destinationServers: [],
     jobs: [],
     archives: [],
-    servers: [], // Unified servers array
     currentServerType: 'source',
     selectedPaths: [],
     selectedDestination: '',
@@ -590,15 +589,10 @@
       return;
     }
     
-    // Initialize storage for archive data globally
-    if (!window.backupArchivesData) window.backupArchivesData = {};
-    
-    // Clear old data
-    window.backupArchivesData = {};
-    
     tbody.innerHTML = backupState.archives.map((archive, index) => {
       // Get source server name
-      const sourceServer = backupState.servers.find(s => s.id === archive.source_server_id);
+      const allServers = [...backupState.sourceServers, ...backupState.destinationServers];
+      const sourceServer = allServers.find(s => s.id === archive.source_server_id);
       const sourceName = sourceServer ? sourceServer.name : archive.source_server_id || 'Unknown';
       
       // Format date
@@ -607,12 +601,6 @@
       // Format size
       const sizeBytes = (archive.size_mb || 0) * 1024 * 1024;
       const sizeStr = formatBytes(sizeBytes);
-      
-      // Store archive with index-based ID for reliability
-      const archiveId = 'archive_' + index + '_' + (archive.id || Date.now());
-      window.backupArchivesData[archiveId] = archive;
-      
-      console.log('[backup] Storing archive:', archiveId, archive); // Debug log
       
       return `
         <tr>
@@ -629,53 +617,27 @@
             </span>
           </td>
           <td>
-            <button class="btn btn-sm backup-restore-btn" data-archive-id="${archiveId}" style="padding: 4px 12px;">Restore</button>
-            <button class="btn danger btn-sm backup-delete-btn" data-archive-id="${archive.id}" style="padding: 4px 12px; margin-left: 4px;">Delete</button>
+            <button class="btn btn-sm restore-btn-${index}" style="padding: 4px 12px;">Restore</button>
+            <button class="btn danger btn-sm delete-btn-${index}" style="padding: 4px 12px; margin-left: 4px;">Delete</button>
           </td>
         </tr>
       `;
     }).join('');
     
-    console.log('[backup] Rendered', backupState.archives.length, 'archives, stored data:', Object.keys(window.backupArchivesData));
-    
-    // Attach event listeners using delegation
-    document.querySelectorAll('.backup-restore-btn').forEach(btn => {
-      btn.addEventListener('click', function() {
-        const archiveId = this.getAttribute('data-archive-id');
-        backupRestoreFromId(archiveId);
-      });
-    });
-    
-    document.querySelectorAll('.backup-delete-btn').forEach(btn => {
-      btn.addEventListener('click', function() {
-        const archiveId = this.getAttribute('data-archive-id');
-        backupDeleteArchive(archiveId);
-      });
+    // Attach event listeners after rendering
+    backupState.archives.forEach((archive, index) => {
+      const restoreBtn = document.querySelector(`.restore-btn-${index}`);
+      const deleteBtn = document.querySelector(`.delete-btn-${index}`);
+      
+      if (restoreBtn) {
+        restoreBtn.addEventListener('click', () => backupOpenRestoreModal(archive));
+      }
+      
+      if (deleteBtn) {
+        deleteBtn.addEventListener('click', () => backupDeleteArchive(archive.id));
+      }
     });
   }
-  
-  // Helper function to open restore modal from stored archive data
-  window.backupRestoreFromId = async function(archiveId) {
-    console.log('[backup] backupRestoreFromId called with:', archiveId);
-    console.log('[backup] Available archive IDs:', Object.keys(window.backupArchivesData || {}));
-    
-    if (!window.backupArchivesData) {
-      console.error('[backup] window.backupArchivesData is not initialized');
-      toast('Archive data storage not initialized', 'error');
-      return;
-    }
-    
-    const archive = window.backupArchivesData[archiveId];
-    if (!archive) {
-      console.error('[backup] Archive not found:', archiveId);
-      console.error('[backup] Available archives:', window.backupArchivesData);
-      toast('Archive data not found. Try refreshing the page.', 'error');
-      return;
-    }
-    
-    console.log('[backup] Archive found:', archive);
-    await backupOpenRestoreModal(archive);
-  };
 
   function updateStatistics() {
     document.getElementById('backup-stat-total').textContent = backupState.archives.length;
@@ -875,34 +837,27 @@
 
   // === FIXED: Made async + force load + safe dropdown + selective restore ===
   window.backupOpenRestoreModal = async function(archive) {
-    console.log('[backup] backupOpenRestoreModal called with:', archive);
-    
     backupState.currentRestoreArchive = archive;
     backupState.restoreSelectedItems = []; // Reset selective items
 
     // === FORCE LOAD SERVERS IF EMPTY ===
-    if (backupState.servers.length === 0) {
-      console.log('[backup] No servers loaded, loading now...');
+    const allServers = [...backupState.sourceServers, ...backupState.destinationServers];
+    if (allServers.length === 0) {
       toast('Loading servers for restore...', 'info');
       try {
         await backupLoadServers();
-        console.log('[backup] Servers loaded:', backupState.servers.length);
-        if (backupState.servers.length === 0) {
+        const reloadedServers = [...backupState.sourceServers, ...backupState.destinationServers];
+        if (reloadedServers.length === 0) {
           toast('No servers configured. Add servers first.', 'error');
           return;
         }
       } catch (e) {
-        console.error('[backup] Failed to load servers:', e);
         toast('Failed to load servers: ' + e.message, 'error');
         return;
       }
-    } else {
-      console.log('[backup] Servers already loaded:', backupState.servers.length);
     }
     // === END FORCE LOAD ===
 
-    console.log('[backup] Populating modal fields...');
-    
     // Populate modal
     document.getElementById('restore-archive-name').textContent = archive.job_name || archive.id;
     document.getElementById('restore-archive-date').textContent = archive.created_at ? new Date(archive.created_at).toLocaleString() : 'N/A';
@@ -913,7 +868,8 @@
     document.getElementById('restore-original-paths').textContent = pathsList || 'N/A';
     
     // Get source server info for "restore to original"
-    const sourceServer = backupState.servers.find(s => s.id === archive.source_server_id);
+    const allServersForLookup = [...backupState.sourceServers, ...backupState.destinationServers];
+    const sourceServer = allServersForLookup.find(s => s.id === archive.source_server_id);
     const originalLocationText = sourceServer 
       ? `${sourceServer.name} - ${(archive.source_paths || [])[0] || 'Original location'}`
       : 'Original location';
@@ -923,7 +879,7 @@
     // === SAFE DROPDOWN POPULATION ===
     const serverSelect = document.getElementById('restore-dest-server');
     serverSelect.innerHTML = '<option value="">Select destination server...</option>';
-    backupState.servers.forEach(server => {
+    allServersForLookup.forEach(server => {
       const opt = document.createElement('option');
       opt.value = server.id;
       opt.textContent = `${server.name} (${server.host}${server.port ? ':' + server.port : ''})`;
@@ -938,13 +894,9 @@
     document.getElementById('restore-selected-items').innerHTML = 'No items selected';
     document.getElementById('restore-selected-items').style.color = 'var(--text-muted)';
     
-    console.log('[backup] Opening modal...');
+    // FORCE MODAL TO DISPLAY
     const modal = document.getElementById('backup-restore-modal');
-    console.log('[backup] Modal element:', modal);
-    
     if (modal) {
-      modal.classList.add('active');
-      // Force visibility with inline styles
       modal.style.display = 'flex';
       modal.style.position = 'fixed';
       modal.style.top = '0';
@@ -952,20 +904,16 @@
       modal.style.right = '0';
       modal.style.bottom = '0';
       modal.style.zIndex = '99999';
-      modal.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
+      modal.style.background = 'rgba(0, 0, 0, 0.8)';
       modal.style.alignItems = 'center';
       modal.style.justifyContent = 'center';
-      console.log('[backup] Added active class and inline styles to modal');
-      console.log('[backup] Modal computed display:', window.getComputedStyle(modal).display);
-    } else {
-      console.error('[backup] Modal element not found!');
     }
   };
 
   window.backupCloseRestoreModal = function() {
     const modal = document.getElementById('backup-restore-modal');
     if (modal) {
-      modal.classList.remove('active');
+      modal.style.display = 'none';
     }
   };
 
