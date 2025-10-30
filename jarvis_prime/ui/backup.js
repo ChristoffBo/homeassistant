@@ -629,14 +629,29 @@
             </span>
           </td>
           <td>
-            <button class="btn btn-sm" onclick="backupRestoreFromId('${archiveId}')" style="padding: 4px 12px;">Restore</button>
-            <button class="btn danger btn-sm" onclick="backupDeleteArchive('${archive.id}')" style="padding: 4px 12px; margin-left: 4px;">Delete</button>
+            <button class="btn btn-sm backup-restore-btn" data-archive-id="${archiveId}" style="padding: 4px 12px;">Restore</button>
+            <button class="btn danger btn-sm backup-delete-btn" data-archive-id="${archive.id}" style="padding: 4px 12px; margin-left: 4px;">Delete</button>
           </td>
         </tr>
       `;
     }).join('');
     
     console.log('[backup] Rendered', backupState.archives.length, 'archives, stored data:', Object.keys(window.backupArchivesData));
+    
+    // Attach event listeners using delegation
+    document.querySelectorAll('.backup-restore-btn').forEach(btn => {
+      btn.addEventListener('click', function() {
+        const archiveId = this.getAttribute('data-archive-id');
+        backupRestoreFromId(archiveId);
+      });
+    });
+    
+    document.querySelectorAll('.backup-delete-btn').forEach(btn => {
+      btn.addEventListener('click', function() {
+        const archiveId = this.getAttribute('data-archive-id');
+        backupDeleteArchive(archiveId);
+      });
+    });
   }
   
   // Helper function to open restore modal from stored archive data
