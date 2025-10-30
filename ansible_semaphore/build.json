@@ -3,5 +3,5 @@
     "amd64": "semaphoreui/semaphore:latest",
     "aarch64": "semaphoreui/semaphore:latest"
   },
-  "version": "v2.16.36"
+  "version": "v2.16.37"
 }
