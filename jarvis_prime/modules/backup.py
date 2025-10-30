@@ -336,6 +336,21 @@ def create_connection(conn_type: str, **kwargs) -> BackupConnection:
     else:
         raise ValueError(f"Unknown connection type: {conn_type}")
 
+def sftp_ensure_dir_tree(sftp, remote_dir: str):
+    """Recursively create directory tree via SFTP (Paramiko)"""
+    parts = remote_dir.strip('/').split('/')
+    path_accum = ''
+    for part in parts:
+        path_accum = f"{path_accum}/{part}" if path_accum else f"/{part}"
+        try:
+            sftp.stat(path_accum)
+        except IOError:
+            try:
+                sftp.mkdir(path_accum)
+                logger.info(f"Created remote directory: {path_accum}")
+            except Exception as e:
+                raise Exception(f"Failed to create remote directory {path_accum}: {e}")
+
 def ensure_rsync_installed(ssh_conn):
     """Ensure rsync is installed on remote SSH server"""
     try:
@@ -365,11 +380,9 @@ def delete_remote_directory(conn, remote_path: str):
     """Delete a directory on remote server"""
     try:
         if isinstance(conn, SSHConnection):
-            stdout, stderr = conn.execute_command(f"rm -rf '{remote_path}'")
-            if stderr and "No such file" not in stderr:
-                logger.error(f"SSH delete error: {stderr}")
-            else:
-                logger.info(f"Deleted remote SSH directory: {remote_path}")
+            # ✅ Simplify SSH deletion command — ignore stderr noise from rm
+            conn.execute_command(f"rm -rf '{remote_path}' || true")
+            logger.info(f"Deleted remote SSH directory: {remote_path}")
         elif isinstance(conn, (SMBConnection, NFSConnection)):
             # Delete via mounted filesystem
             full_path = os.path.join(conn.mount_point, remote_path.lstrip('/'))
@@ -443,7 +456,7 @@ def apply_retention(data_dir: Path, job_name: str, retention_days: int, retentio
                     # Delete remote folder FIRST
                     try:
                         remote_folder = f"{dest_path.rstrip('/')}/{job_name_normalized}/{timestamp_name}"
-                        logger.info(f"Deleting remote folder: {remote_folder}")
+                        logger.debug(f"[RETENTION] Attempting remote delete: {remote_folder}")
                         
                         if isinstance(dest_conn, SSHConnection):
                             stdout, stderr = dest_conn.execute_command(f"rm -rf '{remote_folder}'")
@@ -478,7 +491,7 @@ def apply_retention(data_dir: Path, job_name: str, retention_days: int, retentio
         logger.error(f"Retention cleanup failed for {job_name}: {e}", exc_info=True)
 
 def create_archive_record(archive_id: str, job_id: str, job_config: Dict, duration: float,
-                         archive_path: Path, size_mb: float, data_dir: Path):
+                         archive_path: Path, size_mb: float, data_dir: Path, remote_folder: str):
     """Create archive record after successful backup"""
     archives_file = data_dir / 'backup_archives.json'
    
@@ -502,6 +515,7 @@ def create_archive_record(archive_id: str, job_id: str, job_config: Dict, durati
         'compressed': job_config.get('compress', True),
         'size_mb': size_mb,
         'archive_path': str(archive_path),
+        'remote_folder': remote_folder,
         'created_at': timestamp.isoformat(),
         'duration': duration,
         'status': 'completed'
@@ -546,6 +560,7 @@ def import_existing_archives(data_dir: Path):
                     'compressed': True,
                     'size_mb': archive_path.stat().st_size / (1024*1024),
                     'archive_path': str(archive_path),
+                    'remote_folder': None,
                     'created_at': datetime.fromtimestamp(archive_path.stat().st_mtime).isoformat(),
                     'duration': 0,
                     'status': 'imported'
@@ -822,7 +837,8 @@ def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compres
                 source_full = os.path.join(source_conn.mount_point, source_path.lstrip('/'))
                 shutil.copytree(source_full, dest_local, dirs_exist_ok=True)
         
-        archive_path = job_subfolder / f'backup_{timestamp}.tar.gz'
+        archive_filename = f'backup_{job_config.get("name", "Unknown").replace(" ", "_")}_{timestamp}.tar.gz'
+        archive_path = job_subfolder / archive_filename
         status_queue.put({
             'job_id': job_id,
             'status': 'running',
@@ -841,42 +857,24 @@ def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compres
         size_mb = archive_path.stat().st_size / (1024 * 1024)
        
         # Upload archive to remote in job_name/timestamp/ structure
-        job_name = job_config.get('name', 'Unknown Job').replace(' ', '_')
-        
+        # ✅ Normalize job name to safe folder form (no spaces)
+        job_name_raw = job_config.get('name', 'Unknown Job')
+        job_name_normalized = job_name_raw.replace(' ', '_')
+
+        # ✅ Update log + UI feedback with original name
         status_queue.put({
             'job_id': job_id,
             'status': 'running',
             'progress': 85,
-            'message': f'Creating remote folders for {job_name}...'
+            'message': f'Creating remote folders for {job_name_raw}...'
         })
-        
+
+        # ✅ Use normalized folder naming on remote (prevents mismatch during deletion)
         if isinstance(dest_conn, SSHConnection):
-            # Build remote path: dest_path/job_name/timestamp/
-            remote_job_folder = f"{dest_path.rstrip('/')}/{job_name}/{timestamp}"
-            remote_archive_file = f"{remote_job_folder}/backup_{job_name}_{timestamp}.tar.gz"
-            
-            # Create folder structure on remote via SSH
-            logger.info(f"Creating remote folder structure: {remote_job_folder}")
-            stdout, stderr = dest_conn.execute_command(f"mkdir -p '{remote_job_folder}'")
-            if stderr and "File exists" not in stderr:
-                logger.warning(f"mkdir stderr (ignoring): {stderr}")
-            
-            # Verify folder was created
-            stdout, stderr = dest_conn.execute_command(f"test -d '{remote_job_folder}' && echo 'exists'")
-            if 'exists' not in stdout:
-                raise Exception(f"Failed to create remote folder: {remote_job_folder}")
-            
-            logger.info(f"Remote folder verified: {remote_job_folder}")
-            
-            # Ensure nested folders exist in SFTP session
-            parts = remote_job_folder.strip('/').split('/')
-            path_accum = ''
-            for part in parts:
-                path_accum = f"{path_accum}/{part}" if path_accum else f"/{part}"
-                try:
-                    dest_conn.sftp.stat(path_accum)
-                except IOError:
-                    dest_conn.sftp.mkdir(path_accum)
+            remote_job_folder = f"{dest_path.rstrip('/')}/{job_name_normalized}/{timestamp}"
+            remote_archive_file = f"{remote_job_folder}/backup_{job_name_normalized}_{timestamp}.tar.gz"
+            # Ensure remote directory tree exists via SFTP
+            sftp_ensure_dir_tree(dest_conn.sftp, remote_job_folder)
             
             # Upload tar.gz via SFTP
             status_queue.put({
@@ -898,19 +896,19 @@ def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compres
                 
         elif hasattr(dest_conn, "mount_point"):
             # For SMB/NFS mounts
-            remote_job_folder = f"{dest_path.rstrip('/')}/{job_name}/{timestamp}"
+            remote_job_folder = f"{dest_path.rstrip('/')}/{job_name_normalized}/{timestamp}"
             remote_full = os.path.join(dest_conn.mount_point, remote_job_folder.lstrip('/'))
             os.makedirs(remote_full, exist_ok=True)
             
-            remote_archive_file = os.path.join(remote_full, f"backup_{job_name}_{timestamp}.tar.gz")
-            shutil.copy2(archive_path, remote_archive_file)
-            logger.info(f"Copied to remote mount: {remote_archive_file}")
+            remote_archive_file_path = os.path.join(remote_full, archive_filename)
+            shutil.copy2(archive_path, remote_archive_file_path)
+            logger.info(f"Copied to remote mount: {remote_archive_file_path}")
         else:
             raise Exception("Unknown destination connection type")
        
         archive_id = str(uuid.uuid4())
         duration = time.time() - job_config['start_time']
-        create_archive_record(archive_id, job_id, job_config, duration, archive_path, size_mb, data_dir)
+        create_archive_record(archive_id, job_id, job_config, duration, archive_path, size_mb, data_dir, remote_job_folder)
         shutil.rmtree(temp_data_dir, ignore_errors=True)
         return True
     except Exception as e:
@@ -997,6 +995,9 @@ def upload_via_rsync(ssh_conn, local_path, remote_path):
         upload_via_sftp(ssh_conn, local_path, remote_path)
         return
    
+    # Ensure remote directory exists
+    sftp_ensure_dir_tree(ssh_conn.sftp, remote_path)
+   
     cmd = [
         'rsync', '-avz', '--progress',
         '-e', f'sshpass -p "{ssh_conn.password}" ssh -o StrictHostKeyChecking=no -p {ssh_conn.port}',
@@ -1012,7 +1013,7 @@ def upload_via_sftp(ssh_conn, local_path, remote_path):
         try:
             ssh_conn.sftp.stat(remote_path)
         except:
-            ssh_conn.sftp.mkdir(remote_path)
+            sftp_ensure_dir_tree(ssh_conn.sftp, remote_path)
        
         if os.path.isdir(local_path):
             for item in os.listdir(local_path):
@@ -1327,7 +1328,7 @@ class BackupManager:
                     logger.info(f"Connecting to destination server to delete backups for job {job_name}")
                     dest_conn = create_connection(dest_server['type'], **dest_server)
                     if dest_conn.connect():
-                        remote_job_folder = f"{dest_path.rstrip('/')}/{job_name}"
+                        remote_job_folder = f"{dest_path.rstrip('/')}/{job_name.replace(' ', '_')}"
                         delete_remote_directory(dest_conn, remote_job_folder)
                         dest_conn.disconnect()
                         logger.info(f"Deleted remote job folder: {remote_job_folder}")
@@ -1407,49 +1408,49 @@ class BackupManager:
             logger.error(f"Archive {archive_id} not found")
             return False
        
-        # Delete from remote destination FIRST
-        dest_server_id = archive.get('dest_server_id')
-        if dest_server_id:
-            dest_server = self.servers.get(dest_server_id)
-            if dest_server:
-                dest_conn = None
-                try:
-                    logger.info(f"Connecting to remote to delete archive {archive_id}")
-                    dest_conn = create_connection(dest_server['type'], **dest_server)
-                    if dest_conn.connect():
-                        # Extract timestamp from archive path
-                        archive_path = Path(archive['archive_path'])
-                        timestamp = archive_path.parent.name
-                        job_name = archive.get('job_name', 'Unknown').replace(' ', '_')
-                        dest_path = archive.get('destination_path', '')
-                       
-                        remote_folder = f"{dest_path.rstrip('/')}/{job_name}/{timestamp}"
-                        logger.info(f"Deleting remote folder: {remote_folder}")
-                        
-                        if isinstance(dest_conn, SSHConnection):
-                            stdout, stderr = dest_conn.execute_command(f"rm -rf '{remote_folder}'")
-                            if stderr and "No such file" not in stderr:
-                                logger.error(f"Remote delete stderr: {stderr}")
-                            else:
-                                logger.info(f"Deleted remote archive folder: {remote_folder}")
-                        elif isinstance(dest_conn, (SMBConnection, NFSConnection)):
-                            full_path = os.path.join(dest_conn.mount_point, remote_folder.lstrip('/'))
-                            if os.path.exists(full_path):
-                                shutil.rmtree(full_path)
-                                logger.info(f"Deleted remote archive folder: {full_path}")
-                            else:
-                                logger.warning(f"Remote path doesn't exist: {full_path}")
-                        
-                        dest_conn.disconnect()
-                    else:
-                        logger.error(f"Failed to connect to destination server")
-                except Exception as e:
-                    logger.error(f"Failed to delete remote archive: {e}", exc_info=True)
-                finally:
-                    if dest_conn and dest_conn.connected:
-                        dest_conn.disconnect()
-            else:
-                logger.warning(f"Destination server {dest_server_id} not found in servers list")
+        remote_folder = archive.get('remote_folder')
+        if remote_folder:
+            dest_server_id = archive.get('dest_server_id')
+            if dest_server_id:
+                dest_server = self.servers.get(dest_server_id)
+                if dest_server:
+                    dest_conn = None
+                    try:
+                        logger.info(f"Connecting to remote to delete archive {archive_id}")
+                        dest_conn = create_connection(dest_server['type'], **dest_server)
+                        if dest_conn.connect():
+                            logger.info(f"Deleting remote folder: {remote_folder}")
+                            
+                            if isinstance(dest_conn, SSHConnection):
+                                try:
+                                    dest_conn.sftp.stat(remote_folder)
+                                    dest_conn.sftp.rmdir(remote_folder)
+                                    logger.info(f"Deleted via SFTP: {remote_folder}")
+                                except IOError:
+                                    # Fallback to SSH rm -rf
+                                    stdout, stderr = dest_conn.execute_command(f"rm -rf '{remote_folder}'")
+                                    if stderr and "No such file" not in stderr:
+                                        logger.error(f"SSH delete error: {stderr}")
+                                    else:
+                                        logger.info(f"Deleted via SSH: {remote_folder}")
+                            elif isinstance(dest_conn, (SMBConnection, NFSConnection)):
+                                full_path = os.path.join(dest_conn.mount_point, remote_folder.lstrip('/'))
+                                if os.path.exists(full_path):
+                                    shutil.rmtree(full_path)
+                                    logger.info(f"Deleted via mount: {full_path}")
+                                else:
+                                    logger.warning(f"Remote path doesn't exist: {full_path}")
+                            
+                            dest_conn.disconnect()
+                        else:
+                            logger.error(f"Failed to connect to destination server")
+                    except Exception as e:
+                        logger.error(f"Failed to delete remote archive: {e}", exc_info=True)
+                    finally:
+                        if dest_conn and dest_conn.connected:
+                            dest_conn.disconnect()
+                else:
+                    logger.warning(f"Destination server {dest_server_id} not found in servers list")
        
         # Delete local folder (entire timestamp folder)
         if archive and Path(archive['archive_path']).exists():
