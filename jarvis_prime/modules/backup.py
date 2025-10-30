@@ -365,9 +365,11 @@ def delete_remote_directory(conn, remote_path: str):
     """Delete a directory on remote server"""
     try:
         if isinstance(conn, SSHConnection):
-            # Use SSH command to delete
-            conn.execute_command(f"rm -rf '{remote_path}'")
-            logger.info(f"Deleted remote directory via SSH: {remote_path}")
+            stdout, stderr = conn.execute_command(f"rm -rf '{remote_path}'")
+            if stderr and "No such file" not in stderr:
+                logger.error(f"SSH delete error: {stderr}")
+            else:
+                logger.info(f"Deleted remote SSH directory: {remote_path}")
         elif isinstance(conn, (SMBConnection, NFSConnection)):
             # Delete via mounted filesystem
             full_path = os.path.join(conn.mount_point, remote_path.lstrip('/'))
@@ -866,6 +868,16 @@ def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compres
             
             logger.info(f"Remote folder verified: {remote_job_folder}")
             
+            # Ensure nested folders exist in SFTP session
+            parts = remote_job_folder.strip('/').split('/')
+            path_accum = ''
+            for part in parts:
+                path_accum = f"{path_accum}/{part}" if path_accum else f"/{part}"
+                try:
+                    dest_conn.sftp.stat(path_accum)
+                except IOError:
+                    dest_conn.sftp.mkdir(path_accum)
+            
             # Upload tar.gz via SFTP
             status_queue.put({
                 'job_id': job_id,
@@ -1265,6 +1277,8 @@ class BackupManager:
                
     def create_job(self, job_config: Dict) -> str:
         job_id = str(uuid.uuid4())
+        if not job_config.get('name'):
+            job_config['name'] = f"job_{job_id[:8]}"
         job_config['id'] = job_id
         job_config['created_at'] = datetime.now().isoformat()
         self.jobs[job_id] = job_config
