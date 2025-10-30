@@ -589,10 +589,12 @@
       return;
     }
     
+    // Store archives globally for onclick access
+    window.backupArchivesForRestore = backupState.archives;
+    
     tbody.innerHTML = backupState.archives.map((archive, index) => {
       // Get source server name
-      const allServers = [...backupState.sourceServers, ...backupState.destinationServers];
-      const sourceServer = allServers.find(s => s.id === archive.source_server_id);
+      const sourceServer = backupState.servers.find(s => s.id === archive.source_server_id);
       const sourceName = sourceServer ? sourceServer.name : archive.source_server_id || 'Unknown';
       
       // Format date
@@ -617,31 +619,19 @@
             </span>
           </td>
           <td>
-            <button class="btn btn-sm archive-restore-btn" data-index="${index}" style="padding: 4px 12px;">Restore</button>
-            <button class="btn danger btn-sm archive-delete-btn" data-archive-id="${archive.id}" style="padding: 4px 12px; margin-left: 4px;">Delete</button>
+            <button class="btn btn-sm" onclick="backupRestoreByIndex(${index})" style="padding: 4px 12px;">Restore</button>
+            <button class="btn danger btn-sm" onclick="backupDeleteArchive('${archive.id}')" style="padding: 4px 12px; margin-left: 4px;">Delete</button>
           </td>
         </tr>
       `;
     }).join('');
-    
-    // Attach event listeners ONLY to archive table buttons
-    tbody.querySelectorAll('.archive-restore-btn').forEach(btn => {
-      btn.addEventListener('click', function() {
-        const index = parseInt(this.getAttribute('data-index'));
-        const archive = backupState.archives[index];
-        if (archive) {
-          backupOpenRestoreModal(archive);
-        }
-      });
-    });
-    
-    tbody.querySelectorAll('.archive-delete-btn').forEach(btn => {
-      btn.addEventListener('click', function() {
-        const archiveId = this.getAttribute('data-archive-id');
-        backupDeleteArchive(archiveId);
-      });
-    });
   }
+
+  window.backupRestoreByIndex = function(index) {
+    if (window.backupArchivesForRestore && window.backupArchivesForRestore[index]) {
+      backupOpenRestoreModal(window.backupArchivesForRestore[index]);
+    }
+  };
 
   function updateStatistics() {
     document.getElementById('backup-stat-total').textContent = backupState.archives.length;
@@ -845,13 +835,11 @@
     backupState.restoreSelectedItems = []; // Reset selective items
 
     // === FORCE LOAD SERVERS IF EMPTY ===
-    const allServers = [...backupState.sourceServers, ...backupState.destinationServers];
-    if (allServers.length === 0) {
+    if (backupState.servers.length === 0) {
       toast('Loading servers for restore...', 'info');
       try {
         await backupLoadServers();
-        const reloadedServers = [...backupState.sourceServers, ...backupState.destinationServers];
-        if (reloadedServers.length === 0) {
+        if (backupState.servers.length === 0) {
           toast('No servers configured. Add servers first.', 'error');
           return;
         }
@@ -872,8 +860,7 @@
     document.getElementById('restore-original-paths').textContent = pathsList || 'N/A';
     
     // Get source server info for "restore to original"
-    const allServersForLookup = [...backupState.sourceServers, ...backupState.destinationServers];
-    const sourceServer = allServersForLookup.find(s => s.id === archive.source_server_id);
+    const sourceServer = backupState.servers.find(s => s.id === archive.source_server_id);
     const originalLocationText = sourceServer 
       ? `${sourceServer.name} - ${(archive.source_paths || [])[0] || 'Original location'}`
       : 'Original location';
@@ -883,7 +870,7 @@
     // === SAFE DROPDOWN POPULATION ===
     const serverSelect = document.getElementById('restore-dest-server');
     serverSelect.innerHTML = '<option value="">Select destination server...</option>';
-    allServersForLookup.forEach(server => {
+    backupState.servers.forEach(server => {
       const opt = document.createElement('option');
       opt.value = server.id;
       opt.textContent = `${server.name} (${server.host}${server.port ? ':' + server.port : ''})`;
@@ -898,27 +885,11 @@
     document.getElementById('restore-selected-items').innerHTML = 'No items selected';
     document.getElementById('restore-selected-items').style.color = 'var(--text-muted)';
     
-    // FORCE MODAL TO DISPLAY
-    const modal = document.getElementById('backup-restore-modal');
-    if (modal) {
-      modal.style.display = 'flex';
-      modal.style.position = 'fixed';
-      modal.style.top = '0';
-      modal.style.left = '0';
-      modal.style.right = '0';
-      modal.style.bottom = '0';
-      modal.style.zIndex = '99999';
-      modal.style.background = 'rgba(0, 0, 0, 0.8)';
-      modal.style.alignItems = 'center';
-      modal.style.justifyContent = 'center';
-    }
+    document.getElementById('backup-restore-modal').style.display = 'flex';
   };
 
   window.backupCloseRestoreModal = function() {
-    const modal = document.getElementById('backup-restore-modal');
-    if (modal) {
-      modal.style.display = 'none';
-    }
+    document.getElementById('backup-restore-modal').style.display = 'none';
   };
 
   window.backupToggleRestoreLocation = function() {
