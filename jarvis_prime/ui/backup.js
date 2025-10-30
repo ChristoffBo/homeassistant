@@ -996,12 +996,114 @@
       toast('Restore started!', 'success');
       backupCloseRestoreModal();
       
-      // TODO: Show restore progress modal similar to backup progress
+      // Open progress modal and start polling
+      backupOpenRestoreProgressModal(archive, result.restore_id || result.job_id);
+      backupStartRestoreProgressPolling(result.restore_id || result.job_id);
       
     } catch (error) {
       toast('Failed to start restore: ' + error.message, 'error');
     }
   };
+
+  let restoreProgressPollingInterval = null;
+  let restoreProgressLogEntries = [];
+
+  window.backupOpenRestoreProgressModal = function(archive, restoreId) {
+    // Set restore details
+    document.getElementById('backup-progress-job-name').textContent = 'Restore: ' + (archive.job_name || archive.id);
+    
+    // Reset progress
+    document.getElementById('backup-progress-bar').style.width = '0%';
+    document.getElementById('backup-progress-bar').style.background = 'linear-gradient(90deg, #0ea5e9, #0284c7)';
+    document.getElementById('backup-progress-percent').textContent = '0%';
+    document.getElementById('backup-progress-status').textContent = 'Starting...';
+    document.getElementById('backup-progress-message').textContent = 'Initializing restore...';
+    document.getElementById('backup-progress-log').innerHTML = '<div style="color: var(--text-muted);">Starting restore...</div>';
+    restoreProgressLogEntries = ['[' + new Date().toLocaleTimeString() + '] Restore started'];
+    
+    backupState.currentRestoreId = restoreId;
+    document.getElementById('backup-progress-modal').style.display = 'flex';
+  };
+
+  window.backupStartRestoreProgressPolling = function(restoreId) {
+    // Clear any existing interval
+    if (restoreProgressPollingInterval) {
+      clearInterval(restoreProgressPollingInterval);
+    }
+    
+    // Poll every 2 seconds
+    restoreProgressPollingInterval = setInterval(async () => {
+      try {
+        const result = await backupFetch(`api/backup/restore/${restoreId}/status`);
+        const status = result.status || result;
+        backupUpdateRestoreProgressDisplay(status);
+        
+        // Stop polling if completed or failed
+        if (status.status === 'completed') {
+          clearInterval(restoreProgressPollingInterval);
+          restoreProgressPollingInterval = null;
+          toast('Restore completed successfully!', 'success');
+          
+          setTimeout(() => {
+            backupCloseProgressModal();
+            backupRefreshArchives();
+          }, 3000);
+        } else if (status.status === 'failed') {
+          clearInterval(restoreProgressPollingInterval);
+          restoreProgressPollingInterval = null;
+          toast('Restore failed: ' + (status.error || status.message || 'Unknown error'), 'error');
+        }
+      } catch (error) {
+        console.error('Restore progress polling error:', error);
+        clearInterval(restoreProgressPollingInterval);
+        restoreProgressPollingInterval = null;
+        toast('Restore monitoring error: ' + error.message, 'error');
+      }
+    }, 2000);
+  };
+
+  function backupUpdateRestoreProgressDisplay(status) {
+    if (!status) return;
+    
+    const progress = status.progress || 0;
+    const statusText = status.status || 'running';
+    const message = status.message || 'Restoring files...';
+    
+    // Update progress bar
+    document.getElementById('backup-progress-bar').style.width = progress + '%';
+    document.getElementById('backup-progress-percent').textContent = progress + '%';
+    
+    // Update status text
+    let statusColor = '#0ea5e9';
+    let statusDisplay = statusText.toUpperCase();
+    
+    if (statusText === 'completed') {
+      statusColor = '#10b981';
+      statusDisplay = 'COMPLETED';
+      document.getElementById('backup-progress-bar').style.background = 'linear-gradient(90deg, #10b981, #059669)';
+    } else if (statusText === 'failed') {
+      statusColor = '#ef4444';
+      statusDisplay = 'FAILED';
+      document.getElementById('backup-progress-bar').style.background = 'linear-gradient(90deg, #ef4444, #dc2626)';
+    }
+    
+    document.getElementById('backup-progress-status').textContent = statusDisplay;
+    document.getElementById('backup-progress-status').style.color = statusColor;
+    document.getElementById('backup-progress-message').textContent = message;
+    
+    // Update log if available
+    if (status.log && status.log.length > restoreProgressLogEntries.length) {
+      restoreProgressLogEntries = status.log;
+      const logHtml = status.log.map(line => 
+        `<div style="color: var(--text-secondary); font-size: 12px; margin-bottom: 4px;">${escapeHtml(line)}</div>`
+      ).join('');
+      document.getElementById('backup-progress-log').innerHTML = logHtml;
+      
+      // Auto-scroll to bottom
+      const logContainer = document.getElementById('backup-progress-log');
+      logContainer.scrollTop = logContainer.scrollHeight;
+    }
+  }
 
   /* =============== EDIT SERVER MODAL =============== */
 
