@@ -944,7 +944,18 @@
     
     if (modal) {
       modal.classList.add('active');
-      console.log('[backup] Added active class to modal');
+      // Force visibility with inline styles
+      modal.style.display = 'flex';
+      modal.style.position = 'fixed';
+      modal.style.top = '0';
+      modal.style.left = '0';
+      modal.style.right = '0';
+      modal.style.bottom = '0';
+      modal.style.zIndex = '99999';
+      modal.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
+      modal.style.alignItems = 'center';
+      modal.style.justifyContent = 'center';
+      console.log('[backup] Added active class and inline styles to modal');
       console.log('[backup] Modal computed display:', window.getComputedStyle(modal).display);
     } else {
       console.error('[backup] Modal element not found!');
