@@ -44,7 +44,7 @@ def backup_fanout_notify(job_id: str, job_name: str, status: str, source_path: s
        
         # Build message
         kind = "Restore" if restore else "Backup"
-        emoji = "✅" if status == "success" else "❌"
+        emoji = "success" if status == "success" else "error"
         title = f"{emoji} {kind} {job_name}"
        
         message_parts = [
@@ -851,8 +851,8 @@ def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compres
         })
         
         if isinstance(dest_conn, SSHConnection):
-            # Build remote path: dest_path/job_name/timestamp/
-            remote_job_folder = f"{dest_path.rstrip('/')}/{job_name}/{timestamp}"
+            # Build remote path: /dest_path/job_name/timestamp/
+            remote_job_folder = '/' + dest_path.strip('/') + f'/{job_name}/{timestamp}'
             remote_archive_file = f"{remote_job_folder}/backup_{job_name}_{timestamp}.tar.gz"
             
             # Create folder structure on remote via SSH
@@ -898,7 +898,7 @@ def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compres
                 
         elif hasattr(dest_conn, "mount_point"):
             # For SMB/NFS mounts
-            remote_job_folder = f"{dest_path.rstrip('/')}/{job_name}/{timestamp}"
+            remote_job_folder = '/' + dest_path.strip('/') + f'/{job_name}/{timestamp}'
             remote_full = os.path.join(dest_conn.mount_point, remote_job_folder.lstrip('/'))
             os.makedirs(remote_full, exist_ok=True)
             
@@ -1327,7 +1327,7 @@ class BackupManager:
                     logger.info(f"Connecting to destination server to delete backups for job {job_name}")
                     dest_conn = create_connection(dest_server['type'], **dest_server)
                     if dest_conn.connect():
-                        remote_job_folder = f"{dest_path.rstrip('/')}/{job_name}"
+                        remote_job_folder = f"{dest_path.rstrip('/')}/{job_name}/*"
                         delete_remote_directory(dest_conn, remote_job_folder)
                         dest_conn.disconnect()
                         logger.info(f"Deleted remote job folder: {remote_job_folder}")
@@ -1423,7 +1423,7 @@ class BackupManager:
                         job_name = archive.get('job_name', 'Unknown').replace(' ', '_')
                         dest_path = archive.get('destination_path', '')
                        
-                        remote_folder = f"{dest_path.rstrip('/')}/{job_name}/{timestamp}"
+                        remote_folder = f"{dest_path.rstrip('/')}/{job_name}/*"
                         logger.info(f"Deleting remote folder: {remote_folder}")
                         
                         if isinstance(dest_conn, SSHConnection):
