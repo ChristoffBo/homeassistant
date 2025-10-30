@@ -514,57 +514,40 @@ def safe_add(tar, path, arcname=""):
         logger.warning(f"Skipped {path}: {e}")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# NEW: Helper to create remote directories via SFTP (mkdir -p)
-# ─────────────────────────────────────────────────────────────────────────────
-def sftp_mkdir_p(sftp_conn: SSHConnection, remote_path: str):
-    """Create remote directory and parents via SFTP (like mkdir -p)"""
-    try:
-        parts = remote_path.strip('/').split('/')
-        current = ''
-        for part in parts:
-            current = f"{current}/{part}" if current else f"/{part}"
-            try:
-                sftp_conn.sftp.stat(current)
-            except FileNotFoundError:
-                sftp_conn.sftp.mkdir(current)
-    except Exception as e:
-        logger.warning(f"Failed to create remote path {remote_path}: {e}")
-
-# ─────────────────────────────────────────────────────────────────────────────
-# NEW: Fixed & improved restore_worker
+# FINAL: Improved restore_worker with real progress, notifications, and safety
 # ─────────────────────────────────────────────────────────────────────────────
 def restore_worker(restore_id: str, restore_config: Dict, status_queue: Queue):
-    """Worker for restore operations"""
+    """Improved restore worker with real copy, accurate notify, and live progress updates."""
     start_time = time.time()
     temp_dir = None
 
     try:
-        logger.info(f"Restore worker started for {restore_id}")
+        logger.info(f"[RESTORE] Starting restore job {restore_id}")
 
         archive = restore_config['archive']
-        dest_server_id = restore_config['dest_server_id']
+        dest_server_id = restore_config.get('dest_server_id')
         dest_path = restore_config.get('dest_path')
         restore_to_original = dest_path in [None, '', 'original']
         data_dir = Path(restore_config['_data_dir'])
 
-        status_queue.put({
-            'restore_id': restore_id,
-            'status': 'running',
-            'progress': 10,
-            'message': 'Loading configuration...'
-        })
+        # --- Guard checks ---
+        if not archive.get('archive_path') or not os.path.exists(archive['archive_path']):
+            raise Exception("Restore aborted: archive path missing or invalid.")
+        if not archive.get('source_paths'):
+            raise Exception("Restore aborted: no source paths found in archive metadata.")
+        if not dest_server_id and not restore_to_original:
+            raise Exception("Restore aborted: destination server not resolved.")
 
+        # --- Load servers ---
         servers_file = data_dir / 'backup_servers.json'
         with open(servers_file, 'r') as f:
             all_servers = json.load(f)
 
-        # Source of the ARCHIVE is the backup storage server we wrote to during backup
         storage_server_id = archive.get('dest_server_id')
         storage_server = next((s for s in all_servers if s['id'] == storage_server_id), None)
         if not storage_server:
             raise Exception("Backup storage server not found")
 
-        # For restore-to-original, force destination to be the ORIGINAL SOURCE server
         if restore_to_original:
             if not archive.get('source_server_id'):
                 raise Exception("Archive missing source_server_id for restore-to-original.")
@@ -575,128 +558,111 @@ def restore_worker(restore_id: str, restore_config: Dict, status_queue: Queue):
             raise Exception("Restore destination server not found")
 
         archive_path = Path(archive['archive_path'])
-        if not archive_path.exists():
-            raise Exception(f"Archive not found: {archive_path}")
-
-        if not verify_tar_integrity(archive_path):
-            raise Exception("Archive is corrupted")
 
         status_queue.put({
             'restore_id': restore_id,
             'status': 'running',
-            'progress': 30,
-            'message': 'Connecting to storage...'
+            'progress': 5,
+            'message': 'Connecting to servers...'
         })
 
+        # --- Connections ---
         source_conn = create_connection(storage_server['type'], **storage_server)
-        if not source_conn.connect():
-            raise Exception("Failed to connect to backup storage")
+        dest_conn = create_connection(dest_server['type'], **dest_server)
 
+        if not source_conn.connect():
+            raise Exception(f"Failed to connect to storage server {storage_server['host']}")
+        if not dest_conn.connect():
+            raise Exception(f"Failed to connect to destination {dest_server['host']}")
+
+        temp_dir = tempfile.mkdtemp(prefix='jarvis_restore_')
+
+        # --- Extract ---
+        status_queue.put({
+            'restore_id': restore_id,
+            'status': 'running',
+            'progress': 25,
+            'message': 'Extracting archive...'
+        })
+
+        logger.info(f"[RESTORE] Extracting archive {archive_path}")
+        with tarfile.open(archive_path, "r:gz") as tar:
+            tar.extractall(path=temp_dir)
+
+        # --- Restore logic ---
         status_queue.put({
             'restore_id': restore_id,
             'status': 'running',
             'progress': 50,
-            'message': 'Connecting to destination...'
-        })
-
-        dest_conn = create_connection(dest_server['type'], **dest_server)
-        if not dest_conn.connect():
-            source_conn.disconnect()
-            raise Exception("Failed to connect to restore destination")
-
-        temp_dir = tempfile.mkdtemp(prefix='jarvis_restore_')
-
-        status_queue.put({
-            'restore_id': restore_id,
-            'status': 'running',
-            'progress': 60,
-            'message': 'Extracting archive...'
-        })
-
-        with tarfile.open(archive_path, "r:gz") as tar:
-            tar.extractall(path=temp_dir)
-
-        status_queue.put({
-            'restore_id': restore_id,
-            'status': 'running',
-            'progress': 80,
             'message': 'Restoring files...'
         })
 
-        if restore_to_original:
-            source_paths = archive.get('source_paths', [])
-            if not source_paths:
-                raise Exception("No source paths stored for restore-to-original mode.")
+        total_files = sum(len(files) for _, _, files in os.walk(temp_dir))
+        copied_files = 0
 
-            for src in source_paths:
-                folder_name = os.path.basename(src.strip('/')) or '_root'
-                local_restore_src = os.path.join(temp_dir, folder_name)
+        def update_progress():
+            pct = min(90, int((copied_files / total_files) * 100)) if total_files else 80
+            status_queue.put({
+                'restore_id': restore_id,
+                'status': 'running',
+                'progress': pct,
+                'message': f'Restoring files... ({copied_files}/{total_files})'
+            })
 
-                if not os.path.exists(local_restore_src):
-                    logger.warning(f"Archive missing expected folder for {src}: {folder_name}")
-                    continue
+        for src in archive.get('source_paths', []):
+            folder_name = os.path.basename(src.strip('/')) or '_root'
+            local_restore_src = os.path.join(temp_dir, folder_name)
 
-                logger.info(f"Restoring {folder_name} to {src}")
+            if not os.path.exists(local_restore_src):
+                logger.warning(f"[RESTORE] Missing folder in archive for {src}")
+                continue
 
-                if isinstance(dest_conn, SSHConnection):
-                    # Ensure parent directories exist remotely
-                    sftp_mkdir_p(dest_conn, src)
-                    upload_via_sftp(dest_conn, local_restore_src, src)
-                else:
-                    dest_full = os.path.join(dest_conn.mount_point, src.lstrip('/'))
-                    os.makedirs(dest_full, exist_ok=True)
-                    for item in os.listdir(local_restore_src):
-                        s_item = os.path.join(local_restore_src, item)
-                        if os.path.isdir(s_item):
-                            shutil.copytree(s_item, dest_full, dirs_exist_ok=True)
-                        else:
-                            shutil.copy2(s_item, dest_full)
-        else:
-            # Restore to a custom destination path
             if isinstance(dest_conn, SSHConnection):
-                sftp_mkdir_p(dest_conn, dest_path)
-                upload_via_sftp(dest_conn, temp_dir, dest_path)
+                dest_conn.execute_command(f"mkdir -p '{src}'")
+                for root, dirs, files in os.walk(local_restore_src):
+                    for f in files:
+                        src_item = os.path.join(root, f)
+                        rel_path = os.path.relpath(src_item, local_restore_src)
+                        dst_item = os.path.join(src, rel_path)
+                        upload_via_sftp(dest_conn, src_item, dst_item)
+                        copied_files += 1
+                        update_progress()
             else:
-                dest_full = os.path.join(dest_conn.mount_point, dest_path.lstrip('/'))
+                dest_full = os.path.join(dest_conn.mount_point, src.lstrip('/'))
                 os.makedirs(dest_full, exist_ok=True)
-                for item in os.listdir(temp_dir):
-                    src_item = os.path.join(temp_dir, item)
-                    dst_item = os.path.join(dest_full, item)
-                    if os.path.isdir(src_item):
-                        shutil.copytree(src_item, dst_item, dirs_exist_ok=True)
-                    else:
-                        shutil.copy2(src_item, dest_full)
+                for root, dirs, files in os.walk(local_restore_src):
+                    for f in files:
+                        s_item = os.path.join(root, f)
+                        shutil.copy2(s_item, dest_full)
+                        copied_files += 1
+                        update_progress()
 
-        source_conn.disconnect()
-        dest_conn.disconnect()
-
+        # --- Success ---
         duration = time.time() - start_time
-
+        msg = f"Restore completed in {duration:.1f}s ({copied_files} files)"
         status_queue.put({
             'restore_id': restore_id,
             'status': 'completed',
             'progress': 100,
-            'message': f'Restore completed in {duration:.1f}s',
-            'completed_at': datetime.now().isoformat()
+            'message': msg
         })
-
         backup_fanout_notify(
             job_id=restore_id,
             job_name=archive.get('job_name', 'Restore'),
             status='success',
-            dest_path=dest_path,
+            dest_path=dest_path or 'original',
             duration=duration,
             restore=True
         )
+        logger.info(f"[RESTORE] {msg}")
 
     except Exception as e:
-        logger.error(f"Restore failed: {e}")
+        logger.error(f"[RESTORE] {e}")
         status_queue.put({
             'restore_id': restore_id,
             'status': 'failed',
             'progress': 0,
-            'message': f'Restore failed: {str(e)}',
-            'failed_at': datetime.now().isoformat()
+            'message': f"Restore failed: {e}"
         })
         backup_fanout_notify(
             job_id=restore_id,
@@ -705,16 +671,10 @@ def restore_worker(restore_id: str, restore_config: Dict, status_queue: Queue):
             error=str(e),
             restore=True
         )
+
     finally:
         if temp_dir and os.path.exists(temp_dir):
-            try:
-                shutil.rmtree(temp_dir)
-            except:
-                pass
-
-# ─────────────────────────────────────────────────────────────────────────────
-# (Rest of the file continues unchanged below)
-# ─────────────────────────────────────────────────────────────────────────────
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
     """
