@@ -63,7 +63,7 @@ def backup_fanout_notify(job_id: str, job_name: str, status: str, source_path: s
         if error:
             message_parts.append(f"**Error:** {error}")
        
-        message = "\n".join(f"• {part}" for part in message_parts)
+        message = "\n".join(f"* {part}" for part in message_parts)
        
         priority = 3 if status == "success" else 8
         process_incoming(title, message, source="backup", priority=priority)
@@ -498,7 +498,7 @@ def verify_tar_integrity(archive_path: Path) -> bool:
     """Verify tar.gz integrity"""
     try:
         with tarfile.open(archive_path, "r:gz") as tar:
-            tar.getmembers() # Triggers integrity check
+            tar.getmembers()  # Triggers integrity check
         return True
     except Exception as e:
         logger.error(f"Tar integrity check failed for {archive_path}: {e}")
@@ -512,6 +512,209 @@ def safe_add(tar, path, arcname=""):
         logger.warning(f"Skipped (no permission): {path}")
     except Exception as e:
         logger.warning(f"Skipped {path}: {e}")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NEW: Helper to create remote directories via SFTP (mkdir -p)
+# ─────────────────────────────────────────────────────────────────────────────
+def sftp_mkdir_p(sftp_conn: SSHConnection, remote_path: str):
+    """Create remote directory and parents via SFTP (like mkdir -p)"""
+    try:
+        parts = remote_path.strip('/').split('/')
+        current = ''
+        for part in parts:
+            current = f"{current}/{part}" if current else f"/{part}"
+            try:
+                sftp_conn.sftp.stat(current)
+            except FileNotFoundError:
+                sftp_conn.sftp.mkdir(current)
+    except Exception as e:
+        logger.warning(f"Failed to create remote path {remote_path}: {e}")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NEW: Fixed & improved restore_worker
+# ─────────────────────────────────────────────────────────────────────────────
+def restore_worker(restore_id: str, restore_config: Dict, status_queue: Queue):
+    """Worker for restore operations"""
+    start_time = time.time()
+    temp_dir = None
+
+    try:
+        logger.info(f"Restore worker started for {restore_id}")
+
+        archive = restore_config['archive']
+        dest_server_id = restore_config['dest_server_id']
+        dest_path = restore_config.get('dest_path')
+        restore_to_original = dest_path in [None, '', 'original']
+        data_dir = Path(restore_config['_data_dir'])
+
+        status_queue.put({
+            'restore_id': restore_id,
+            'status': 'running',
+            'progress': 10,
+            'message': 'Loading configuration...'
+        })
+
+        servers_file = data_dir / 'backup_servers.json'
+        with open(servers_file, 'r') as f:
+            all_servers = json.load(f)
+
+        # Source of the ARCHIVE is the backup storage server we wrote to during backup
+        storage_server_id = archive.get('dest_server_id')
+        storage_server = next((s for s in all_servers if s['id'] == storage_server_id), None)
+        if not storage_server:
+            raise Exception("Backup storage server not found")
+
+        # For restore-to-original, force destination to be the ORIGINAL SOURCE server
+        if restore_to_original:
+            if not archive.get('source_server_id'):
+                raise Exception("Archive missing source_server_id for restore-to-original.")
+            dest_server_id = archive['source_server_id']
+
+        dest_server = next((s for s in all_servers if s['id'] == dest_server_id), None)
+        if not dest_server:
+            raise Exception("Restore destination server not found")
+
+        archive_path = Path(archive['archive_path'])
+        if not archive_path.exists():
+            raise Exception(f"Archive not found: {archive_path}")
+
+        if not verify_tar_integrity(archive_path):
+            raise Exception("Archive is corrupted")
+
+        status_queue.put({
+            'restore_id': restore_id,
+            'status': 'running',
+            'progress': 30,
+            'message': 'Connecting to storage...'
+        })
+
+        source_conn = create_connection(storage_server['type'], **storage_server)
+        if not source_conn.connect():
+            raise Exception("Failed to connect to backup storage")
+
+        status_queue.put({
+            'restore_id': restore_id,
+            'status': 'running',
+            'progress': 50,
+            'message': 'Connecting to destination...'
+        })
+
+        dest_conn = create_connection(dest_server['type'], **dest_server)
+        if not dest_conn.connect():
+            source_conn.disconnect()
+            raise Exception("Failed to connect to restore destination")
+
+        temp_dir = tempfile.mkdtemp(prefix='jarvis_restore_')
+
+        status_queue.put({
+            'restore_id': restore_id,
+            'status': 'running',
+            'progress': 60,
+            'message': 'Extracting archive...'
+        })
+
+        with tarfile.open(archive_path, "r:gz") as tar:
+            tar.extractall(path=temp_dir)
+
+        status_queue.put({
+            'restore_id': restore_id,
+            'status': 'running',
+            'progress': 80,
+            'message': 'Restoring files...'
+        })
+
+        if restore_to_original:
+            source_paths = archive.get('source_paths', [])
+            if not source_paths:
+                raise Exception("No source paths stored for restore-to-original mode.")
+
+            for src in source_paths:
+                folder_name = os.path.basename(src.strip('/')) or '_root'
+                local_restore_src = os.path.join(temp_dir, folder_name)
+
+                if not os.path.exists(local_restore_src):
+                    logger.warning(f"Archive missing expected folder for {src}: {folder_name}")
+                    continue
+
+                logger.info(f"Restoring {folder_name} to {src}")
+
+                if isinstance(dest_conn, SSHConnection):
+                    # Ensure parent directories exist remotely
+                    sftp_mkdir_p(dest_conn, src)
+                    upload_via_sftp(dest_conn, local_restore_src, src)
+                else:
+                    dest_full = os.path.join(dest_conn.mount_point, src.lstrip('/'))
+                    os.makedirs(dest_full, exist_ok=True)
+                    for item in os.listdir(local_restore_src):
+                        s_item = os.path.join(local_restore_src, item)
+                        if os.path.isdir(s_item):
+                            shutil.copytree(s_item, dest_full, dirs_exist_ok=True)
+                        else:
+                            shutil.copy2(s_item, dest_full)
+        else:
+            # Restore to a custom destination path
+            if isinstance(dest_conn, SSHConnection):
+                sftp_mkdir_p(dest_conn, dest_path)
+                upload_via_sftp(dest_conn, temp_dir, dest_path)
+            else:
+                dest_full = os.path.join(dest_conn.mount_point, dest_path.lstrip('/'))
+                os.makedirs(dest_full, exist_ok=True)
+                for item in os.listdir(temp_dir):
+                    src_item = os.path.join(temp_dir, item)
+                    dst_item = os.path.join(dest_full, item)
+                    if os.path.isdir(src_item):
+                        shutil.copytree(src_item, dst_item, dirs_exist_ok=True)
+                    else:
+                        shutil.copy2(src_item, dest_full)
+
+        source_conn.disconnect()
+        dest_conn.disconnect()
+
+        duration = time.time() - start_time
+
+        status_queue.put({
+            'restore_id': restore_id,
+            'status': 'completed',
+            'progress': 100,
+            'message': f'Restore completed in {duration:.1f}s',
+            'completed_at': datetime.now().isoformat()
+        })
+
+        backup_fanout_notify(
+            job_id=restore_id,
+            job_name=archive.get('job_name', 'Restore'),
+            status='success',
+            dest_path=dest_path,
+            duration=duration,
+            restore=True
+        )
+
+    except Exception as e:
+        logger.error(f"Restore failed: {e}")
+        status_queue.put({
+            'restore_id': restore_id,
+            'status': 'failed',
+            'progress': 0,
+            'message': f'Restore failed: {str(e)}',
+            'failed_at': datetime.now().isoformat()
+        })
+        backup_fanout_notify(
+            job_id=restore_id,
+            job_name=archive.get('job_name', 'Restore'),
+            status='failed',
+            error=str(e),
+            restore=True
+        )
+    finally:
+        if temp_dir and os.path.exists(temp_dir):
+            try:
+                shutil.rmtree(temp_dir)
+            except:
+                pass
+
+# ─────────────────────────────────────────────────────────────────────────────
+# (Rest of the file continues unchanged below)
+# ─────────────────────────────────────────────────────────────────────────────
 
 def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
     """
@@ -902,171 +1105,6 @@ def sync_directories(source, dest):
             if not os.path.exists(d_file) or os.path.getmtime(s_file) > os.path.getmtime(d_file):
                 shutil.copy2(s_file, d_file)
 
-def restore_worker(restore_id: str, restore_config: Dict, status_queue: Queue):
-    """Worker for restore operations"""
-    start_time = time.time()
-    temp_dir = None
-   
-    try:
-        logger.info(f"Restore worker started for {restore_id}")
-        archive = restore_config['archive']
-        dest_server_id = restore_config['dest_server_id']
-        # --- NEW: auto-restore to original source paths if requested ---
-        dest_path = restore_config.get('dest_path')
-        restore_to_original = dest_path in [None, '', 'original']
-        data_dir = Path(restore_config['_data_dir'])
-       
-        status_queue.put({
-            'restore_id': restore_id,
-            'status': 'running',
-            'progress': 10,
-            'message': 'Loading configuration...'
-        })
-       
-        servers_file = data_dir / 'backup_servers.json'
-        with open(servers_file, 'r') as f:
-            all_servers = json.load(f)
-       
-        source_server_id = archive.get('dest_server_id')
-        source_server = next((s for s in all_servers if s['id'] == source_server_id), None)
-        if not source_server:
-            raise Exception("Backup storage server not found")
-       
-        dest_server = next((s for s in all_servers if s['id'] == dest_server_id), None)
-        if not dest_server:
-            raise Exception("Restore destination not found")
-       
-        archive_path = Path(archive['archive_path'])
-        if not archive_path.exists():
-            raise Exception(f"Archive not found: {archive_path}")
-       
-        if not verify_tar_integrity(archive_path):
-            raise Exception("Archive is corrupted")
-       
-        status_queue.put({
-            'restore_id': restore_id,
-            'status': 'running',
-            'progress': 30,
-            'message': 'Connecting to source...'
-        })
-       
-        source_conn = create_connection(source_server['type'], **source_server)
-        if not source_conn.connect():
-            raise Exception("Failed to connect to backup storage")
-       
-        status_queue.put({
-            'restore_id': restore_id,
-            'status': 'running',
-            'progress': 50,
-            'message': 'Connecting to destination...'
-        })
-       
-        dest_conn = create_connection(dest_server['type'], **dest_server)
-        if not dest_conn.connect():
-            source_conn.disconnect()
-            raise Exception("Failed to connect to restore destination")
-       
-        temp_dir = tempfile.mkdtemp(prefix='jarvis_restore_')
-       
-        status_queue.put({
-            'restore_id': restore_id,
-            'status': 'running',
-            'progress': 60,
-            'message': 'Extracting archive...'
-        })
-       
-        with tarfile.open(archive_path, "r:gz") as tar:
-            tar.extractall(path=temp_dir)
-       
-        status_queue.put({
-            'restore_id': restore_id,
-            'status': 'running',
-            'progress': 80,
-            'message': 'Restoring files...'
-        })
-       
-        if restore_to_original:
-            source_paths = archive.get('source_paths', [])
-            if not source_paths:
-                raise Exception("No source paths stored for restore-to-original mode.")
-            for src in source_paths:
-                folder_name = os.path.basename(src.strip('/'))
-                local_restore_src = os.path.join(temp_dir, folder_name)
-                if not os.path.exists(local_restore_src):
-                    logger.warning(f"Archive missing expected folder: {folder_name}")
-                    continue
-
-                logger.info(f"Restoring {folder_name} to {src}")
-                if isinstance(dest_conn, SSHConnection):
-                    upload_via_sftp(dest_conn, local_restore_src, src)
-                else:
-                    dest_full = os.path.join(dest_conn.mount_point, src.lstrip('/'))
-                    os.makedirs(dest_full, exist_ok=True)
-                    for item in os.listdir(local_restore_src):
-                        s_item = os.path.join(local_restore_src, item)
-                        if os.path.isdir(s_item):
-                            shutil.copytree(s_item, dest_full, dirs_exist_ok=True)
-                        else:
-                            shutil.copy2(s_item, dest_full)
-        else:
-            if isinstance(dest_conn, SSHConnection):
-                upload_via_sftp(dest_conn, temp_dir, dest_path)
-            else:
-                dest_full = os.path.join(dest_conn.mount_point, dest_path.lstrip('/'))
-                os.makedirs(dest_full, exist_ok=True)
-                for item in os.listdir(temp_dir):
-                    src = os.path.join(temp_dir, item)
-                    dst = os.path.join(dest_full, item)
-                    if os.path.isdir(src):
-                        shutil.copytree(src, dst, dirs_exist_ok=True)
-                    else:
-                        shutil.copy2(src, dst)
-       
-        source_conn.disconnect()
-        dest_conn.disconnect()
-       
-        duration = time.time() - start_time
-       
-        status_queue.put({
-            'restore_id': restore_id,
-            'status': 'completed',
-            'progress': 100,
-            'message': f'Restore completed in {duration:.1f}s',
-            'completed_at': datetime.now().isoformat()
-        })
-       
-        backup_fanout_notify(
-            job_id=restore_id,
-            job_name=archive.get('job_name', 'Restore'),
-            status='success',
-            dest_path=dest_path,
-            duration=duration,
-            restore=True
-        )
-       
-    except Exception as e:
-        logger.error(f"Restore failed: {e}")
-        status_queue.put({
-            'restore_id': restore_id,
-            'status': 'failed',
-            'progress': 0,
-            'message': f'Restore failed: {str(e)}',
-            'failed_at': datetime.now().isoformat()
-        })
-        backup_fanout_notify(
-            job_id=restore_id,
-            job_name=archive.get('job_name', 'Restore'),
-            status='failed',
-            error=str(e),
-            restore=True
-        )
-    finally:
-        if temp_dir and os.path.exists(temp_dir):
-            try:
-                shutil.rmtree(temp_dir)
-            except:
-                pass
-
 class BackupManager:
     """Main backup manager"""
    
@@ -1203,7 +1241,6 @@ class BackupManager:
                         logger.info(f"Deleted remote folder: {remote_dir}")
 
                     elif server_type == "smb":
-                        # SMB cleanup
                         from smb.SMBConnection import SMBConnection
                         conn = SMBConnection(
                             dest_server["username"], dest_server["password"],
@@ -1221,7 +1258,6 @@ class BackupManager:
                             logger.info(f"Deleted SMB folder: {remote_dir}")
 
                     elif server_type == "nfs":
-                        # NFS mount cleanup (if mounted locally)
                         local_mount = Path("/mnt/nfs") / dest_server["export_path"].strip("/")
                         remote_dir = local_mount / job_name
                         if remote_dir.exists():
