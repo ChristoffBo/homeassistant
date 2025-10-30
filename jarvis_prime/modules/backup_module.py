@@ -44,7 +44,7 @@ def backup_fanout_notify(job_id: str, job_name: str, status: str, source_path: s
        
         # Build message
         kind = "Restore" if restore else "Backup"
-        emoji = "✅" if status == "success" else "❌"
+        emoji = "success" if status == "success" else "failure"
         title = f"{emoji} {kind} {job_name}"
        
         message_parts = [
@@ -990,14 +990,20 @@ def restore_worker(restore_id: str, restore_config: Dict, status_queue: Queue):
             if not source_paths:
                 raise Exception("No source paths stored for restore-to-original mode.")
             for src in source_paths:
-                logger.info(f"Restoring to original path: {src}")
+                folder_name = os.path.basename(src.strip('/'))
+                local_restore_src = os.path.join(temp_dir, folder_name)
+                if not os.path.exists(local_restore_src):
+                    logger.warning(f"Archive missing expected folder: {folder_name}")
+                    continue
+
+                logger.info(f"Restoring {folder_name} to {src}")
                 if isinstance(dest_conn, SSHConnection):
-                    upload_via_sftp(dest_conn, temp_dir, src)
+                    upload_via_sftp(dest_conn, local_restore_src, src)
                 else:
                     dest_full = os.path.join(dest_conn.mount_point, src.lstrip('/'))
                     os.makedirs(dest_full, exist_ok=True)
-                    for item in os.listdir(temp_dir):
-                        s_item = os.path.join(temp_dir, item)
+                    for item in os.listdir(local_restore_src):
+                        s_item = os.path.join(local_restore_src, item)
                         if os.path.isdir(s_item):
                             shutil.copytree(s_item, dest_full, dirs_exist_ok=True)
                         else:
@@ -1171,7 +1177,7 @@ class BackupManager:
         dest_server_id = job.get("destination_server_id")
         dest_path = job.get("destination_path")
 
-        # 1️⃣ Connect to destination server and delete backup folder
+        # 1. Connect to destination server and delete backup folder
         if dest_server_id and dest_path:
             dest_server = self.servers.get(dest_server_id)
             if dest_server:
@@ -1227,7 +1233,7 @@ class BackupManager:
             else:
                 logger.warning(f"Destination server not found for job {job_id}")
 
-        # 2️⃣ Delete local metadata
+        # 2. Delete local metadata
         self.jobs.pop(job_id, None)
         self._save_jobs()
 
@@ -1235,7 +1241,7 @@ class BackupManager:
             del self.statuses[job_id]
             self._save_statuses()
 
-        # 3️⃣ Delete local archive folder (mirror)
+        # 3. Delete local archive folder (mirror)
         local_dir = get_job_archive_dir(self.data_dir, job_name)
         if local_dir.exists():
             try:
