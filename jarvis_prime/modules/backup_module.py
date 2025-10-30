@@ -361,52 +361,119 @@ def get_job_archive_dir(data_dir: Path, job_name: str) -> Path:
     job_dir.mkdir(parents=True, exist_ok=True)
     return job_dir
 
-def apply_retention(data_dir: Path, job_name: str, retention_days: int, retention_count: int):
-    """Apply retention policy: delete old archives"""
+def delete_remote_directory(conn, remote_path: str):
+    """Delete a directory on remote server"""
     try:
+        if isinstance(conn, SSHConnection):
+            # Use SSH command to delete
+            conn.execute_command(f"rm -rf '{remote_path}'")
+            logger.info(f"Deleted remote directory via SSH: {remote_path}")
+        elif isinstance(conn, (SMBConnection, NFSConnection)):
+            # Delete via mounted filesystem
+            full_path = os.path.join(conn.mount_point, remote_path.lstrip('/'))
+            if os.path.exists(full_path):
+                shutil.rmtree(full_path)
+                logger.info(f"Deleted remote directory via mount: {full_path}")
+    except Exception as e:
+        logger.error(f"Failed to delete remote directory {remote_path}: {e}")
+        raise
+
+def apply_retention(data_dir: Path, job_name: str, retention_days: int, retention_count: int,
+                   dest_server_config: Dict, dest_path: str):
+    """Apply retention policy: delete old timestamped backup folders from both local and remote"""
+    try:
+        # Normalize job name to match folder structure
+        job_name_normalized = job_name.replace(' ', '_')
         job_dir = get_job_archive_dir(data_dir, job_name)
-        archives = []
+        
+        # Find all timestamped subfolders
+        timestamp_folders = []
+        for folder in job_dir.iterdir():
+            if folder.is_dir():
+                try:
+                    # Timestamp folders are named YYYYMMDD_HHMMSS
+                    stat_info = folder.stat()
+                    timestamp_folders.append({
+                        'path': folder,
+                        'name': folder.name,
+                        'mtime': stat_info.st_mtime
+                    })
+                except:
+                    continue
        
-        for f in job_dir.glob("*.tar.gz"):
-            try:
-                stat = f.stat()
-                archives.append({
-                    'path': f,
-                    'mtime': stat.st_mtime
-                })
-            except:
-                continue
-       
-        if not archives:
+        if not timestamp_folders:
+            logger.info(f"No backup folders found for retention cleanup in {job_name}")
             return
        
         # Sort by modification time (newest first)
-        archives.sort(key=lambda x: x['mtime'], reverse=True)
+        timestamp_folders.sort(key=lambda x: x['mtime'], reverse=True)
        
         cutoff = datetime.now() - timedelta(days=retention_days)
        
         to_delete = []
        
-        # Delete by age
-        for arch in archives:
-            if datetime.fromtimestamp(arch['mtime']) < cutoff:
-                to_delete.append(arch['path'])
+        # Delete by age (if retention_days > 0)
+        if retention_days > 0:
+            for folder in timestamp_folders:
+                if datetime.fromtimestamp(folder['mtime']) < cutoff:
+                    to_delete.append(folder)
        
-        # Delete by count (keep latest N)
-        if len(archives) > retention_count:
-            for arch in archives[retention_count:]:
-                if arch['path'] not in to_delete:
-                    to_delete.append(arch['path'])
+        # Delete by count (keep latest N) - if retention_count > 0
+        if retention_count > 0 and len(timestamp_folders) > retention_count:
+            for folder in timestamp_folders[retention_count:]:
+                if folder not in to_delete:
+                    to_delete.append(folder)
        
-        for path in to_delete:
-            try:
-                path.unlink()
-                logger.info(f"Deleted old archive: {path}")
-            except Exception as e:
-                logger.error(f"Failed to delete {path}: {e}")
+        if not to_delete:
+            logger.info(f"No backups to delete for {job_name} (retention: {retention_days}d, keep: {retention_count})")
+            return
+       
+        logger.info(f"Retention cleanup for {job_name}: deleting {len(to_delete)} old backups")
+       
+        # Connect to destination server to delete remote folders
+        dest_conn = None
+        try:
+            dest_conn = create_connection(dest_server_config['type'], **dest_server_config)
+            if dest_conn.connect():
+                for folder_info in to_delete:
+                    timestamp_name = folder_info['name']
+                    
+                    # Delete remote folder FIRST
+                    try:
+                        remote_folder = f"{dest_path.rstrip('/')}/{job_name_normalized}/{timestamp_name}"
+                        logger.info(f"Deleting remote folder: {remote_folder}")
+                        
+                        if isinstance(dest_conn, SSHConnection):
+                            stdout, stderr = dest_conn.execute_command(f"rm -rf '{remote_folder}'")
+                            if stderr and "No such file" not in stderr:
+                                logger.error(f"Remote delete stderr: {stderr}")
+                            else:
+                                logger.info(f"Deleted remote backup folder: {remote_folder}")
+                        elif isinstance(dest_conn, (SMBConnection, NFSConnection)):
+                            full_path = os.path.join(dest_conn.mount_point, remote_folder.lstrip('/'))
+                            if os.path.exists(full_path):
+                                shutil.rmtree(full_path)
+                                logger.info(f"Deleted remote backup folder: {full_path}")
+                    except Exception as e:
+                        logger.error(f"Failed to delete remote folder {remote_folder}: {e}")
+                    
+                    # Delete local folder
+                    try:
+                        shutil.rmtree(folder_info['path'])
+                        logger.info(f"Deleted local backup folder: {folder_info['path']}")
+                    except Exception as e:
+                        logger.error(f"Failed to delete local folder {folder_info['path']}: {e}")
+                
+                dest_conn.disconnect()
+               
+        except Exception as e:
+            logger.error(f"Failed to connect to destination for retention cleanup: {e}")
+        finally:
+            if dest_conn and dest_conn.connected:
+                dest_conn.disconnect()
                
     except Exception as e:
-        logger.error(f"Retention cleanup failed: {e}")
+        logger.error(f"Retention cleanup failed for {job_name}: {e}", exc_info=True)
 
 def create_archive_record(archive_id: str, job_id: str, job_config: Dict, duration: float,
                          archive_path: Path, size_mb: float, data_dir: Path):
@@ -459,7 +526,7 @@ def import_existing_archives(data_dir: Path):
     for job_dir in data_dir.iterdir():
         if not job_dir.is_dir() or job_dir.name.startswith('.'):
             continue
-        for archive_path in job_dir.glob("*.tar.gz"):
+        for archive_path in job_dir.glob("**/*.tar.gz"):
             if str(archive_path) not in existing_paths:
                 # Try to infer job name
                 job_name = job_dir.name.replace('_', ' ')
@@ -482,13 +549,14 @@ def import_existing_archives(data_dir: Path):
                     'status': 'imported'
                 }
                
-                with open(archives_file, 'a' if archives_file.exists() else 'w') as f:
-                    if archives_file.exists():
+                if archives_file.exists():
+                    with open(archives_file, 'r') as f:
                         existing = json.load(f)
-                        f.seek(0)
-                        existing.append(record)
+                    existing.append(record)
+                    with open(archives_file, 'w') as f:
                         json.dump(existing, f, indent=2)
-                    else:
+                else:
+                    with open(archives_file, 'w') as f:
                         json.dump([record], f, indent=2)
                 imported += 1
    
@@ -498,7 +566,7 @@ def verify_tar_integrity(archive_path: Path) -> bool:
     """Verify tar.gz integrity"""
     try:
         with tarfile.open(archive_path, "r:gz") as tar:
-            tar.getmembers() # Triggers integrity check
+            tar.getmembers()
         return True
     except Exception as e:
         logger.error(f"Tar integrity check failed for {archive_path}: {e}")
@@ -630,10 +698,11 @@ def backup_worker(job_id: str, job_config: Dict, status_queue: Queue):
         duration = time.time() - start_time
        
         if success:
-            # Apply retention
+            # Apply retention with remote cleanup
             retention_days = job_config.get('retention_days', 30)
             retention_count = job_config.get('retention_count', 5)
-            apply_retention(data_dir, job_name, retention_days, retention_count)
+            apply_retention(data_dir, job_name, retention_days, retention_count,
+                          dest_server, destination_path)
            
             status_queue.put({
                 'job_id': job_id,
@@ -727,12 +796,15 @@ def perform_sync_mode(source_conn, dest_conn, source_paths, dest_path, status_qu
 def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compress,
                        status_queue, job_id, job_archive_dir, timestamp,
                        job_config, data_dir):
-    """Perform full backup with per-job subfolder and tar.gz"""
+    """Perform full backup with job_name/timestamp/ subfolder structure"""
     try:
-        # --- NEW: create per-job subfolder ---
+        # Create timestamped subfolder inside job folder
         job_subfolder = job_archive_dir / timestamp
         os.makedirs(job_subfolder, exist_ok=True)
+        logger.info(f"Created local backup folder: {job_subfolder}")
+        
         temp_data_dir = tempfile.mkdtemp(prefix='jarvis_backup_tmp_')
+        
         for idx, source_path in enumerate(source_paths):
             progress = 30 + (idx * 40 // len(source_paths))
             status_queue.put({
@@ -747,6 +819,7 @@ def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compres
             else:
                 source_full = os.path.join(source_conn.mount_point, source_path.lstrip('/'))
                 shutil.copytree(source_full, dest_local, dirs_exist_ok=True)
+        
         archive_path = job_subfolder / f'backup_{timestamp}.tar.gz'
         status_queue.put({
             'job_id': job_id,
@@ -754,22 +827,75 @@ def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compres
             'progress': 75,
             'message': 'Compressing archive...'
         })
-        # Build tar explicitly from temp directory
+        
         with tarfile.open(archive_path, "w:gz") as tar:
             for root, dirs, files in os.walk(temp_data_dir):
                 for name in files:
                     item_path = os.path.join(root, name)
                     rel_path = os.path.relpath(item_path, temp_data_dir)
                     safe_add(tar, item_path, arcname=rel_path)
-            tar.close() # force flush
+            tar.close()
+        
         size_mb = archive_path.stat().st_size / (1024 * 1024)
-        # Upload to destination (if remote)
+       
+        # Upload archive to remote in job_name/timestamp/ structure
+        job_name = job_config.get('name', 'Unknown Job').replace(' ', '_')
+        
+        status_queue.put({
+            'job_id': job_id,
+            'status': 'running',
+            'progress': 85,
+            'message': f'Creating remote folders for {job_name}...'
+        })
+        
         if isinstance(dest_conn, SSHConnection):
-            upload_via_sftp(dest_conn, str(archive_path), dest_path)
+            # Build remote path: dest_path/job_name/timestamp/
+            remote_job_folder = f"{dest_path.rstrip('/')}/{job_name}/{timestamp}"
+            remote_archive_file = f"{remote_job_folder}/backup_{job_name}_{timestamp}.tar.gz"
+            
+            # Create folder structure on remote via SSH
+            logger.info(f"Creating remote folder structure: {remote_job_folder}")
+            stdout, stderr = dest_conn.execute_command(f"mkdir -p '{remote_job_folder}'")
+            if stderr and "File exists" not in stderr:
+                logger.warning(f"mkdir stderr (ignoring): {stderr}")
+            
+            # Verify folder was created
+            stdout, stderr = dest_conn.execute_command(f"test -d '{remote_job_folder}' && echo 'exists'")
+            if 'exists' not in stdout:
+                raise Exception(f"Failed to create remote folder: {remote_job_folder}")
+            
+            logger.info(f"Remote folder verified: {remote_job_folder}")
+            
+            # Upload tar.gz via SFTP
+            status_queue.put({
+                'job_id': job_id,
+                'status': 'running',
+                'progress': 90,
+                'message': f'Uploading backup archive...'
+            })
+            
+            logger.info(f"Uploading {archive_path} to {remote_archive_file}")
+            dest_conn.sftp.put(str(archive_path), remote_archive_file)
+            
+            # Verify upload
+            try:
+                remote_stat = dest_conn.sftp.stat(remote_archive_file)
+                logger.info(f"Upload successful: {remote_archive_file} ({remote_stat.st_size} bytes)")
+            except:
+                raise Exception(f"Upload verification failed for {remote_archive_file}")
+                
         elif hasattr(dest_conn, "mount_point"):
-            shutil.copy2(archive_path, os.path.join(dest_conn.mount_point, dest_path.lstrip('/')))
+            # For SMB/NFS mounts
+            remote_job_folder = f"{dest_path.rstrip('/')}/{job_name}/{timestamp}"
+            remote_full = os.path.join(dest_conn.mount_point, remote_job_folder.lstrip('/'))
+            os.makedirs(remote_full, exist_ok=True)
+            
+            remote_archive_file = os.path.join(remote_full, f"backup_{job_name}_{timestamp}.tar.gz")
+            shutil.copy2(archive_path, remote_archive_file)
+            logger.info(f"Copied to remote mount: {remote_archive_file}")
         else:
-            logger.warning("Unknown destination type: archive not uploaded")
+            raise Exception("Unknown destination connection type")
+       
         archive_id = str(uuid.uuid4())
         duration = time.time() - job_config['start_time']
         create_archive_record(archive_id, job_id, job_config, duration, archive_path, size_mb, data_dir)
@@ -911,7 +1037,6 @@ def restore_worker(restore_id: str, restore_config: Dict, status_queue: Queue):
         logger.info(f"Restore worker started for {restore_id}")
         archive = restore_config['archive']
         dest_server_id = restore_config['dest_server_id']
-        # --- NEW: auto-restore to original source paths if requested ---
         dest_path = restore_config.get('dest_path')
         restore_to_original = dest_path in [None, '', 'original']
         data_dir = Path(restore_config['_data_dir'])
@@ -932,9 +1057,19 @@ def restore_worker(restore_id: str, restore_config: Dict, status_queue: Queue):
         if not source_server:
             raise Exception("Backup storage server not found")
        
-        dest_server = next((s for s in all_servers if s['id'] == dest_server_id), None)
-        if not dest_server:
-            raise Exception("Restore destination not found")
+        # Use source_server_id from archive when restoring to original
+        if restore_to_original:
+            original_source_server_id = archive.get('source_server_id')
+            if not original_source_server_id:
+                raise Exception("Cannot restore to original: source_server_id not found in archive")
+            dest_server = next((s for s in all_servers if s['id'] == original_source_server_id), None)
+            if not dest_server:
+                raise Exception(f"Original source server '{original_source_server_id}' not found")
+            logger.info(f"Restoring to original source server: {dest_server.get('name')}")
+        else:
+            dest_server = next((s for s in all_servers if s['id'] == dest_server_id), None)
+            if not dest_server:
+                raise Exception("Restore destination not found")
        
         archive_path = Path(archive['archive_path'])
         if not archive_path.exists():
@@ -1033,7 +1168,7 @@ def restore_worker(restore_id: str, restore_config: Dict, status_queue: Queue):
             job_id=restore_id,
             job_name=archive.get('job_name', 'Restore'),
             status='success',
-            dest_path=dest_path,
+            dest_path=dest_path if dest_path else 'original location',
             duration=duration,
             restore=True
         )
@@ -1073,7 +1208,6 @@ class BackupManager:
         self.statuses = self._load_statuses()
         self.worker_processes = {}
         self.status_updater = None
-        # Cache servers in memory for fast access
         self.servers = {s['id']: s for s in self.get_all_servers()}
        
     def _load_jobs(self):
@@ -1161,7 +1295,7 @@ class BackupManager:
         return self.jobs
        
     def delete_job(self, job_id: str) -> bool:
-        """Delete a job, its metadata, and its remote backup folder on the destination server."""
+        """Delete a job and all its backups from both local and remote storage"""
         job = self.jobs.get(job_id)
         if not job:
             logger.warning(f"Job {job_id} not found.")
@@ -1171,63 +1305,26 @@ class BackupManager:
         dest_server_id = job.get("destination_server_id")
         dest_path = job.get("destination_path")
 
-        # 1️⃣ Connect to destination server and delete backup folder
+        # Delete from remote destination server
         if dest_server_id and dest_path:
             dest_server = self.servers.get(dest_server_id)
             if dest_server:
                 try:
-                    server_type = dest_server.get("type")
-                    logger.info(f"Deleting backup from destination server ({server_type}) at {dest_path}")
-
-                    if server_type == "ssh":
-                        import paramiko
-                        ssh = paramiko.SSHClient()
-                        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                        ssh.connect(
-                            dest_server["host"],
-                            port=int(dest_server.get("port", 22)),
-                            username=dest_server["username"],
-                            password=dest_server["password"],
-                            timeout=10,
-                        )
-
-                        remote_dir = f"{dest_path.rstrip('/')}/{job_name}"
-                        ssh.exec_command(f"rm -rf '{remote_dir}'")
-                        ssh.close()
-                        logger.info(f"Deleted remote folder: {remote_dir}")
-
-                    elif server_type == "smb":
-                        # SMB cleanup
-                        from smb.SMBConnection import SMBConnection
-                        conn = SMBConnection(
-                            dest_server["username"], dest_server["password"],
-                            "jarvis", dest_server["host"],
-                            use_ntlm_v2=True, is_direct_tcp=True
-                        )
-                        connected = conn.connect(dest_server["host"], int(dest_server.get("port", 445)))
-                        if connected:
-                            share = dest_server["share"]
-                            remote_dir = f"{dest_path.strip('/')}/{job_name}"
-                            for f in conn.listPath(share, remote_dir):
-                                conn.deleteFiles(share, f"{remote_dir}/{f.filename}")
-                            conn.deleteDirectory(share, remote_dir)
-                            conn.close()
-                            logger.info(f"Deleted SMB folder: {remote_dir}")
-
-                    elif server_type == "nfs":
-                        # NFS mount cleanup (if mounted locally)
-                        local_mount = Path("/mnt/nfs") / dest_server["export_path"].strip("/")
-                        remote_dir = local_mount / job_name
-                        if remote_dir.exists():
-                            shutil.rmtree(remote_dir)
-                            logger.info(f"Deleted NFS folder: {remote_dir}")
-
+                    logger.info(f"Connecting to destination server to delete backups for job {job_name}")
+                    dest_conn = create_connection(dest_server['type'], **dest_server)
+                    if dest_conn.connect():
+                        remote_job_folder = f"{dest_path.rstrip('/')}/{job_name}"
+                        delete_remote_directory(dest_conn, remote_job_folder)
+                        dest_conn.disconnect()
+                        logger.info(f"Deleted remote job folder: {remote_job_folder}")
+                    else:
+                        logger.error(f"Failed to connect to destination server for deletion")
                 except Exception as e:
-                    logger.error(f"Failed to delete remote backup folder for {job_name}: {e}")
+                    logger.error(f"Failed to delete remote backups for {job_name}: {e}")
             else:
                 logger.warning(f"Destination server not found for job {job_id}")
 
-        # 2️⃣ Delete local metadata
+        # Delete local metadata
         self.jobs.pop(job_id, None)
         self._save_jobs()
 
@@ -1235,7 +1332,7 @@ class BackupManager:
             del self.statuses[job_id]
             self._save_statuses()
 
-        # 3️⃣ Delete local archive folder (mirror)
+        # Delete local archive folder
         local_dir = get_job_archive_dir(self.data_dir, job_name)
         if local_dir.exists():
             try:
@@ -1243,6 +1340,15 @@ class BackupManager:
                 logger.info(f"Deleted local archive folder: {local_dir}")
             except Exception as e:
                 logger.error(f"Failed to delete local archive folder {local_dir}: {e}")
+
+        # Remove archives from backup_archives.json
+        archives_file = self.data_dir / 'backup_archives.json'
+        if archives_file.exists():
+            with open(archives_file, 'r') as f:
+                all_archives = json.load(f)
+            filtered_archives = [a for a in all_archives if a.get('job_id') != job_id]
+            with open(archives_file, 'w') as f:
+                json.dump(filtered_archives, f, indent=2)
 
         return True
    
@@ -1260,7 +1366,6 @@ class BackupManager:
         servers.append(server_config)
         with open(self.data_dir / 'backup_servers.json', 'w') as f:
             json.dump(servers, f, indent=2)
-        # Update cache
         self.servers[server_id] = server_config
         return server_id
    
@@ -1270,7 +1375,6 @@ class BackupManager:
         if len(filtered) < len(servers):
             with open(self.data_dir / 'backup_servers.json', 'w') as f:
                 json.dump(filtered, f, indent=2)
-            # Update cache
             self.servers.pop(server_id, None)
             return True
         return False
@@ -1284,20 +1388,75 @@ class BackupManager:
    
     def delete_archive(self, archive_id: str) -> bool:
         archives = self.get_all_archives()
-        filtered = [a for a in archives if a.get('id') != archive_id]
-        if len(filtered) < len(archives):
-            with open(self.data_dir / 'backup_archives.json', 'w') as f:
-                json.dump(filtered, f, indent=2)
-            # Remove physical file
-            archive = next((a for a in archives if a['id'] == archive_id), None)
-            if archive and Path(archive['archive_path']).exists():
+        archive = next((a for a in archives if a.get('id') == archive_id), None)
+        if not archive:
+            logger.error(f"Archive {archive_id} not found")
+            return False
+       
+        # Delete from remote destination FIRST
+        dest_server_id = archive.get('dest_server_id')
+        if dest_server_id:
+            dest_server = self.servers.get(dest_server_id)
+            if dest_server:
+                dest_conn = None
                 try:
-                    Path(archive['archive_path']).unlink()
-                    logger.info(f"Deleted archive file: {archive['archive_path']}")
+                    logger.info(f"Connecting to remote to delete archive {archive_id}")
+                    dest_conn = create_connection(dest_server['type'], **dest_server)
+                    if dest_conn.connect():
+                        # Extract timestamp from archive path
+                        archive_path = Path(archive['archive_path'])
+                        timestamp = archive_path.parent.name
+                        job_name = archive.get('job_name', 'Unknown').replace(' ', '_')
+                        dest_path = archive.get('destination_path', '')
+                       
+                        remote_folder = f"{dest_path.rstrip('/')}/{job_name}/{timestamp}"
+                        logger.info(f"Deleting remote folder: {remote_folder}")
+                        
+                        if isinstance(dest_conn, SSHConnection):
+                            stdout, stderr = dest_conn.execute_command(f"rm -rf '{remote_folder}'")
+                            if stderr and "No such file" not in stderr:
+                                logger.error(f"Remote delete stderr: {stderr}")
+                            else:
+                                logger.info(f"Deleted remote archive folder: {remote_folder}")
+                        elif isinstance(dest_conn, (SMBConnection, NFSConnection)):
+                            full_path = os.path.join(dest_conn.mount_point, remote_folder.lstrip('/'))
+                            if os.path.exists(full_path):
+                                shutil.rmtree(full_path)
+                                logger.info(f"Deleted remote archive folder: {full_path}")
+                            else:
+                                logger.warning(f"Remote path doesn't exist: {full_path}")
+                        
+                        dest_conn.disconnect()
+                    else:
+                        logger.error(f"Failed to connect to destination server")
                 except Exception as e:
-                    logger.warning(f"Failed to delete archive file {archive['archive_path']}: {e}")
-            return True
-        return False
+                    logger.error(f"Failed to delete remote archive: {e}", exc_info=True)
+                finally:
+                    if dest_conn and dest_conn.connected:
+                        dest_conn.disconnect()
+            else:
+                logger.warning(f"Destination server {dest_server_id} not found in servers list")
+       
+        # Delete local folder (entire timestamp folder)
+        if archive and Path(archive['archive_path']).exists():
+            try:
+                archive_path = Path(archive['archive_path'])
+                timestamp_folder = archive_path.parent
+                
+                # Delete entire timestamp folder
+                if timestamp_folder.exists():
+                    shutil.rmtree(timestamp_folder)
+                    logger.info(f"Deleted local archive folder: {timestamp_folder}")
+            except Exception as e:
+                logger.error(f"Failed to delete local archive folder: {e}")
+       
+        # Remove from JSON
+        filtered = [a for a in archives if a.get('id') != archive_id]
+        with open(self.data_dir / 'backup_archives.json', 'w') as f:
+            json.dump(filtered, f, indent=2)
+        
+        logger.info(f"Archive {archive_id} deleted successfully")
+        return True
    
     def start_restore(self, archive_id: str, dest_server_id: str, dest_path: str,
                      selective_items: list = None) -> str:
@@ -1327,11 +1486,14 @@ class BackupManager:
         self._save_statuses()
         return restore_id
 
+    def get_restore_status(self, restore_id: str) -> Dict:
+        """Get restore status"""
+        return self.statuses.get(restore_id, {})
+
     def import_archives(self):
         """Import existing .tar.gz files"""
         return import_existing_archives(self.data_dir)
 
-# API Routes
 backup_manager = None
 
 async def init_backup_module(app):
@@ -1463,6 +1625,15 @@ async def restore_backup(request):
     except Exception as e:
         return web.json_response({'error': str(e)}, status=500)
 
+async def get_restore_status(request):
+    """Get restore status"""
+    try:
+        restore_id = request.match_info['restore_id']
+        status = backup_manager.get_restore_status(restore_id)
+        return web.json_response({'success': True, 'status': status})
+    except Exception as e:
+        return web.json_response({'error': str(e)}, status=500)
+
 async def import_archives(request):
     try:
         count = backup_manager.import_archives()
@@ -1488,6 +1659,7 @@ def setup_routes(app):
     app.router.add_post('/api/backup/test-connection', test_connection)
     app.router.add_post('/api/backup/browse', browse_directory)
     app.router.add_post('/api/backup/restore', restore_backup)
+    app.router.add_get('/api/backup/restore/{restore_id}/status', get_restore_status)
    
     app.on_startup.append(init_backup_module)
     app.on_cleanup.append(cleanup_backup_module)
