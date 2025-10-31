@@ -1515,7 +1515,7 @@ class BackupManager:
         return import_existing_archives(self.data_dir)
     
     def browse_archive(self, archive_id: str) -> List[Dict]:
-        """Browse contents of an archive"""
+        """Browse contents of an archive - memory efficient"""
         archives = self.get_all_archives()
         archive = next((a for a in archives if a['id'] == archive_id), None)
         if not archive:
@@ -1526,15 +1526,24 @@ class BackupManager:
             raise Exception("Archive file not found")
         
         items = []
-        with tarfile.open(archive_path, "r:gz") as tar:
-            for member in tar.getmembers():
-                items.append({
-                    'name': member.name,
-                    'path': member.name,
-                    'is_dir': member.isdir(),
-                    'size': member.size,
-                    'mtime': member.mtime
-                })
+        
+        try:
+            # Read tar file efficiently without loading everything into memory
+            with tarfile.open(archive_path, "r|gz") as tar:  # Using stream mode "r|gz" instead of "r:gz"
+                for member in tar:
+                    # Only get name, not full member object to save memory
+                    items.append({
+                        'name': member.name,
+                        'path': member.name,
+                        'is_dir': member.isdir(),
+                        'size': member.size if hasattr(member, 'size') else 0,
+                        'mtime': member.mtime if hasattr(member, 'mtime') else 0
+                    })
+        except Exception as e:
+            logger.error(f"Error reading tar: {e}", exc_info=True)
+            raise Exception(f"Failed to read archive: {str(e)}")
+        
+        logger.info(f"Loaded {len(items)} items from archive {archive_id}")
         return items
 
 backup_manager = None
