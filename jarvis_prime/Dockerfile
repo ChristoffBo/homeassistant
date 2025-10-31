@@ -22,7 +22,6 @@ RUN apt-get update && apt-get install -y \
 # ==========================================
 RUN apt-get update && apt-get install -y \
     rsync cifs-utils nfs-common tar \
-    net-tools arp-scan iproute2 dnsutils \
  && rm -rf /var/lib/apt/lists/*
 
 # ----------------------------
