@@ -3,7 +3,7 @@
 #
 # Jarvis Prime — LLM client (EnviroGuard-first, hard caps, Phi-family chat format, Lexi fallback riffs)
 #
-# FIXED: Now properly checks os.environ["LLM_ENABLED"] that EnviroGuard sets
+# FIXED: Thread-safe timeout using threading.Timer instead of signal.alarm
 #
 # Public entry points:
 #   ensure_loaded(...)
@@ -26,7 +26,6 @@ import urllib.error
 import http.client
 import re
 import threading
-import signal
 import uuid
 from typing import Optional, Dict, Any, Tuple, List
 from collections import deque
@@ -929,44 +928,54 @@ def _build_prompt_with_rag_messages(messages: List[Dict[str, str]], system_pream
     return messages, sys_prompt
 
 # ============================
-# Core generation (shared)
+# Core generation (FIXED: thread-safe timeout)
 # ============================
-def _sigalrm_handler(signum, frame):
-    raise TimeoutError("gen timeout")
+class _TimeoutException(Exception):
+    pass
 
 def _llama_generate(prompt: str, timeout: int, max_tokens: int, with_grammar: bool = False) -> str:
-    try:
-        # FIXED: Only set signal handlers in main thread (Docker/HA compatibility)
-        if hasattr(signal, "SIGALRM") and threading.current_thread() is threading.main_thread():
-            signal.signal(signal.SIGALRM, _sigalrm_handler)
-            signal.alarm(max(1, int(timeout)))
+    """
+    Thread-safe LLM generation with timeout.
+    Uses threading.Timer instead of signal.alarm for worker thread compatibility.
+    """
+    result = {"output": None, "error": None}
+    
+    def _generate():
+        try:
+            params = dict(
+                prompt=prompt,
+                max_tokens=max(1, int(max_tokens)),
+                temperature=0.35,
+                top_p=0.9,
+                repeat_penalty=1.10,
+                stop=_stops_for_model(),
+            )
+            params = _maybe_with_grammar(params, with_grammar)
 
-        params = dict(
-            prompt=prompt,
-            max_tokens=max(1, int(max_tokens)),
-            temperature=0.35,
-            top_p=0.9,
-            repeat_penalty=1.10,
-            stop=_stops_for_model(),
-        )
-        params = _maybe_with_grammar(params, with_grammar)
+            t0 = time.time()
+            out = LLM(**params)
+            ttft = time.time() - t0
+            _log(f"TTFT ~ {ttft:.2f}s")
 
-        t0 = time.time()
-        out = LLM(**params)
-        ttft = time.time() - t0
-        _log(f"TTFT ~ {ttft:.2f}s")
-
-        if hasattr(signal, "SIGALRM") and threading.current_thread() is threading.main_thread():
-            signal.alarm(0)
-
-        txt = (out.get("choices") or [{}])[0].get("text", "")
-        return (txt or "").strip()
-    except TimeoutError as e:
-        _log(f"llama timeout: {e}")
+            txt = (out.get("choices") or [{}])[0].get("text", "")
+            result["output"] = (txt or "").strip()
+        except Exception as e:
+            result["error"] = str(e)
+    
+    # Run generation in a separate thread with timeout
+    gen_thread = threading.Thread(target=_generate, daemon=True)
+    gen_thread.start()
+    gen_thread.join(timeout=max(1, int(timeout)))
+    
+    if gen_thread.is_alive():
+        _log(f"llama timeout after {timeout}s (thread still running, will be abandoned)")
         return ""
-    except Exception as e:
-        _log(f"llama error: {e}")
+    
+    if result["error"]:
+        _log(f"llama error: {result['error']}")
         return ""
+    
+    return result["output"] or ""
 
 def _do_generate(prompt: str, *, timeout: int, base_url: str, model_url: str, model_name_hint: str, max_tokens: int, with_grammar_auto: bool=False) -> str:
     use_grammar = _should_use_grammar_auto() if with_grammar_auto else False
