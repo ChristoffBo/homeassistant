@@ -639,14 +639,23 @@
     document.getElementById('backup-stat-total').textContent = backupState.archives.length;
     document.getElementById('backup-stat-jobs').textContent = backupState.jobs.length;
     
-    const totalSize = backupState.archives.reduce((sum, archive) => sum + (archive.size || 0), 0);
-    document.getElementById('backup-stat-size').textContent = formatBytes(totalSize);
+    // Fix: use size_mb and convert to bytes
+    const totalSizeBytes = backupState.archives.reduce((sum, archive) => {
+      const sizeMB = archive.size_mb || 0;
+      return sum + (sizeMB * 1024 * 1024);
+    }, 0);
+    document.getElementById('backup-stat-size').textContent = formatBytes(totalSizeBytes);
     
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const todayTimestamp = today.getTime() / 1000;
     
-    const todayArchives = backupState.archives.filter(a => (a.timestamp || 0) >= todayTimestamp);
+    // Use created_at instead of timestamp
+    const todayArchives = backupState.archives.filter(a => {
+      if (!a.created_at) return false;
+      const archiveDate = new Date(a.created_at);
+      return archiveDate >= today;
+    });
+    
     const successCount = todayArchives.filter(a => a.status === 'completed').length;
     const failedCount = todayArchives.filter(a => a.status === 'failed').length;
     
