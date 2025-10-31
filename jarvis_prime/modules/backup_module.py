@@ -826,6 +826,8 @@ def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compres
                 shutil.copytree(source_full, dest_local, dirs_exist_ok=True)
         
         archive_path = job_subfolder / f'backup_{timestamp}.tar.gz'
+        manifest_path = job_subfolder / f'backup_{timestamp}.manifest.json'
+        
         status_queue.put({
             'job_id': job_id,
             'status': 'running',
@@ -833,13 +835,40 @@ def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compres
             'message': 'Compressing archive...'
         })
         
+        # Build manifest while creating archive
+        manifest_items = []
         with tarfile.open(archive_path, "w:gz") as tar:
             for root, dirs, files in os.walk(temp_data_dir):
+                for name in dirs:
+                    item_path = os.path.join(root, name)
+                    rel_path = os.path.relpath(item_path, temp_data_dir)
+                    manifest_items.append({
+                        'path': rel_path,
+                        'is_dir': True,
+                        'size': 0
+                    })
                 for name in files:
                     item_path = os.path.join(root, name)
                     rel_path = os.path.relpath(item_path, temp_data_dir)
+                    try:
+                        size = os.path.getsize(item_path)
+                    except:
+                        size = 0
+                    manifest_items.append({
+                        'path': rel_path,
+                        'is_dir': False,
+                        'size': size
+                    })
                     safe_add(tar, item_path, arcname=rel_path)
             tar.close()
+        
+        # Save manifest locally
+        try:
+            with open(manifest_path, 'w') as f:
+                json.dump(manifest_items, f)
+            logger.info(f"Saved manifest with {len(manifest_items)} items")
+        except Exception as e:
+            logger.warning(f"Failed to save manifest: {e}")
         
         size_mb = archive_path.stat().st_size / (1024 * 1024)
        
@@ -882,6 +911,15 @@ def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compres
             logger.info(f"Uploading {archive_path} to {remote_archive_file}")
             dest_conn.sftp.put(str(archive_path), remote_archive_file)
             
+            # Upload manifest too
+            if manifest_path.exists():
+                remote_manifest_file = f"{remote_job_folder}/backup_{job_name}_{timestamp}.manifest.json"
+                try:
+                    dest_conn.sftp.put(str(manifest_path), remote_manifest_file)
+                    logger.info(f"Uploaded manifest to {remote_manifest_file}")
+                except Exception as e:
+                    logger.warning(f"Failed to upload manifest: {e}")
+            
             # Verify upload
             try:
                 remote_stat = dest_conn.sftp.stat(remote_archive_file)
@@ -898,6 +936,15 @@ def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compres
             remote_archive_file = os.path.join(remote_full, f"backup_{job_name}_{timestamp}.tar.gz")
             shutil.copy2(archive_path, remote_archive_file)
             logger.info(f"Copied to remote mount: {remote_archive_file}")
+            
+            # Copy manifest too
+            if manifest_path.exists():
+                remote_manifest_file = os.path.join(remote_full, f"backup_{job_name}_{timestamp}.manifest.json")
+                try:
+                    shutil.copy2(manifest_path, remote_manifest_file)
+                    logger.info(f"Copied manifest to {remote_manifest_file}")
+                except Exception as e:
+                    logger.warning(f"Failed to copy manifest: {e}")
         else:
             raise Exception("Unknown destination connection type")
        
@@ -1514,8 +1561,8 @@ class BackupManager:
         """Import existing .tar.gz files"""
         return import_existing_archives(self.data_dir)
     
-    def browse_archive(self, archive_id: str) -> List[Dict]:
-        """Browse contents of an archive - memory efficient"""
+    def browse_archive(self, archive_id: str, page: int = 1, page_size: int = 1000) -> Dict:
+        """Browse archive contents - uses manifest if available, otherwise smart sampling"""
         archives = self.get_all_archives()
         archive = next((a for a in archives if a['id'] == archive_id), None)
         if not archive:
@@ -1525,26 +1572,89 @@ class BackupManager:
         if not archive_path.exists():
             raise Exception("Archive file not found")
         
-        items = []
+        # Try to load manifest first (fast path)
+        manifest_path = archive_path.with_suffix('.manifest.json')
+        if manifest_path.exists():
+            try:
+                logger.info(f"Loading manifest from {manifest_path}")
+                with open(manifest_path, 'r') as f:
+                    all_items = json.load(f)
+                
+                # Paginate results
+                total_items = len(all_items)
+                start_idx = (page - 1) * page_size
+                end_idx = start_idx + page_size
+                items = all_items[start_idx:end_idx]
+                
+                return {
+                    'items': items,
+                    'total': total_items,
+                    'page': page,
+                    'page_size': page_size,
+                    'total_pages': (total_items + page_size - 1) // page_size,
+                    'source': 'manifest'
+                }
+            except Exception as e:
+                logger.warning(f"Failed to load manifest: {e}, falling back to tar scan")
+        
+        # Fallback: Smart sampling from tar (for old backups without manifest)
+        logger.info(f"No manifest found, using smart sampling for {archive_path}")
+        directories = {}
+        files_by_dir = {}
+        total_files = 0
+        max_files_per_dir = 100
         
         try:
-            # Read tar file efficiently without loading everything into memory
-            with tarfile.open(archive_path, "r|gz") as tar:  # Using stream mode "r|gz" instead of "r:gz"
+            with tarfile.open(archive_path, "r|gz") as tar:
                 for member in tar:
-                    # Only get name, not full member object to save memory
+                    total_files += 1
+                    
+                    if member.isdir():
+                        directories[member.name] = {
+                            'path': member.name,
+                            'is_dir': True,
+                            'size': 0
+                        }
+                    else:
+                        parent = str(Path(member.name).parent)
+                        if parent == '.':
+                            parent = '/'
+                        
+                        if parent not in files_by_dir:
+                            files_by_dir[parent] = []
+                        
+                        if len(files_by_dir[parent]) < max_files_per_dir:
+                            files_by_dir[parent].append({
+                                'path': member.name,
+                                'is_dir': False,
+                                'size': member.size if hasattr(member, 'size') else 0
+                            })
+            
+            # Build result
+            items = list(directories.values())
+            for dir_path, files in files_by_dir.items():
+                items.extend(files)
+                if len(files) >= max_files_per_dir:
                     items.append({
-                        'name': member.name,
-                        'path': member.name,
-                        'is_dir': member.isdir(),
-                        'size': member.size if hasattr(member, 'size') else 0,
-                        'mtime': member.mtime if hasattr(member, 'mtime') else 0
+                        'path': f'__note__{dir_path}',
+                        'is_dir': False,
+                        'size': 0,
+                        'note': f'[{dir_path}] ... showing first {max_files_per_dir} files only'
                     })
+            
+            return {
+                'items': items,
+                'total': len(items),
+                'page': 1,
+                'page_size': len(items),
+                'total_pages': 1,
+                'source': 'sampling',
+                'sampled': True
+            }
+            
         except Exception as e:
             logger.error(f"Error reading tar: {e}", exc_info=True)
             raise Exception(f"Failed to read archive: {str(e)}")
-        
-        logger.info(f"Loaded {len(items)} items from archive {archive_id}")
-        return items
 
 backup_manager = None
 
@@ -1694,11 +1804,14 @@ async def import_archives(request):
         return web.json_response({'error': str(e)}, status=500)
 
 async def browse_archive_contents(request):
-    """Browse contents of a backup archive - NEW API ENDPOINT"""
+    """Browse contents of a backup archive - uses manifest with pagination"""
     try:
         archive_id = request.match_info['archive_id']
-        items = backup_manager.browse_archive(archive_id)
-        return web.json_response({'success': True, 'items': items})
+        page = int(request.query.get('page', 1))
+        page_size = int(request.query.get('page_size', 1000))
+        
+        result = backup_manager.browse_archive(archive_id, page, page_size)
+        return web.json_response({'success': True, **result})
     except Exception as e:
         logger.error(f"Failed to browse archive: {e}", exc_info=True)
         return web.json_response({'error': str(e)}, status=500)
