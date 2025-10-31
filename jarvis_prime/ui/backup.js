@@ -1060,8 +1060,8 @@
     backupBrowseDirectory('/');
   };
 
-  // === FIXED: Browse archive contents INLINE in restore modal ===
-  window.backupBrowseBackupContents = async function() {
+  // === FIXED: Browse archive contents with pagination ===
+  window.backupBrowseBackupContents = async function(page = 1) {
     const archive = backupState.currentRestoreArchive;
     if (!archive) {
       toast('No archive selected', 'error');
@@ -1069,20 +1069,23 @@
     }
     
     backupState.selectedPaths = backupState.restoreSelectedItems || [];
+    backupState.currentArchivePage = page;
     
     const itemsDiv = document.getElementById('restore-selected-items');
     
     try {
-      itemsDiv.innerHTML = '<div class="text-muted">Loading archive contents... This may take a moment for large archives.</div>';
+      itemsDiv.innerHTML = '<div class="text-muted">Loading archive contents... This may take a moment.</div>';
       
-      const result = await backupFetch(`api/backup/archives/${archive.id}/contents`);
+      const result = await backupFetch(`api/backup/archives/${archive.id}/contents?page=${page}&page_size=1000`);
       
       if (!result.success) {
         throw new Error(result.error || 'Failed to load archive contents');
       }
       
-      renderArchiveContentsInline(result.items || []);
-      toast(`Loaded ${result.items.length} items from backup`, 'success');
+      renderArchiveContentsInline(result.items || [], result);
+      
+      const source = result.source === 'manifest' ? 'from index' : 'sampled';
+      toast(`Loaded ${result.items.length} items ${source}`, 'success');
     } catch (error) {
       toast('Failed to load archive contents: ' + error.message, 'error');
       itemsDiv.innerHTML = `<div style="padding: 12px; color: #ef4444; background: rgba(239, 68, 68, 0.1); border-radius: 4px;">
@@ -1091,7 +1094,7 @@
     }
   };
   
-  function renderArchiveContentsInline(items) {
+  function renderArchiveContentsInline(items, metadata) {
     const container = document.getElementById('restore-selected-items');
     
     if (items.length === 0) {
@@ -1105,11 +1108,36 @@
       return a.path.localeCompare(b.path);
     });
     
-    let html = '<div style="max-height: 300px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 4px; margin-top: 8px;">';
+    let html = '';
+    
+    // Show pagination info if available
+    if (metadata && metadata.total_pages > 1) {
+      html += `<div style="padding: 8px; background: rgba(14, 165, 233, 0.1); border-radius: 4px; margin-bottom: 8px; font-size: 12px;">
+        Page ${metadata.page} of ${metadata.total_pages} (${metadata.total} total items)
+        <div style="margin-top: 4px;">
+          ${metadata.page > 1 ? `<button class="btn btn-sm" onclick="backupBrowseBackupContents(${metadata.page - 1})" style="padding: 2px 8px; font-size: 11px;">← Previous</button>` : ''}
+          ${metadata.page < metadata.total_pages ? `<button class="btn btn-sm" onclick="backupBrowseBackupContents(${metadata.page + 1})" style="padding: 2px 8px; font-size: 11px; margin-left: 4px;">Next →</button>` : ''}
+        </div>
+      </div>`;
+    }
+    
+    if (metadata && metadata.sampled) {
+      html += `<div style="padding: 8px; background: rgba(251, 191, 36, 0.1); border: 1px solid rgba(251, 191, 36, 0.3); border-radius: 4px; margin-bottom: 8px; font-size: 12px; color: #f59e0b;">
+        ⚠️ Showing sampled view (old backup without index). All folders + sample of files shown.
+      </div>`;
+    }
+    
+    html += '<div style="max-height: 300px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 4px;">';
     html += '<table style="width: 100%; border-collapse: collapse; font-size: 13px;">';
     html += '<thead style="position: sticky; top: 0; background: var(--surface-secondary); z-index: 1;"><tr style="border-bottom: 1px solid var(--border-color);"><th style="text-align: left; padding: 8px;">Path</th><th style="text-align: right; padding: 8px; width: 100px;">Size</th><th style="width: 80px; padding: 8px;"></th></tr></thead><tbody>';
     
     items.forEach(item => {
+      // Skip note items
+      if (item.path && (item.path.startsWith('__note__') || item.note)) {
+        html += `<tr style="background: rgba(251, 191, 36, 0.1);"><td colspan="3" style="padding: 8px; font-size: 11px; color: #f59e0b;">${item.note || item.path}</td></tr>`;
+        return;
+      }
+      
       const icon = item.is_dir ? '📁' : '📄';
       const size = item.is_dir ? '' : formatBytes(item.size);
       const isSelected = backupState.selectedPaths.includes(item.path);
