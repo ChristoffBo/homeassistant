@@ -3,6 +3,11 @@
 Jarvis Prime - Backup Module
 Agentless backup system with SSH/SMB/NFS support
 Runs in separate process to avoid blocking main Jarvis
+
+FIXES:
+- Added browse_archive_contents API to list files in tar.gz
+- Implemented selective restore with file filtering
+- Fixed UI blocking issues with modal dialogs
 """
 import os
 import json
@@ -1029,7 +1034,7 @@ def sync_directories(source, dest):
                 shutil.copy2(s_file, d_file)
 
 def restore_worker(restore_id: str, restore_config: Dict, status_queue: Queue):
-    """Worker for restore operations"""
+    """Worker for restore operations with selective restore support"""
     start_time = time.time()
     temp_dir = None
    
@@ -1038,6 +1043,7 @@ def restore_worker(restore_id: str, restore_config: Dict, status_queue: Queue):
         archive = restore_config['archive']
         dest_server_id = restore_config['dest_server_id']
         dest_path = restore_config.get('dest_path')
+        selective_items = restore_config.get('selective_items', [])
         restore_to_original = dest_path in [None, '', 'original']
         data_dir = Path(restore_config['_data_dir'])
        
@@ -1110,8 +1116,22 @@ def restore_worker(restore_id: str, restore_config: Dict, status_queue: Queue):
             'message': 'Extracting archive...'
         })
        
+        # Extract with selective filtering
         with tarfile.open(archive_path, "r:gz") as tar:
-            tar.extractall(path=temp_dir)
+            if selective_items:
+                # Extract only selected items
+                logger.info(f"Selective restore: {len(selective_items)} items")
+                for item_path in selective_items:
+                    try:
+                        tar.extract(item_path, path=temp_dir)
+                        logger.info(f"Extracted: {item_path}")
+                    except KeyError:
+                        logger.warning(f"Item not found in archive: {item_path}")
+                    except Exception as e:
+                        logger.warning(f"Failed to extract {item_path}: {e}")
+            else:
+                # Extract everything
+                tar.extractall(path=temp_dir)
        
         status_queue.put({
             'restore_id': restore_id,
@@ -1493,6 +1513,29 @@ class BackupManager:
     def import_archives(self):
         """Import existing .tar.gz files"""
         return import_existing_archives(self.data_dir)
+    
+    def browse_archive(self, archive_id: str) -> List[Dict]:
+        """Browse contents of an archive"""
+        archives = self.get_all_archives()
+        archive = next((a for a in archives if a['id'] == archive_id), None)
+        if not archive:
+            raise Exception("Archive not found")
+        
+        archive_path = Path(archive['archive_path'])
+        if not archive_path.exists():
+            raise Exception("Archive file not found")
+        
+        items = []
+        with tarfile.open(archive_path, "r:gz") as tar:
+            for member in tar.getmembers():
+                items.append({
+                    'name': member.name,
+                    'path': member.name,
+                    'is_dir': member.isdir(),
+                    'size': member.size,
+                    'mtime': member.mtime
+                })
+        return items
 
 backup_manager = None
 
@@ -1641,6 +1684,16 @@ async def import_archives(request):
     except Exception as e:
         return web.json_response({'error': str(e)}, status=500)
 
+async def browse_archive_contents(request):
+    """Browse contents of a backup archive - NEW API ENDPOINT"""
+    try:
+        archive_id = request.match_info['archive_id']
+        items = backup_manager.browse_archive(archive_id)
+        return web.json_response({'success': True, 'items': items})
+    except Exception as e:
+        logger.error(f"Failed to browse archive: {e}", exc_info=True)
+        return web.json_response({'error': str(e)}, status=500)
+
 def setup_routes(app):
     app.router.add_post('/api/backup/jobs', create_backup_job)
     app.router.add_get('/api/backup/jobs', get_all_jobs)
@@ -1655,6 +1708,9 @@ def setup_routes(app):
     app.router.add_get('/api/backup/archives', get_archives)
     app.router.add_delete('/api/backup/archives/{archive_id}', delete_archive)
     app.router.add_post('/api/backup/import-archives', import_archives)
+    
+    # NEW: Browse archive contents endpoint
+    app.router.add_get('/api/backup/archives/{archive_id}/contents', browse_archive_contents)
    
     app.router.add_post('/api/backup/test-connection', test_connection)
     app.router.add_post('/api/backup/browse', browse_directory)
