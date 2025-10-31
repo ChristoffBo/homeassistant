@@ -904,7 +904,143 @@
     document.getElementById('restore-selective-group').style.display = isFull ? 'none' : 'block';
   };
 
-  window.backupBrowseRestoreDestination = function() {
+  window.backupBrowseRestoreDestination = async function() {
+    const serverId = document.getElementById('restore-dest-server').value;
+    if (!serverId) {
+      toast('Please select a destination server first', 'error');
+      return;
+    }
+    
+    const server = backupState.servers.find(s => s.id === serverId);
+    if (!server) return;
+    
+    backupState.currentBrowseServer = server;
+    backupState.currentDestBrowsePath = '/';
+    backupState.selectedDestPath = '';
+    
+    // Show inline browser in the restore modal
+    const pathInput = document.getElementById('restore-dest-path');
+    const browseBtn = pathInput.nextElementSibling;
+    
+    // Create inline browser container if it doesn't exist
+    let browserContainer = document.getElementById('restore-dest-browser');
+    if (!browserContainer) {
+      browserContainer = document.createElement('div');
+      browserContainer.id = 'restore-dest-browser';
+      browserContainer.style.cssText = 'margin-top: 8px; padding: 12px; background: var(--surface-secondary); border: 1px solid var(--border-color); border-radius: 4px;';
+      browseBtn.parentElement.appendChild(browserContainer);
+    }
+    
+    browserContainer.innerHTML = '<div class="text-muted">Loading...</div>';
+    
+    try {
+      const result = await backupFetch('api/backup/browse', {
+        method: 'POST',
+        body: JSON.stringify({
+          server_config: server,
+          path: '/'
+        })
+      });
+      
+      if (result.success) {
+        renderDestBrowserInline(result.files || [], '/');
+      } else {
+        throw new Error(result.error || 'Browse failed');
+      }
+    } catch (error) {
+      toast('Failed to browse: ' + error.message, 'error');
+      browserContainer.innerHTML = '<div class="text-muted" style="color: #ef4444;">Failed to load directory</div>';
+    }
+  };
+  
+  async function browseDestPathInline(path) {
+    const browserContainer = document.getElementById('restore-dest-browser');
+    if (!browserContainer || !backupState.currentBrowseServer) return;
+    
+    browserContainer.innerHTML = '<div class="text-muted">Loading...</div>';
+    
+    try {
+      const result = await backupFetch('api/backup/browse', {
+        method: 'POST',
+        body: JSON.stringify({
+          server_config: backupState.currentBrowseServer,
+          path: path
+        })
+      });
+      
+      if (result.success) {
+        backupState.currentDestBrowsePath = path;
+        renderDestBrowserInline(result.files || [], path);
+      } else {
+        throw new Error(result.error || 'Browse failed');
+      }
+    } catch (error) {
+      toast('Failed to browse: ' + error.message, 'error');
+      browserContainer.innerHTML = '<div class="text-muted" style="color: #ef4444;">Failed to load directory</div>';
+    }
+  }
+  
+  function renderDestBrowserInline(files, currentPath) {
+    const container = document.getElementById('restore-dest-browser');
+    if (!container) return;
+    
+    // Sort directories first
+    files.sort((a, b) => {
+      if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    
+    let html = `<div style="margin-bottom: 8px; padding: 8px; background: rgba(14, 165, 233, 0.1); border-radius: 4px; font-family: monospace; font-size: 12px;">
+      <strong>Current:</strong> ${currentPath}
+      <button class="btn btn-sm" onclick="backupUseDestPath('${currentPath.replace(/'/g, "\\'")}') "style="float: right; padding: 2px 8px; font-size: 11px;">Use This Path</button>
+    </div>`;
+    
+    html += '<div style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 4px;">';
+    html += '<table style="width: 100%; border-collapse: collapse; font-size: 13px;"><tbody>';
+    
+    // Parent directory
+    if (currentPath !== '/') {
+      const parent = currentPath.split('/').slice(0, -1).join('/') || '/';
+      html += `
+        <tr style="cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.02);" onclick='browseDestPathInline("${parent.replace(/'/g, "\\'")}") '>
+          <td style="padding: 8px;">📁 ..</td>
+        </tr>
+      `;
+    }
+    
+    // Only show directories
+    files.filter(f => f.is_dir).forEach(file => {
+      const fullPath = currentPath === '/' ? `/${file.name}` : `${currentPath}/${file.name}`;
+      html += `
+        <tr style="cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.02);" onclick='browseDestPathInline("${fullPath.replace(/'/g, "\\'")}") '>
+          <td style="padding: 8px;">📁 ${file.name}</td>
+        </tr>
+      `;
+    });
+    
+    html += '</tbody></table></div>';
+    
+    html += '<div style="margin-top: 8px; text-align: right;">';
+    html += '<button class="btn btn-sm" onclick="backupCloseDestBrowser()" style="padding: 4px 12px; font-size: 12px;">Close Browser</button>';
+    html += '</div>';
+    
+    container.innerHTML = html;
+  }
+  
+  window.backupUseDestPath = function(path) {
+    document.getElementById('restore-dest-path').value = path;
+    backupCloseDestBrowser();
+    toast('Destination path set to: ' + path, 'success');
+  };
+  
+  window.backupCloseDestBrowser = function() {
+    const browser = document.getElementById('restore-dest-browser');
+    if (browser) {
+      browser.remove();
+    }
+  };
+  
+  window.OLD_backupBrowseRestoreDestination = function() {
     const serverId = document.getElementById('restore-dest-server').value;
     if (!serverId) {
       toast('Please select a destination server first', 'error');
@@ -924,7 +1060,7 @@
     backupBrowseDirectory('/');
   };
 
-  // === FIXED: Browse archive contents using new API ===
+  // === FIXED: Browse archive contents INLINE in restore modal ===
   window.backupBrowseBackupContents = async function() {
     const archive = backupState.currentRestoreArchive;
     if (!archive) {
@@ -932,20 +1068,12 @@
       return;
     }
     
-    backupState.explorerSide = 'restore-selective';
     backupState.selectedPaths = backupState.restoreSelectedItems || [];
-    backupState.currentBrowsePath = '/';
     
-    document.getElementById('backup-explorer-modal').style.display = 'flex';
-    document.getElementById('backup-explorer-modal-title').textContent = `Browse Backup - Select Items to Restore`;
-    document.getElementById('backup-current-path').textContent = 'Archive Contents';
-    
-    // Hide server selector since we're browsing archive contents
-    const serverRow = document.getElementById('backup-explorer-server')?.parentElement?.parentElement;
-    if (serverRow) serverRow.style.display = 'none';
+    const itemsDiv = document.getElementById('restore-selected-items');
     
     try {
-      document.getElementById('backup-explorer-list').innerHTML = '<div class="text-muted">Loading archive contents...</div>';
+      itemsDiv.innerHTML = '<div class="text-muted">Loading archive contents...</div>';
       
       const result = await backupFetch(`api/backup/archives/${archive.id}/contents`);
       
@@ -953,10 +1081,80 @@
         throw new Error(result.error || 'Failed to load archive contents');
       }
       
-      renderArchiveContents(result.items || []);
+      renderArchiveContentsInline(result.items || []);
     } catch (error) {
       toast('Failed to load archive contents: ' + error.message, 'error');
-      document.getElementById('backup-explorer-list').innerHTML = '<div class="text-muted">Failed to load archive contents</div>';
+      itemsDiv.innerHTML = '<div class="text-muted" style="color: #ef4444;">Failed to load archive contents</div>';
+    }
+  };
+  
+  function renderArchiveContentsInline(items) {
+    const container = document.getElementById('restore-selected-items');
+    
+    if (items.length === 0) {
+      container.innerHTML = '<div class="text-muted">Archive is empty</div>';
+      return;
+    }
+    
+    // Sort: directories first, then files
+    items.sort((a, b) => {
+      if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+      return a.path.localeCompare(b.path);
+    });
+    
+    let html = '<div style="max-height: 300px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 4px; margin-top: 8px;">';
+    html += '<table style="width: 100%; border-collapse: collapse; font-size: 13px;">';
+    html += '<thead style="position: sticky; top: 0; background: var(--surface-secondary); z-index: 1;"><tr style="border-bottom: 1px solid var(--border-color);"><th style="text-align: left; padding: 8px;">Path</th><th style="text-align: right; padding: 8px; width: 100px;">Size</th><th style="width: 80px; padding: 8px;"></th></tr></thead><tbody>';
+    
+    items.forEach(item => {
+      const icon = item.is_dir ? '📁' : '📄';
+      const size = item.is_dir ? '' : formatBytes(item.size);
+      const isSelected = backupState.selectedPaths.includes(item.path);
+      
+      html += `
+        <tr style="border-bottom: 1px solid rgba(255,255,255,0.02); ${isSelected ? 'background: rgba(14, 165, 233, 0.15);' : ''}">
+          <td style="padding: 8px; font-family: monospace; font-size: 12px;">${icon} ${item.path}</td>
+          <td style="padding: 8px; text-align: right; color: var(--text-muted); font-size: 11px;">${size}</td>
+          <td style="padding: 8px; text-align: center;">
+            <button class="btn btn-sm" onclick='backupToggleInlineSelection("${item.path.replace(/'/g, "\\'")}",  ${item.is_dir}, ${JSON.stringify(items).replace(/'/g, "\\'")})' style="padding: 2px 8px; font-size: 11px;">
+              ${isSelected ? '✓' : 'Select'}
+            </button>
+          </td>
+        </tr>
+      `;
+    });
+    
+    html += '</tbody></table></div>';
+    html += `<div style="margin-top: 8px; padding: 8px; background: rgba(14, 165, 233, 0.1); border-radius: 4px; font-size: 12px;">
+      <strong>${backupState.selectedPaths.length}</strong> item(s) selected
+      ${backupState.selectedPaths.length > 0 ? '<button class="btn btn-sm" onclick="backupClearInlineSelection()" style="float: right; padding: 2px 8px; font-size: 11px;">Clear All</button>' : ''}
+    </div>`;
+    
+    container.innerHTML = html;
+    container.style.color = 'var(--text-primary)';
+  }
+  
+  window.backupToggleInlineSelection = function(path, isDir, items) {
+    const index = backupState.selectedPaths.indexOf(path);
+    if (index > -1) {
+      backupState.selectedPaths.splice(index, 1);
+    } else {
+      backupState.selectedPaths.push(path);
+    }
+    
+    // Update the items to restore
+    backupState.restoreSelectedItems = backupState.selectedPaths.slice();
+    
+    // Re-render
+    renderArchiveContentsInline(items);
+  };
+  
+  window.backupClearInlineSelection = function() {
+    backupState.selectedPaths = [];
+    backupState.restoreSelectedItems = [];
+    const archive = backupState.currentRestoreArchive;
+    if (archive) {
+      backupBrowseBackupContents(); // Reload to show cleared selection
     }
   };
   
