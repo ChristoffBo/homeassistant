@@ -1073,7 +1073,7 @@
     const itemsDiv = document.getElementById('restore-selected-items');
     
     try {
-      itemsDiv.innerHTML = '<div class="text-muted">Loading archive contents...</div>';
+      itemsDiv.innerHTML = '<div class="text-muted">Loading archive contents... This may take a moment for large archives.</div>';
       
       const result = await backupFetch(`api/backup/archives/${archive.id}/contents`);
       
@@ -1082,9 +1082,12 @@
       }
       
       renderArchiveContentsInline(result.items || []);
+      toast(`Loaded ${result.items.length} items from backup`, 'success');
     } catch (error) {
       toast('Failed to load archive contents: ' + error.message, 'error');
-      itemsDiv.innerHTML = '<div class="text-muted" style="color: #ef4444;">Failed to load archive contents</div>';
+      itemsDiv.innerHTML = `<div style="padding: 12px; color: #ef4444; background: rgba(239, 68, 68, 0.1); border-radius: 4px;">
+        <strong>Error:</strong> ${error.message}
+      </div>`;
     }
   };
   
