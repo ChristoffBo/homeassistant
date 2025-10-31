@@ -1320,6 +1320,16 @@ class BackupManager:
                         self.statuses[key] = {}
                     self.statuses[key].update(update)
                     self._save_statuses()
+                    
+                    # Update job with last_run when completed
+                    if update.get('status') in ['completed', 'failed'] and update.get('job_id'):
+                        job_id = update.get('job_id')
+                        if job_id in self.jobs:
+                            self.jobs[job_id]['last_run'] = int(time.time())
+                            self.jobs[job_id]['last_status'] = update.get('status')
+                            self._save_jobs()
+                            logger.info(f"Updated job {job_id} last_run timestamp")
+                    
                 finished = [k for k, p in self.worker_processes.items() if not p.is_alive()]
                 for k in finished:
                     del self.worker_processes[k]
