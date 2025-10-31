@@ -108,6 +108,10 @@ CONFIG = {
     "block_response_type": "NXDOMAIN",
     "block_custom_ip": "0.0.0.0",
     "blocklists": [],
+    "blocklist_urls": [],  # URLs to download blocklists from
+    "blocklist_update_enabled": True,
+    "blocklist_update_interval": 86400,  # Seconds (default: 24 hours)
+    "blocklist_update_on_start": True,
     "whitelist": [],
     "blacklist": [],
     
@@ -168,6 +172,8 @@ STATS = {
     "dhcp_informs": 0,
     "dhcp_ping_checks": 0,
     "dhcp_conflicts": 0,
+    "blocklist_updates": 0,
+    "blocklist_last_update": 0,
     "start_time": time.time()
 }
 
@@ -337,6 +343,124 @@ class DomainList:
 BLOCKLIST = DomainList("blocklist")
 WHITELIST = DomainList("whitelist")
 BLACKLIST = DomainList("blacklist")
+
+# ==================== BLOCKLIST AUTO-UPDATE ====================
+class BlocklistUpdater:
+    """Manages automatic blocklist updates from URLs"""
+    def __init__(self):
+        self.running = False
+        self.update_task = None
+        self.last_update = 0
+    
+    async def download_blocklist(self, url: str) -> List[str]:
+        """Download blocklist from URL"""
+        try:
+            session = await get_conn_pool()
+            log.info(f"[blocklist] Downloading: {url}")
+            
+            async with session.get(url, timeout=ClientTimeout(total=60)) as resp:
+                if resp.status != 200:
+                    log.error(f"[blocklist] Download failed: {url} (status {resp.status})")
+                    return []
+                
+                content = await resp.text()
+                domains = []
+                
+                for line in content.split('\n'):
+                    line = line.strip()
+                    
+                    # Skip comments and empty lines
+                    if not line or line.startswith('#') or line.startswith('!'):
+                        continue
+                    
+                    # Handle different formats
+                    # Hosts format: 0.0.0.0 domain.com or 127.0.0.1 domain.com
+                    if line.startswith('0.0.0.0 ') or line.startswith('127.0.0.1 '):
+                        domain = line.split()[1] if len(line.split()) > 1 else None
+                    # AdBlock format: ||domain.com^
+                    elif line.startswith('||') and line.endswith('^'):
+                        domain = line[2:-1]
+                    # Simple domain list
+                    else:
+                        domain = line
+                    
+                    if domain and '.' in domain:
+                        # Clean domain
+                        domain = domain.lower().strip('.')
+                        # Remove port if present
+                        domain = domain.split(':')[0]
+                        domains.append(domain)
+                
+                log.info(f"[blocklist] Downloaded {len(domains):,} domains from {url}")
+                return domains
+        
+        except Exception as e:
+            log.error(f"[blocklist] Error downloading {url}: {e}")
+            return []
+    
+    async def update_blocklists(self):
+        """Update all configured blocklists"""
+        if not CONFIG.get("blocklist_update_enabled"):
+            return
+        
+        log.info("[blocklist] Starting update")
+        urls = CONFIG.get("blocklist_urls", [])
+        
+        if not urls:
+            log.debug("[blocklist] No URLs configured")
+            return
+        
+        total_added = 0
+        
+        for url in urls:
+            domains = await self.download_blocklist(url)
+            for domain in domains:
+                BLOCKLIST.add_sync(domain)
+                total_added += 1
+        
+        STATS["blocklist_updates"] += 1
+        STATS["blocklist_last_update"] = time.time()
+        self.last_update = time.time()
+        
+        log.info(f"[blocklist] Update complete: {total_added:,} domains added, {BLOCKLIST.size:,} total")
+    
+    async def auto_update_loop(self):
+        """Background task for automatic blocklist updates"""
+        self.running = True
+        
+        # Update on start if enabled
+        if CONFIG.get("blocklist_update_on_start"):
+            await self.update_blocklists()
+        
+        # Update loop
+        while self.running:
+            try:
+                interval = CONFIG.get("blocklist_update_interval", 86400)
+                await asyncio.sleep(interval)
+                
+                if CONFIG.get("blocklist_update_enabled"):
+                    await self.update_blocklists()
+            
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                log.error(f"[blocklist] Auto-update error: {e}")
+                await asyncio.sleep(60)  # Wait 1 minute before retry
+    
+    def start(self):
+        """Start auto-update task"""
+        if not self.running:
+            self.update_task = asyncio.create_task(self.auto_update_loop())
+            log.info("[blocklist] Auto-update started")
+    
+    def stop(self):
+        """Stop auto-update task"""
+        self.running = False
+        if self.update_task:
+            self.update_task.cancel()
+        log.info("[blocklist] Auto-update stopped")
+
+BLOCKLIST_UPDATER = BlocklistUpdater()
 
 # ==================== UPSTREAM HEALTH ====================
 class UpstreamHealth:
@@ -1511,6 +1635,8 @@ async def api_cache_flush(req):
 async def api_blocklist_reload(req):
     try:
         await BLOCKLIST.clear()
+        
+        # Load from files
         for bl in CONFIG["blocklists"]:
             if Path(bl).exists():
                 with open(bl) as f:
@@ -1518,7 +1644,20 @@ async def api_blocklist_reload(req):
                         line = line.strip()
                         if line and not line.startswith('#'):
                             BLOCKLIST.add_sync(line)
+        
         return web.json_response({"status": "reloaded", "size": BLOCKLIST.size})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+async def api_blocklist_update(req):
+    """Trigger manual blocklist update from URLs"""
+    try:
+        await BLOCKLIST_UPDATER.update_blocklists()
+        return web.json_response({
+            "status": "updated",
+            "size": BLOCKLIST.size,
+            "last_update": STATS["blocklist_last_update"]
+        })
     except Exception as e:
         return web.json_response({"error": str(e)}, status=400)
 
@@ -1729,6 +1868,7 @@ def register_routes(app):
     
     # Blocklist
     app.router.add_post('/api/veil/blocklist/reload', api_blocklist_reload)
+    app.router.add_post('/api/veil/blocklist/update', api_blocklist_update)
     app.router.add_post('/api/veil/blocklist/upload', api_blocklist_upload)
     
     # Blacklist
@@ -1758,7 +1898,7 @@ async def init_veil():
     """Initialize Veil module"""
     log.info("[veil] 🧩 Privacy-First DNS/DHCP initializing")
     
-    # Load blocklists
+    # Load blocklists from files
     for bl in CONFIG["blocklists"]:
         if Path(bl).exists():
             count = 0
@@ -1771,6 +1911,11 @@ async def init_veil():
             log.info(f"[veil] Loaded {count:,} domains from {bl}")
     
     log.info(f"[veil] Blocklist: {BLOCKLIST.size:,} domains")
+    
+    # Start blocklist auto-updater
+    if CONFIG.get("blocklist_update_enabled"):
+        BLOCKLIST_UPDATER.start()
+        log.info(f"[veil] Blocklist auto-update: every {CONFIG['blocklist_update_interval']}s")
     
     # Start DNS
     if CONFIG.get("enabled", True):
@@ -1802,6 +1947,7 @@ async def init_veil():
 async def cleanup_veil():
     """Cleanup on shutdown"""
     log.info("[veil] Shutting down")
+    BLOCKLIST_UPDATER.stop()
     if dns_transport:
         dns_transport.close()
     if DHCP_SERVER:
