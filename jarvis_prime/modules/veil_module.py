@@ -149,6 +149,19 @@ CONFIG = {
     # Conditional Forwarding
     "conditional_forwards": {},
     
+    # Cache Prewarming
+    "cache_prewarm_enabled": True,
+    "cache_prewarm_on_start": True,
+    "cache_prewarm_interval": 3600,  # Seconds (hourly)
+    "cache_prewarm_sources": [
+        "popular",  # Built-in top 1000 domains
+        "custom",   # User-defined list
+        "history"   # Most queried from history
+    ],
+    "cache_prewarm_custom_domains": [],  # User can add domains here
+    "cache_prewarm_history_count": 100,  # Top N from query history
+    "cache_prewarm_concurrent": 10,  # Parallel queries during prewarm
+    
     # Security
     "rebinding_protection": True,
     "rebinding_whitelist": [],
@@ -206,6 +219,9 @@ STATS = {
     "dhcp_conflicts": 0,
     "blocklist_updates": 0,
     "blocklist_last_update": 0,
+    "cache_prewarm_runs": 0,
+    "cache_prewarm_last": 0,
+    "cache_prewarm_domains": 0,
     "start_time": time.time()
 }
 
@@ -283,6 +299,39 @@ class LRUCache:
         return len(self._cache)
 
 DNS_CACHE = LRUCache(max_size=CONFIG.get("cache_max_size", 10000))
+
+# ==================== QUERY HISTORY ====================
+class QueryHistory:
+    """Track query frequency for cache prewarming"""
+    def __init__(self, max_size: int = 10000):
+        self._queries: Dict[str, int] = {}  # domain -> count
+        self._lock = asyncio.Lock()
+        self._max_size = max_size
+    
+    async def record(self, qname: str):
+        async with self._lock:
+            self._queries[qname] = self._queries.get(qname, 0) + 1
+            
+            # Trim if too large
+            if len(self._queries) > self._max_size:
+                # Keep top 80% by frequency
+                sorted_queries = sorted(self._queries.items(), key=lambda x: x[1], reverse=True)
+                keep = int(self._max_size * 0.8)
+                self._queries = dict(sorted_queries[:keep])
+    
+    async def get_top(self, n: int) -> List[str]:
+        async with self._lock:
+            sorted_queries = sorted(self._queries.items(), key=lambda x: x[1], reverse=True)
+            return [domain for domain, _ in sorted_queries[:n]]
+    
+    async def clear(self):
+        async with self._lock:
+            self._queries.clear()
+    
+    def size(self) -> int:
+        return len(self._queries)
+
+QUERY_HISTORY = QueryHistory()
 
 # ==================== RATE LIMITING ====================
 @dataclass
@@ -661,6 +710,195 @@ class BlocklistUpdater:
         log.info("[blocklist] Auto-update stopped")
 
 BLOCKLIST_UPDATER = BlocklistUpdater()
+
+# ==================== CACHE PREWARMING ====================
+# Top 1000 most popular domains for cache prewarming
+POPULAR_DOMAINS = [
+    # Social Media & Communication
+    "facebook.com", "instagram.com", "twitter.com", "linkedin.com", "reddit.com",
+    "youtube.com", "tiktok.com", "snapchat.com", "pinterest.com", "tumblr.com",
+    "whatsapp.com", "telegram.org", "discord.com", "slack.com", "zoom.us",
+    
+    # Search Engines
+    "google.com", "bing.com", "yahoo.com", "duckduckgo.com", "baidu.com",
+    
+    # Email
+    "gmail.com", "outlook.com", "protonmail.com", "mail.yahoo.com", "icloud.com",
+    
+    # Cloud & Storage
+    "dropbox.com", "drive.google.com", "onedrive.live.com", "box.com", "mega.nz",
+    "icloud.com", "wetransfer.com", "mediafire.com",
+    
+    # Shopping
+    "amazon.com", "ebay.com", "walmart.com", "target.com", "bestbuy.com",
+    "etsy.com", "aliexpress.com", "alibaba.com", "shopify.com",
+    
+    # Streaming
+    "netflix.com", "hulu.com", "disneyplus.com", "hbo.com", "primevideo.com",
+    "spotify.com", "apple.com", "pandora.com", "soundcloud.com",
+    "twitch.tv", "vimeo.com", "dailymotion.com",
+    
+    # News
+    "cnn.com", "bbc.com", "nytimes.com", "theguardian.com", "reuters.com",
+    "forbes.com", "bloomberg.com", "wsj.com", "usatoday.com", "washingtonpost.com",
+    
+    # Tech
+    "github.com", "stackoverflow.com", "microsoft.com", "apple.com", "adobe.com",
+    "nvidia.com", "amd.com", "intel.com", "canonical.com", "docker.com",
+    
+    # CDNs & Infrastructure (critical for other sites)
+    "cloudflare.com", "akamai.com", "fastly.com", "amazonaws.com", "googleusercontent.com",
+    "gstatic.com", "cloudfront.net", "cdnjs.com", "jsdelivr.net",
+    
+    # Common APIs
+    "maps.googleapis.com", "fonts.googleapis.com", "ajax.googleapis.com",
+    "apis.google.com", "graph.facebook.com", "api.twitter.com",
+    
+    # DNS & Security
+    "1.1.1.1", "8.8.8.8", "cloudflare-dns.com", "dns.google",
+    
+    # Banks & Finance
+    "paypal.com", "stripe.com", "chase.com", "bankofamerica.com", "wellsfargo.com",
+    
+    # Gaming
+    "steampowered.com", "epicgames.com", "roblox.com", "minecraft.net", "ea.com",
+    "blizzard.com", "nintendo.com", "playstation.com", "xbox.com",
+    
+    # Education
+    "wikipedia.org", "coursera.org", "udemy.com", "khanacademy.org", "edx.org",
+    
+    # Government
+    "usa.gov", "irs.gov", "usps.com", "weather.gov",
+    
+    # Home Automation & IoT
+    "home-assistant.io", "ifttt.com", "smartthings.com", "philips-hue.com",
+]
+
+class CachePrewarmer:
+    """Preload cache with popular/frequently used domains"""
+    def __init__(self):
+        self.running = False
+        self.prewarm_task = None
+        self.last_prewarm = 0
+    
+    async def get_domains_to_prewarm(self) -> List[str]:
+        """Get list of domains to prewarm based on sources"""
+        domains = set()
+        sources = CONFIG.get("cache_prewarm_sources", ["popular"])
+        
+        # Popular domains
+        if "popular" in sources:
+            domains.update(POPULAR_DOMAINS)
+        
+        # Custom domains from config
+        if "custom" in sources:
+            custom = CONFIG.get("cache_prewarm_custom_domains", [])
+            domains.update(custom)
+        
+        # Historical top queries
+        if "history" in sources:
+            count = CONFIG.get("cache_prewarm_history_count", 100)
+            historical = await QUERY_HISTORY.get_top(count)
+            domains.update(historical)
+        
+        return list(domains)
+    
+    async def prewarm_domain(self, domain: str) -> bool:
+        """Prewarm a single domain (A and AAAA records)"""
+        try:
+            # Query A record
+            query_a = dns.message.make_query(domain, dns.rdatatype.A, use_edns=True)
+            wire_a = query_a.to_wire()
+            response_a = await query_upstream(domain, dns.rdatatype.A)
+            
+            if response_a:
+                # Cache will be populated by query_upstream
+                log.debug(f"[prewarm] Cached A: {domain}")
+            
+            # Query AAAA record
+            query_aaaa = dns.message.make_query(domain, dns.rdatatype.AAAA, use_edns=True)
+            wire_aaaa = query_aaaa.to_wire()
+            response_aaaa = await query_upstream(domain, dns.rdatatype.AAAA)
+            
+            if response_aaaa:
+                log.debug(f"[prewarm] Cached AAAA: {domain}")
+            
+            return response_a is not None or response_aaaa is not None
+        
+        except Exception as e:
+            log.debug(f"[prewarm] Failed {domain}: {e}")
+            return False
+    
+    async def prewarm_cache(self):
+        """Prewarm cache with configured domains"""
+        if not CONFIG.get("cache_prewarm_enabled"):
+            return
+        
+        log.info("[prewarm] Starting cache prewarm")
+        start_time = time.time()
+        
+        domains = await self.get_domains_to_prewarm()
+        if not domains:
+            log.info("[prewarm] No domains to prewarm")
+            return
+        
+        log.info(f"[prewarm] Prewarming {len(domains)} domains")
+        
+        # Prewarm in batches with concurrency limit
+        concurrent = CONFIG.get("cache_prewarm_concurrent", 10)
+        success_count = 0
+        
+        for i in range(0, len(domains), concurrent):
+            batch = domains[i:i + concurrent]
+            results = await asyncio.gather(
+                *[self.prewarm_domain(d) for d in batch],
+                return_exceptions=True
+            )
+            success_count += sum(1 for r in results if r is True)
+        
+        STATS["cache_prewarm_runs"] += 1
+        STATS["cache_prewarm_last"] = time.time()
+        STATS["cache_prewarm_domains"] = success_count
+        self.last_prewarm = time.time()
+        
+        elapsed = time.time() - start_time
+        log.info(f"[prewarm] Complete: {success_count}/{len(domains)} cached in {elapsed:.1f}s")
+    
+    async def auto_prewarm_loop(self):
+        """Background task for automatic cache prewarming"""
+        self.running = True
+        
+        # Prewarm on start if enabled
+        if CONFIG.get("cache_prewarm_on_start"):
+            await self.prewarm_cache()
+        
+        # Periodic prewarm loop
+        while self.running:
+            try:
+                interval = CONFIG.get("cache_prewarm_interval", 3600)
+                await asyncio.sleep(interval)
+                
+                if CONFIG.get("cache_prewarm_enabled"):
+                    await self.prewarm_cache()
+            
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                log.error(f"[prewarm] Auto-prewarm error: {e}")
+                await asyncio.sleep(60)
+    
+    def start(self):
+        if not self.running:
+            self.prewarm_task = asyncio.create_task(self.auto_prewarm_loop())
+            log.info("[prewarm] Auto-prewarm started")
+    
+    def stop(self):
+        self.running = False
+        if self.prewarm_task:
+            self.prewarm_task.cancel()
+        log.info("[prewarm] Auto-prewarm stopped")
+
+CACHE_PREWARMER = CachePrewarmer()
 
 # ==================== UPSTREAM HEALTH ====================
 class UpstreamHealth:
@@ -1114,6 +1352,9 @@ async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
             log.debug(f"[dns] {addr[0]}: {qname} ({dns.rdatatype.to_text(qtype)})")
         
         STATS["dns_queries"] += 1
+        
+        # Record query in history for prewarming
+        await QUERY_HISTORY.record(qname)
         
         # SafeSearch enforcement
         safesearch_domain = apply_safesearch(qname)
@@ -1805,6 +2046,7 @@ async def api_stats(req):
         **STATS,
         "uptime_seconds": uptime,
         "cache_size": DNS_CACHE.size(),
+        "query_history_size": QUERY_HISTORY.size(),
         "blocklist_size": BLOCKLIST.size,
         "whitelist_size": WHITELIST.size,
         "blacklist_size": BLACKLIST.size,
@@ -1852,6 +2094,29 @@ async def api_blocklist_update(req):
             "status": "updated",
             "size": BLOCKLIST.size,
             "last_update": STATS["blocklist_last_update"]
+        })
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+async def api_cache_prewarm(req):
+    """Trigger manual cache prewarm"""
+    try:
+        asyncio.create_task(CACHE_PREWARMER.prewarm_cache())
+        return web.json_response({
+            "status": "started",
+            "message": "Cache prewarm started in background"
+        })
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+async def api_query_history(req):
+    """Get query history stats"""
+    try:
+        count = int(req.query.get('count', 50))
+        top_domains = await QUERY_HISTORY.get_top(count)
+        return web.json_response({
+            "total_unique": QUERY_HISTORY.size(),
+            "top_domains": top_domains
         })
     except Exception as e:
         return web.json_response({"error": str(e)}, status=400)
@@ -2057,6 +2322,8 @@ def register_routes(app):
     app.router.add_post('/api/veil/blocklist/reload', api_blocklist_reload)
     app.router.add_post('/api/veil/blocklist/update', api_blocklist_update)
     app.router.add_post('/api/veil/blocklist/upload', api_blocklist_upload)
+    app.router.add_post('/api/veil/cache/prewarm', api_cache_prewarm)
+    app.router.add_get('/api/veil/query/history', api_query_history)
     app.router.add_post('/api/veil/blacklist/add', api_blacklist_add)
     app.router.add_delete('/api/veil/blacklist/remove', api_blacklist_remove)
     app.router.add_post('/api/veil/whitelist/add', api_whitelist_add)
@@ -2093,6 +2360,11 @@ async def init_veil():
     
     # Start rate limiter
     RATE_LIMITER.start()
+    
+    # Start cache prewarmer
+    if CONFIG.get("cache_prewarm_enabled"):
+        CACHE_PREWARMER.start()
+        log.info(f"[veil] Cache prewarm: every {CONFIG['cache_prewarm_interval']}s")
     
     # Start blocklist auto-updater
     if CONFIG.get("blocklist_update_enabled"):
@@ -2137,6 +2409,7 @@ async def init_veil():
 async def cleanup_veil():
     log.info("[veil] Shutting down")
     RATE_LIMITER.stop()
+    CACHE_PREWARMER.stop()
     BLOCKLIST_UPDATER.stop()
     
     # Save blocklists before shutdown
