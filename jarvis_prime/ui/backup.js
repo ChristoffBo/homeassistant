@@ -1,6 +1,8 @@
 /**
  * Jarvis Prime Backup Module - WITH FILE EXPLORER
  * Click and select folders from source/destination servers
+ * 
+ * FIXED: Archive contents browsing now uses /api/backup/archives/{id}/contents
  */
 
 (function() {
@@ -272,7 +274,7 @@
         ? `/${file.name}` 
         : `${backupState.currentBrowsePath}/${file.name}`;
       
-      const icon = file.is_dir ? '' : '';
+      const icon = file.is_dir ? '📁' : '📄';
       const size = file.is_dir ? '' : formatBytes(file.size);
       const modified = file.mtime ? new Date(file.mtime * 1000).toLocaleString() : '';
       const isSelected = backupState.selectedPaths.includes(fullPath);
@@ -289,7 +291,7 @@
           <td style="padding: 12px; text-align: right; color: var(--text-muted);">${modified}</td>
           <td style="padding: 12px; text-align: center;">
             <button class="btn btn-sm" data-action="select" data-path="${fullPath}" data-is-dir="${file.is_dir}" style="padding: 4px 8px;">
-              ${isSelected ? 'Selected' : 'Select'}
+              ${isSelected ? '✓ Selected' : 'Select'}
             </button>
           </td>
         </tr>
@@ -377,7 +379,7 @@
       backupState.restoreSelectedItems = backupState.selectedPaths.slice();
       const itemsDiv = document.getElementById('restore-selected-items');
       if (backupState.restoreSelectedItems.length > 0) {
-        itemsDiv.innerHTML = backupState.restoreSelectedItems.map(p => `<div>${p}</div>`).join('');
+        itemsDiv.innerHTML = backupState.restoreSelectedItems.map(p => `<div style="padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.05);">${p}</div>`).join('');
         itemsDiv.style.color = 'var(--text-primary)';
       } else {
         itemsDiv.innerHTML = 'No items selected';
@@ -917,34 +919,112 @@
     backupState.selectedPaths = [];
     
     document.getElementById('backup-explorer-modal').style.display = 'flex';
-    document.getElementById('backup-explorer-title').textContent = `Browse ${server.name} - Select Destination`;
+    document.getElementById('backup-explorer-modal-title').textContent = `Browse ${server.name} - Select Destination`;
     
     backupBrowseDirectory('/');
   };
 
-  window.backupBrowseBackupContents = function() {
+  // === FIXED: Browse archive contents using new API ===
+  window.backupBrowseBackupContents = async function() {
     const archive = backupState.currentRestoreArchive;
     if (!archive) {
       toast('No archive selected', 'error');
       return;
     }
     
-    // Find the backup storage server
-    const backupServer = backupState.servers.find(s => s.id === archive.dest_server_id);
-    if (!backupServer) {
-      toast('Backup storage server not found', 'error');
+    backupState.explorerSide = 'restore-selective';
+    backupState.selectedPaths = backupState.restoreSelectedItems || [];
+    backupState.currentBrowsePath = '/';
+    
+    document.getElementById('backup-explorer-modal').style.display = 'flex';
+    document.getElementById('backup-explorer-modal-title').textContent = `Browse Backup - Select Items to Restore`;
+    document.getElementById('backup-current-path').textContent = 'Archive Contents';
+    
+    // Hide server selector since we're browsing archive contents
+    const serverRow = document.getElementById('backup-explorer-server')?.parentElement?.parentElement;
+    if (serverRow) serverRow.style.display = 'none';
+    
+    try {
+      document.getElementById('backup-explorer-list').innerHTML = '<div class="text-muted">Loading archive contents...</div>';
+      
+      const result = await backupFetch(`api/backup/archives/${archive.id}/contents`);
+      
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to load archive contents');
+      }
+      
+      renderArchiveContents(result.items || []);
+    } catch (error) {
+      toast('Failed to load archive contents: ' + error.message, 'error');
+      document.getElementById('backup-explorer-list').innerHTML = '<div class="text-muted">Failed to load archive contents</div>';
+    }
+  };
+  
+  function renderArchiveContents(items) {
+    const container = document.getElementById('backup-explorer-list');
+    
+    if (items.length === 0) {
+      container.innerHTML = '<div class="text-muted">Archive is empty</div>';
       return;
     }
     
-    backupState.explorerSide = 'restore-selective';
-    backupState.currentBrowseServer = backupServer;
-    backupState.selectedPaths = backupState.restoreSelectedItems || [];
-    backupState.currentBrowsePath = archive.destination_path;
+    // Sort: directories first, then files
+    items.sort((a, b) => {
+      if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+      return a.path.localeCompare(b.path);
+    });
     
-    document.getElementById('backup-explorer-modal').style.display = 'flex';
-    document.getElementById('backup-explorer-title').textContent = `Browse Backup - Select Items to Restore`;
+    let html = '<table style="width: 100%; border-collapse: collapse;">';
+    html += '<thead><tr style="border-bottom: 1px solid var(--border-color);"><th style="text-align: left; padding: 8px;">Path</th><th style="text-align: right; padding: 8px;">Size</th><th style="width: 100px;"></th></tr></thead><tbody>';
     
-    backupBrowseDirectory(archive.destination_path);
+    items.forEach(item => {
+      const icon = item.is_dir ? '📁' : '📄';
+      const size = item.is_dir ? '' : formatBytes(item.size);
+      const isSelected = backupState.selectedPaths.includes(item.path);
+      
+      html += `
+        <tr style="border-bottom: 1px solid rgba(255,255,255,0.05); ${isSelected ? 'background: rgba(14, 165, 233, 0.1);' : ''}">
+          <td style="padding: 12px;">${icon} ${item.path}</td>
+          <td style="padding: 12px; text-align: right; color: var(--text-muted);">${size}</td>
+          <td style="padding: 12px; text-align: center;">
+            <button class="btn btn-sm" data-action="select-archive" data-path="${item.path}" data-is-dir="${item.is_dir}" style="padding: 4px 12px;">
+              ${isSelected ? '✓ Selected' : 'Select'}
+            </button>
+          </td>
+        </tr>
+      `;
+    });
+    
+    html += '</tbody></table>';
+    container.innerHTML = html;
+    
+    // Add event delegation for archive item selection
+    container.onclick = function(e) {
+      const target = e.target.closest('[data-action]');
+      if (!target) return;
+      
+      const action = target.getAttribute('data-action');
+      const path = target.getAttribute('data-path');
+      
+      if (action === 'select-archive') {
+        const isDir = target.getAttribute('data-is-dir') === 'true';
+        backupToggleArchiveSelection(path, isDir, items);
+      }
+    };
+  }
+  
+  window.backupToggleArchiveSelection = function(path, isDir, items) {
+    const index = backupState.selectedPaths.indexOf(path);
+    if (index > -1) {
+      backupState.selectedPaths.splice(index, 1);
+      toast(`Deselected ${isDir ? 'folder' : 'file'}`, 'info');
+    } else {
+      backupState.selectedPaths.push(path);
+      toast(`Selected ${isDir ? 'folder' : 'file'} (${backupState.selectedPaths.length} total)`, 'success');
+    }
+    
+    // Re-render to update selection state
+    renderArchiveContents(items);
   };
 
   window.backupSubmitRestore = async function(e) {
@@ -962,9 +1042,7 @@
     
     if (toOriginal) {
       destServerId = archive.source_server_id;
-      // Extract parent directory from first source path
-      const firstPath = (archive.source_paths || [])[0];
-      destPath = firstPath ? firstPath.substring(0, firstPath.lastIndexOf('/')) || '/' : '/';
+      destPath = 'original';
     } else {
       destServerId = document.getElementById('restore-dest-server').value;
       destPath = document.getElementById('restore-dest-path').value;
@@ -1095,7 +1173,7 @@
     if (status.log && status.log.length > restoreProgressLogEntries.length) {
       restoreProgressLogEntries = status.log;
       const logHtml = status.log.map(line => 
-        `<div style="color: var(--text-secondary); font-size: 12px; margin-bottom: 4px;">${escapeHtml(line)}</div>`
+        `<div style="color: var(--text-secondary); font-size: 12px; margin-bottom: 4px;">${line}</div>`
       ).join('');
       document.getElementById('backup-progress-log').innerHTML = logHtml;
       
