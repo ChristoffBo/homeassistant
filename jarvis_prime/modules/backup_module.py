@@ -25,6 +25,7 @@ import paramiko
 from multiprocessing import Process, Queue, Manager
 import subprocess
 import time
+from croniter import croniter
 
 logger = logging.getLogger(__name__)
 
@@ -1299,11 +1300,13 @@ class BackupManager:
            
     async def start(self):
         self.status_updater = asyncio.create_task(self._status_updater())
-        logger.info("Backup manager started")
+        self.scheduler_task = asyncio.create_task(self._cron_scheduler())
+        logger.info("Backup manager started with cron scheduler")
        
     async def stop(self):
         if self.status_updater:
             self.status_updater.cancel()
+        if hasattr(self,"scheduler_task") and self.scheduler_task: self.scheduler_task.cancel()
         for process in self.worker_processes.values():
             if process.is_alive():
                 process.terminate()
@@ -1339,6 +1342,31 @@ class BackupManager:
             except Exception as e:
                 logger.error(f"Status updater error: {e}")
                 await asyncio.sleep(1)
+               
+    async def _cron_scheduler(self):
+        while True:
+            now = datetime.now()
+            for job_id, job in list(self.jobs.items()):
+                cron_expr = job.get('cron')
+                if not cron_expr:
+                    continue
+                try:
+                    last_run = job.get('last_run')
+                    if last_run:
+                        last_dt = datetime.fromtimestamp(last_run)
+                    else:
+                        created_at = datetime.fromisoformat(job['created_at'])
+                        last_dt = created_at - timedelta(seconds=1)
+                    iter = croniter(cron_expr, last_dt)
+                    next_dt = iter.get_next(datetime)
+                    if next_dt <= now:
+                        if self.run_job(job_id):
+                            logger.info(f"Scheduled run started for job {job_id}")
+                        else:
+                            logger.debug(f"Scheduled run skipped for job {job_id} (already running)")
+                except Exception as e:
+                    logger.error(f"Cron error for job {job_id}: {e}")
+            await asyncio.sleep(60)
                
     def create_job(self, job_config: Dict) -> str:
         job_id = str(uuid.uuid4())
