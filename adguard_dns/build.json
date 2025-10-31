@@ -4,5 +4,5 @@
     "amd64": "adguard/adguardhome:latest",
     "armv7": "adguard/adguardhome:latest"
   },
-  "version": "v0.107.68"
+  "version": "v0.107.69"
 }
