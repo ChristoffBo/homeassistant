@@ -1,0 +1,333 @@
+<div id="server-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Add Server</h2>
+        <button class="btn" onclick="orchCloseServerModal()">✕</button>
+      </div>
+      <form id="server-form" onsubmit="orchSaveServer(event)">
+        <div class="form-group">
+          <label class="form-label">Server Name *</label>
+          <input type="text" id="srv-name" required placeholder="web-server-01">
+        </div>
+        <div class="form-group">
+          <label class="form-label">IP Address / Hostname *</label>
+          <input type="text" id="srv-host" required placeholder="192.168.1.100">
+        </div>
+        <div class="form-group">
+          <label class="form-label">SSH Port</label>
+          <input type="number" id="srv-port" value="22">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Username *</label>
+          <input type="text" id="srv-user" required placeholder="root">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Password *</label>
+          <input type="password" id="srv-pass" required placeholder="Enter SSH password">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Groups (comma-separated)</label>
+          <input type="text" id="srv-groups" placeholder="web, production">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Description</label>
+          <textarea id="srv-desc" rows="3" placeholder="Production web server"></textarea>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn" onclick="orchCloseServerModal()">Cancel</button>
+          <button type="submit" class="btn primary">Save Server</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="edit-server-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Edit Server</h2>
+        <button class="btn" onclick="orchCloseEditServerModal()">✕</button>
+      </div>
+      <form id="edit-server-form" onsubmit="orchUpdateServer(event)">
+        <input type="hidden" id="edit-srv-id">
+        <div class="form-group">
+          <label class="form-label">Server Name *</label>
+          <input type="text" id="edit-srv-name" required placeholder="web-server-01">
+        </div>
+        <div class="form-group">
+          <label class="form-label">IP Address / Hostname *</label>
+          <input type="text" id="edit-srv-host" required placeholder="192.168.1.100">
+        </div>
+        <div class="form-group">
+          <label class="form-label">SSH Port</label>
+          <input type="number" id="edit-srv-port" value="22">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Username *</label>
+          <input type="text" id="edit-srv-user" required placeholder="root">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Password</label>
+          <input type="password" id="edit-srv-pass" placeholder="Leave blank to keep current password">
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+            Only enter a new password if you want to change it
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Groups (comma-separated)</label>
+          <input type="text" id="edit-srv-groups" placeholder="web, production">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Description</label>
+          <textarea id="edit-srv-desc" rows="3" placeholder="Production web server"></textarea>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn" onclick="orchCloseEditServerModal()">Cancel</button>
+          <button type="submit" class="btn primary">Update Server</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="schedule-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Create Schedule</h2>
+        <button class="btn" onclick="orchCloseScheduleModal()">✕</button>
+      </div>
+      <form id="schedule-form" onsubmit="orchSaveSchedule(event)">
+        <div class="form-group">
+          <label class="form-label">Job Name *</label>
+          <input type="text" id="sched-name" required placeholder="Weekly Apt Update">
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+            Give this schedule a friendly name (e.g., "Daily Backup", "Weekly Update")
+          </div>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Playbook *</label>
+          <select id="sched-playbook" required>
+            <option value="">Select a playbook...</option>
+          </select>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Server Group</label>
+          <input type="text" id="sched-group" placeholder="web, all (optional)">
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Schedule Preset</label>
+          <select id="sched-preset" onchange="orchApplyPreset()">
+            <option value="">Custom...</option>
+            <option value="0 2 * * *">Every day at 2 AM</option>
+            <option value="0 8 * * 1">Every Monday at 8 AM</option>
+            <option value="0 0 * * *">Daily at midnight</option>
+            <option value="0 */6 * * *">Every 6 hours</option>
+            <option value="0 * * * *">Every hour</option>
+            <option value="*/15 * * * *">Every 15 minutes</option>
+          </select>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Cron Expression *</label>
+          <input type="text" id="sched-cron" required placeholder="0 2 * * *" pattern="[0-9\*\-\,\/ ]+">
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+            Format: minute hour day month weekday (e.g., "0 2 * * *" = 2 AM daily)
+          </div>
+        </div>
+        
+        <div class="form-group">
+          <div class="checkbox-group">
+            <input type="checkbox" id="sched-notify" checked />
+            <label for="sched-notify">Send notification when job completes</label>
+          </div>
+        </div>
+        
+        <div class="modal-footer">
+          <button type="button" class="btn" onclick="orchCloseScheduleModal()">Cancel</button>
+          <button type="submit" class="btn primary">Save Schedule</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="history-modal" class="modal">
+    <div class="modal-content" style="max-width: 600px;">
+      <div class="modal-header">
+        <h2>Manage History</h2>
+        <button class="btn" onclick="orchCloseHistoryModal()">✕</button>
+      </div>
+      
+      <div class="form-group">
+        <label class="form-label">Quick Actions</label>
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;">
+          <button class="btn" onclick="orchPurgeHistory('failed')">Delete Failed Jobs</button>
+          <button class="btn" onclick="orchPurgeHistory('completed')">Delete Successful Jobs</button>
+          <button class="btn" onclick="orchPurgeHistory('older_than_30')">Delete Older Than 30 Days</button>
+          <button class="btn" onclick="orchPurgeHistory('older_than_90')">Delete Older Than 90 Days</button>
+        </div>
+      </div>
+
+      <div style="background: var(--surface-tertiary); border-radius: 8px; padding: 16px; margin: 20px 0;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+          <span style="color: var(--text-muted); font-size: 14px;">Total Entries:</span>
+          <span id="history-total" style="color: var(--text-primary); font-weight: 600;">—</span>
+        </div>
+      </div>
+
+      <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; padding: 16px;">
+        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+          <span style="font-size: 24px;">⚠️</span>
+          <span style="color: #ef4444; font-weight: 600;">Danger Zone</span>
+        </div>
+        <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 12px;">
+          Permanently delete all execution history. This action cannot be undone.
+        </p>
+        <button class="btn danger" style="width: 100%;" onclick="orchPurgeHistory('all')">Delete ALL History</button>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn" onclick="orchCloseHistoryModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="job-output-modal" class="modal">
+    <div class="modal-content" style="max-width: 900px;">
+      <div class="modal-header">
+        <h2 id="job-output-title">Job Output</h2>
+        <button class="btn" onclick="orchCloseJobOutputModal()">✕</button>
+      </div>
+      <div style="margin-bottom: 16px;">
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; padding: 12px; background: var(--surface-tertiary); border-radius: 8px;">
+          <div>
+            <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 4px;">Status</div>
+            <div id="job-output-status">—</div>
+          </div>
+          <div>
+            <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 4px;">Exit Code</div>
+            <div id="job-output-exit-code">—</div>
+          </div>
+          <div>
+            <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 4px;">Started</div>
+            <div id="job-output-started">—</div>
+          </div>
+          <div>
+            <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 4px;">Completed</div>
+            <div id="job-output-completed">—</div>
+          </div>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Output</label>
+        <div class="log-output" id="job-output-content" style="max-height: 500px; min-height: 200px;">
+          <div class="text-center text-muted">No output</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn" onclick="orchCloseJobOutputModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="analytics-service-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="analytics-service-modal-title">Add Service</h2>
+        <button class="btn" onclick="analyticsCloseServiceModal()">✕</button>
+      </div>
+      <form id="analytics-service-form" onsubmit="analyticsSaveService(event)">
+        <input type="hidden" id="analytics-service-id">
+        
+        <div class="form-group">
+          <label class="form-label">Service Name *</label>
+          <input type="text" id="analytics-service-name" required placeholder="Home Assistant">
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Endpoint *</label>
+          <input type="text" id="analytics-service-endpoint" required placeholder="http://homeassistant.local:8123 or 192.168.1.100:22 or 8.8.8.8">
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+            HTTP: Full URL with protocol • TCP: host:port • Ping: hostname or IP
+          </div>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Check Type *</label>
+          <select id="analytics-check-type" required onchange="analyticsToggleStatusCode()">
+            <option value="http">HTTP - Web endpoint</option>
+            <option value="tcp">TCP - Port check</option>
+            <option value="ping">ICMP Ping - Host reachability</option>
+          </select>
+        </div>
+        
+        <div class="form-group" id="analytics-status-code-field">
+          <label class="form-label">Expected HTTP Status Code</label>
+          <input type="number" id="analytics-expected-status" value="200" min="100" max="599">
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Check Interval (seconds)</label>
+          <input type="number" id="analytics-check-interval" value="60" min="10" max="3600">
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Timeout (seconds)</label>
+          <input type="number" id="analytics-check-timeout" value="5" min="1" max="30">
+        </div>
+        
+        
+        <div style="margin: 24px 0; padding: 16px; background: rgba(14, 165, 233, 0.08); border: 1px solid rgba(14, 165, 233, 0.2); border-radius: 8px;">
+          <h4 style="margin: 0 0 12px 0; color: var(--text-primary); font-size: 14px; font-weight: 600;">❗ Retry & Flap Protection</h4>
+          
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label class="form-label">Retries</label>
+            <input type="number" id="analytics-retries" value="3" min="1" max="10">
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+              Number of consecutive failures before marking service DOWN
+            </div>
+          </div>
+          
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label class="form-label">Flap Window (seconds)</label>
+            <input type="number" id="analytics-flap-window" value="3600" min="60" max="86400">
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+              Time period to monitor flaps (default: 3600 = 1 hour)
+            </div>
+          </div>
+          
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label class="form-label">Flap Threshold</label>
+            <input type="number" id="analytics-flap-threshold" value="5" min="2" max="50">
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+              Number of status changes to trigger alert suppression
+            </div>
+          </div>
+          
+          <div class="form-group" style="margin-bottom: 0;">
+            <label class="form-label">Suppression Duration (seconds)</label>
+            <input type="number" id="analytics-suppression-duration" value="3600" min="60" max="86400">
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+              How long to suppress alerts after flap threshold exceeded (default: 3600 = 1 hour)
+            </div>
+          </div>
+        </div>
+        
+        
+        <div class="form-group">
+          <div class="checkbox-group">
+            <input type="checkbox" id="analytics-service-enabled" checked />
+            <label for="analytics-service-enabled">Enable monitoring for this service</label>
+          </div>
+        </div>
+        
+        <div class="modal-footer">
+          <button type="button" class="btn" onclick="analyticsCloseServiceModal()">Cancel</button>
+          <button type="submit" class="btn primary">Save Service</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  
+  <div id="sentinel-add-server-modal" class="modal"><div class="modal-content"><div class="modal-header"><h2>Add SSH Server</h2><button class="btn" onclick="closeModal()">✕</button></div><form id="sentinel-add-server-form" onsubmit="event.preventDefault(); sentinelUI.addServer(sentinelUI.getFormData('sentinel-add-server-form'));"><div class="form-group"><label class="form-label">Server ID *</label><input type="text" name="id" required placeholder="web-server-01"><div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">Unique identifier (letters, numbers, hyphens only)</div></div><div class="form-group"><label class="form-label">Hostname / IP *</label><input type="text" name="host" required placeholder="192.168.1.100"></div><div class="form-group"><label class="form-label">SSH Port</label><input type="number" name="port" value="22" min="1" max="65535"></div><div class="form-group"><label class="form-label">Username *</label><input type="text" name="username" required placeholder="root"></div><div class="form-group"><label class="form-label">Password *</label><input type="password" name="password" required placeholder="SSH password"></div><div class="form-group"><label class="form-label">Description</label><input type="text" name="description" placeholder="Production web server"></div><div class="modal-footer"><button type="button" class="btn" onclick="closeModal()">Cancel</button><button type="submit" class="btn primary">Add Server</button></div></form></div></div>
