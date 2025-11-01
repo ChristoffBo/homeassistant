@@ -69,116 +69,3503 @@
     </div>
   </nav>
 
-  <main class="main-container" id="main-container">
-    <!-- Tab panels will be loaded dynamically here -->
+  <main class="main-container">
+    <!-- DASHBOARD TAB -->
+    <section id="dashboard" class="tab-panel active">
+      <div class="page-header">
+        <h2 class="page-title">System Overview</h2>
+        <p class="page-subtitle">Real-time metrics from all modules</p>
+      </div>
+      
+      <div class="metrics-grid-dashboard">
+        <div class="metric-card" onclick="switchTab('inbox')">
+          <div class="metric-header">
+            <div>
+              <div class="metric-value" id="dash-inbox-total">0</div>
+              <div class="metric-label">Total Messages</div>
+            </div>
+            <div class="metric-icon" style="background: rgba(16, 185, 129, 0.12); color: #10b981;">
+              <svg class="icon icon-lg" fill="none" viewBox="0 0 24 24">
+                <path d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" stroke="currentColor" stroke-width="2"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+        
+        <div class="metric-card" onclick="switchTab('inbox')">
+          <div class="metric-header">
+            <div>
+              <div class="metric-value" id="dash-inbox-today">0</div>
+              <div class="metric-label">Messages Today</div>
+            </div>
+            <div class="metric-icon" style="background: rgba(14, 165, 233, 0.12); color: #0ea5e9;">
+              <svg class="icon icon-lg" fill="none" viewBox="0 0 24 24">
+                <path d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" stroke="currentColor" stroke-width="2"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+        
+        <div class="metric-card" onclick="switchTab('inbox')">
+          <div class="metric-header">
+            <div>
+              <div class="metric-value" id="dash-inbox-errors">0</div>
+              <div class="metric-label">Error Messages</div>
+            </div>
+            <div class="metric-icon" style="background: rgba(239, 68, 68, 0.12); color: #ef4444;">
+              <svg class="icon icon-lg" fill="none" viewBox="0 0 24 24">
+                <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" stroke="currentColor" stroke-width="2"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+        
+        <div class="metric-card" onclick="switchTab('inbox')">
+          <div class="metric-header">
+            <div>
+              <div class="metric-value" id="dash-chat-status" style="font-size: 24px;">Ready</div>
+              <div class="metric-label">Chat Status</div>
+            </div>
+            <div class="metric-icon" style="background: rgba(14, 165, 233, 0.12); color: #0ea5e9;">
+              <svg class="icon icon-lg" fill="none" viewBox="0 0 24 24">
+                <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2v10z" stroke="currentColor" stroke-width="2"/>
+              </svg>
+            </div>
+          </div>
+          <div class="metric-change">
+            <span style="color: var(--text-muted);">AI assistant active</span>
+          </div>
+        </div>
+        
+        <div class="metric-card" onclick="switchTab('sentinel')">
+          <div class="metric-header">
+            <div>
+              <div class="metric-value" id="dash-sentinel-uptime">0%</div>
+              <div class="metric-label">Sentinel Uptime</div>
+            </div>
+            <div class="metric-icon" style="background: rgba(139, 92, 246, 0.12); color: #8b5cf6;">
+              <svg class="icon icon-lg" fill="none" viewBox="0 0 24 24">
+                <path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" stroke="currentColor" stroke-width="2"/>
+              </svg>
+            </div>
+          </div>
+          <div class="metric-change">
+            <span style="color: var(--text-muted);"><span id="dash-sentinel-repairs">0</span> repairs today</span>
+          </div>
+        </div>
+        
+        <div class="metric-card" onclick="switchTab('orchestrator')">
+          <div class="metric-header">
+            <div>
+              <div class="metric-value" id="dash-playbooks">0</div>
+              <div class="metric-label">Active Playbooks</div>
+            </div>
+            <div class="metric-icon" style="background: rgba(245, 158, 11, 0.12); color: #f59e0b;">
+              <svg class="icon icon-lg" fill="none" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/>
+                <path d="M12 1v6m0 6v6m8.66-15.66l-4.24 4.24m-8.48 8.48l-4.24 4.24M23 12h-6M7 12H1m16.66 8.66l-4.24-4.24m-8.48-8.48L.34 3.34" stroke="currentColor" stroke-width="2"/>
+              </svg>
+            </div>
+          </div>
+          <div class="metric-change">
+            <span style="color: var(--text-muted);" id="dash-schedules">0 scheduled</span>
+          </div>
+        </div>
+        
+        <div class="metric-card" onclick="switchTab('analytics')">
+          <div class="metric-header">
+            <div>
+              <div class="metric-value" id="dash-health">0%</div>
+              <div class="metric-label">System Health</div>
+            </div>
+            <div class="metric-icon" style="background: rgba(16, 185, 129, 0.12); color: #10b981;">
+              <svg class="icon icon-lg" fill="none" viewBox="0 0 24 24">
+                <path d="M3 3v18h18M7 16l4-4 4 4 6-6" stroke="currentColor" stroke-width="2"/>
+              </svg>
+            </div>
+          </div>
+          <div class="metric-change positive">
+            <span>All services</span>
+            <span class="status-badge status-online">
+              <span class="status-dot"></span>
+              Online
+            </span>
+          </div>
+        </div>
+        
+        <div class="metric-card" onclick="switchTab('orchestrator')">
+          <div class="metric-header">
+            <div>
+              <div class="metric-value" style="font-size: 32px;">
+                <span id="dash-orch-success" style="color: #10b981;">0</span> / 
+                <span id="dash-orch-errors" style="color: #ef4444;">0</span>
+              </div>
+              <div class="metric-label">Orchestration Jobs</div>
+            </div>
+            <div class="metric-icon" style="background: rgba(139, 92, 246, 0.12); color: #8b5cf6;">
+              <svg class="icon icon-lg" fill="none" viewBox="0 0 24 24">
+                <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" stroke="currentColor" stroke-width="2"/>
+              </svg>
+            </div>
+          </div>
+          <div class="metric-change">
+            <span style="color: #10b981;">Success</span>
+            <span style="color: var(--text-muted);">/</span>
+            <span style="color: #ef4444;">Failed</span>
+          </div>
+        </div>
+      </div>
+      
+      <div class="glass-card" style="margin-top: 32px;">
+        <div class="card-header">
+          <h3 class="card-title">Recent Activity</h3>
+          <span class="status-badge status-online">
+            <span class="status-dot"></span>
+            Live
+          </span>
+        </div>
+        <div class="card-body">
+          <ul class="activity-list" id="dash-activity">
+            <li class="activity-item">
+              <div class="activity-icon" style="background: rgba(16, 185, 129, 0.12); color: #10b981;">
+                <svg class="icon" fill="none" viewBox="0 0 24 24">
+                  <path d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" stroke="currentColor" stroke-width="2"/>
+                </svg>
+              </div>
+              <div class="activity-content">
+                <div class="activity-title">System initialized</div>
+                <div class="activity-time">Just now</div>
+              </div>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </section>
+    <!-- INBOX TAB -->
+    <section id="inbox" class="tab-panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <h1>Inbox & Communications</h1>
+          <div class="panel-subtitle">Messages, AI Chat & System Commands</div>
+        </div>
+      </div>
+
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-header">
+            <div class="metric-label">Today</div>
+          </div>
+          <div class="metric-value" id="msg-today">0</div>
+        </div>
+        
+        <div class="metric-card green">
+          <div class="metric-header">
+            <div class="metric-label">Archived</div>
+          </div>
+          <div class="metric-value" id="msg-arch">0</div>
+        </div>
+        
+        <div class="metric-card red">
+          <div class="metric-header">
+            <div class="metric-label">Errors</div>
+          </div>
+          <div class="metric-value" id="msg-err">0</div>
+        </div>
+        
+        <div class="metric-card cyan">
+          <div class="metric-header">
+            <div class="metric-label">Chat Status</div>
+          </div>
+          <div style="font-size: 14px; font-weight: 500;" id="chat-status">Ready</div>
+        </div>
+        
+        <div class="metric-card orange">
+          <div class="metric-header">
+            <div class="metric-label">Auto-Purge</div>
+          </div>
+          <div class="metric-controls">
+            <select id="purge-select">
+              <option value="1">1 day</option>
+              <option value="7" selected>7 days</option>
+              <option value="30">30 days</option>
+            </select>
+            <button id="purge-now" class="btn danger">Run</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="inbox-comms-grid">
+        <div class="glass-card">
+          <div class="card-header">
+            <h3 class="card-title">AI Assistant</h3>
+            <svg class="icon" fill="none" viewBox="0 0 24 24" style="color: var(--accent-primary);">
+              <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2v10z" stroke="currentColor" stroke-width="2"/>
+            </svg>
+          </div>
+          <div class="chat-input-group">
+            <textarea 
+              id="chat-input" 
+              class="chat-input" 
+              placeholder="Type your message to Jarvis AI... (Ctrl+Enter to send)"
+              rows="1"></textarea>
+            <button id="chat-send" class="btn primary">Send</button>
+          </div>
+        </div>
+
+        <div class="glass-card">
+          <div class="card-header">
+            <h3 class="card-title">System Commands</h3>
+            <svg class="icon" fill="none" viewBox="0 0 24 24" style="color: var(--accent-primary);">
+              <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke="currentColor" stroke-width="2"/>
+            </svg>
+          </div>
+          <div class="wake-input-group">
+            <div class="wake-prefix">jarvis</div>
+            <input 
+              type="text" 
+              id="wake-input" 
+              class="wake-input"
+              placeholder="weather, digest, help..."
+            />
+            <button id="wake-send" class="btn primary">Execute</button>
+          </div>
+          <div style="margin-top: 12px; font-size: 12px; color: var(--text-muted);">
+            Last: <span id="last-wake">No commands sent</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="inbox-layout">
+        <div class="panel">
+          <div class="panel-head">
+            <div class="flex gap-4">
+              <div class="checkbox-group">
+                <input type="checkbox" id="pv-follow" checked />
+                <label for="pv-follow">Auto-preview new messages</label>
+              </div>
+              <div class="checkbox-group">
+                <input type="checkbox" id="keep-arch" />
+                <label for="keep-arch">Keep archived when deleting all</label>
+              </div>
+            </div>
+            <button id="del-all" class="btn danger">Delete All Messages</button>
+          </div>
+          
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>Source</th>
+                <th>Title</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="msg-body">
+              <tr><td colspan="4" class="text-center text-muted">Loading messages...</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="preview-panel">
+          <div class="preview-header">
+            <div>
+              <div class="preview-title" id="pv-title">No message selected</div>
+              <div class="preview-meta" id="pv-meta">—</div>
+            </div>
+          </div>
+          <div class="preview-content" id="pv-body">
+            <div class="text-center text-muted">Select a message to preview its contents</div>
+          </div>
+        </div>
+      </div>
+    </section>
+    <!-- ORCHESTRATOR TAB - Keeping existing content -->
+    <section id="orchestrator" class="tab-panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <h1>Automation Orchestrator</h1>
+          <div class="panel-subtitle">Manage servers, run playbooks, and schedule automated tasks</div>
+        </div>
+      </div>
+
+      <div class="orch-tabs">
+        <button class="orch-tab active" data-orch-tab="playbooks">Playbooks</button>
+        <button class="orch-tab" data-orch-tab="servers">Servers</button>
+        <button class="orch-tab" data-orch-tab="schedules">Schedules</button>
+        <button class="orch-tab" data-orch-tab="history">History</button>
+      </div>
+
+      <div id="orch-playbooks" class="orch-panel active">
+        <div class="panel" style="margin-bottom: 24px;">
+          <div class="panel-head">
+            <h3>Upload Playbooks</h3>
+          </div>
+          <div class="upload-zone" id="playbook-upload-zone">
+            <input type="file" id="playbook-file-input" accept=".yml,.yaml,.sh,.py" multiple style="display: none;" />
+            <svg class="icon" style="width: 48px; height: 48px; color: var(--accent-primary); margin-bottom: 12px;" fill="none" viewBox="0 0 24 24">
+              <path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <div style="font-size: 16px; font-weight: 500; margin-bottom: 8px; color: var(--text-primary);">
+              Drop playbook files here or click to browse
+            </div>
+            <div style="font-size: 13px; color: var(--text-muted);">
+              Supports .yml, .yaml, .sh, .py files
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Available Playbooks</h3>
+            <div style="display: flex; gap: 8px;">
+              <input type="text" id="playbook-search" placeholder="Search playbooks..." style="padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--surface-secondary); color: var(--text-primary); width: 300px;" />
+              <button class="btn primary" onclick="orchRefreshPlaybooks()">Refresh</button>
+            </div>
+          </div>
+          <div id="playbooks-list" class="playbooks-grid">
+            <div class="text-center text-muted">Loading playbooks...</div>
+          </div>
+        </div>
+
+        <div class="panel" style="margin-top: 24px;">
+          <div class="panel-head">
+            <h3>Live Output</h3>
+          </div>
+          <div class="log-output" id="orch-logs"></div>
+        </div>
+      </div>
+
+      <div id="orch-servers" class="orch-panel">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Server Inventory</h3>
+            <button class="btn primary" onclick="orchShowAddServer()">Add Server</button>
+          </div>
+          <div id="servers-list">
+            <div class="text-center text-muted">Loading servers...</div>
+          </div>
+        </div>
+      </div>
+
+      <div id="orch-schedules" class="orch-panel">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Job Schedules</h3>
+            <button class="btn primary" onclick="orchShowAddSchedule()">Add Schedule</button>
+          </div>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Job Name</th>
+                <th>Playbook</th>
+                <th>Schedule</th>
+                <th>Server Group</th>
+                <th>Last Run</th>
+                <th>Next Run</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="schedules-list">
+              <tr><td colspan="8" class="text-center text-muted">Loading schedules...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="orch-history" class="orch-panel">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Job History</h3>
+            <div style="display: flex; gap: 8px;">
+              <button class="btn" onclick="orchLoadHistory()">Refresh</button>
+              <button class="btn" onclick="orchShowHistorySettings()">Manage History</button>
+            </div>
+          </div>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Name / Playbook</th>
+                <th>Status</th>
+                <th>Started</th>
+                <th>Completed</th>
+                <th>Exit Code</th>
+                <th>Triggered By</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="history-list">
+              <tr><td colspan="7" class="text-center text-muted">Loading history...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- SENTINEL TAB - NEW -->
+    <section id="sentinel" class="tab-panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <h1>Sentinel Monitoring</h1>
+          <div class="panel-subtitle">Autonomous SSH-based service monitoring and self-healing</div>
+        </div>
+      </div>
+
+      <div class="orch-tabs">
+        <button class="orch-tab sentinel-subnav-btn active" data-view="dashboard">Dashboard</button>
+        <button class="orch-tab sentinel-subnav-btn" data-view="servers">Servers</button>
+        <button class="orch-tab sentinel-subnav-btn" data-view="templates">Templates</button>
+        <button class="orch-tab sentinel-subnav-btn" data-view="monitoring">Monitoring</button>
+        <button class="orch-tab sentinel-subnav-btn" data-view="logs">Logs</button>
+        <button class="orch-tab sentinel-subnav-btn" data-view="settings">Settings</button>
+      </div>
+
+      <!-- DASHBOARD SUBVIEW -->
+      <div class="sentinel-subview orch-panel active" data-view="dashboard">
+        <div class="metrics-grid">
+          <div class="metric-card">
+            <div class="metric-header">
+              <div class="metric-label">Total Checks</div>
+            </div>
+            <div class="metric-value" id="sentinel-total-checks">0</div>
+            <div style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">
+              <span id="sentinel-checks-today">0</span> today
+            </div>
+          </div>
+          
+          <div class="metric-card green">
+            <div class="metric-header">
+              <div class="metric-label">Services Monitored</div>
+            </div>
+            <div class="metric-value" id="sentinel-services-monitored">0</div>
+            <div style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">
+              <span id="sentinel-servers-monitored">0</span> servers
+            </div>
+          </div>
+          
+          <div class="metric-card red">
+            <div class="metric-header">
+              <div class="metric-label">Services Down</div>
+            </div>
+            <div class="metric-value" id="sentinel-services-down">0</div>
+          </div>
+          
+          <div class="metric-card cyan">
+            <div class="metric-header">
+              <div class="metric-label">Uptime (24h)</div>
+            </div>
+            <div class="metric-value" id="sentinel-uptime">100%</div>
+            <div style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">
+              <span id="sentinel-avg-response">0.000s</span> avg
+            </div>
+          </div>
+          
+          <div class="metric-card orange">
+            <div class="metric-header">
+              <div class="metric-label">Repairs Made</div>
+            </div>
+            <div class="metric-value" id="sentinel-repairs-all">0</div>
+            <div style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">
+              <span id="sentinel-repairs-today">0</span> today
+            </div>
+          </div>
+          
+          <div class="metric-card">
+            <div class="metric-header">
+              <div class="metric-label">Failed Repairs</div>
+            </div>
+            <div class="metric-value" id="sentinel-failed-repairs">0</div>
+          </div>
+        </div>
+
+        <div class="panel" style="margin-top: 24px;">
+          <div class="panel-head">
+            <h3>Live Service Status</h3>
+            <button class="btn primary" onclick="sentinelUI.loadLiveStatus()">Refresh</button>
+          </div>
+          <div id="sentinel-live-status" style="padding: 16px;">
+            <div class="text-center text-muted">Loading service status...</div>
+          </div>
+        </div>
+
+        <div class="panel" style="margin-top: 24px;">
+          <div class="panel-head">
+            <h3>Recent Activity</h3>
+          </div>
+          <div id="sentinel-recent-activity" style="padding: 16px;">
+            <div class="text-center text-muted">Loading activity...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SERVERS SUBVIEW -->
+      <div class="sentinel-subview orch-panel" data-view="servers">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>SSH Server Inventory</h3>
+            <button class="btn primary" onclick="sentinelUI.showAddServerModal()">Add Server</button>
+          </div>
+          <div id="sentinel-servers-list" style="padding: 16px;">
+            <div class="text-center text-muted">Loading servers...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TEMPLATES SUBVIEW -->
+      <div class="sentinel-subview orch-panel" data-view="templates">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Service Check Templates</h3>
+            <div style="display: flex; gap: 8px;">
+              <button class="btn primary" onclick="sentinelUI.syncTemplates()">🔄 Sync from GitHub</button>
+              <button class="btn primary" onclick="sentinelUI.showUploadTemplateModal()">⬆️ Upload</button>
+              <button class="btn primary" onclick="sentinelUI.showCreateTemplateModal()">➕ Create</button>
+            </div>
+          </div>
+          <div id="sentinel-templates-list" style="padding: 16px;">
+            <div class="text-center text-muted">Loading templates...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- MONITORING SUBVIEW -->
+      <div class="sentinel-subview orch-panel" data-view="monitoring">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Monitoring Configurations</h3>
+            <div style="display: flex; gap: 8px;">
+              <button class="btn primary" onclick="sentinelUI.showAddMonitoringModal()">➕ Add Monitoring</button>
+              <button class="btn success" onclick="sentinelUI.startAllMonitoring()">▶️ Start All</button>
+            </div>
+          </div>
+          <div id="sentinel-monitoring-list" style="padding: 16px;">
+            <div class="text-center text-muted">Loading monitoring configs...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- LOGS SUBVIEW -->
+      <div class="sentinel-subview orch-panel" data-view="logs">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Execution History</h3>
+            <button class="btn primary" onclick="sentinelUI.renderLogHistory()">Refresh</button>
+          </div>
+          <div id="sentinel-log-history" style="padding: 16px;">
+            <div class="text-center text-muted">Loading logs...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SETTINGS SUBVIEW -->
+      <div class="sentinel-subview orch-panel" data-view="settings">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Sentinel Settings</h3>
+          </div>
+          <div id="sentinel-settings-container" style="padding: 16px;">
+            <div class="text-center text-muted">Loading settings...</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ANALYTICS TAB - Keeping existing content -->
+    <section id="analytics" class="tab-panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <h1>Analytics & Monitoring</h1>
+          <div class="panel-subtitle">Real-time homelab health monitoring and uptime tracking</div>
+        </div>
+      </div>
+
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-header">
+            <div class="metric-label">Health Score</div>
+          </div>
+          <div class="metric-value" id="health-score" style="font-size: 48px;">0%</div>
+        </div>
+        
+        <div class="metric-card green">
+          <div class="metric-header">
+            <div class="metric-label">Services Up</div>
+          </div>
+          <div class="metric-value" id="services-up">0</div>
+        </div>
+        
+        <div class="metric-card red">
+          <div class="metric-header">
+            <div class="metric-label">Services Down</div>
+          </div>
+          <div class="metric-value" id="services-down">0</div>
+        </div>
+        
+        <div class="metric-card cyan">
+          <div class="metric-header">
+            <div class="metric-label">Total Monitored</div>
+          </div>
+          <div class="metric-value" id="services-total">0</div>
+        </div>
+      </div>
+
+      <div style="margin: 20px 0; display: flex; gap: 12px; flex-wrap: wrap;">
+        <button class="btn" onclick="analyticsResetHealth()" 
+                style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); color: #f59e0b;">
+          Reset Health Scores
+        </button>
+        <button class="btn" onclick="analyticsResetIncidents()" 
+                style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); color: #ef4444;">
+          Clear All Incidents
+        </button>
+        
+        <button class="btn" onclick="analyticsPurgeWeek()" 
+                style="background: rgba(139, 92, 246, 0.1); border: 1px solid rgba(139, 92, 246, 0.3); color: #8b5cf6;">
+          Purge 1 Week
+        </button>
+        <button class="btn" onclick="analyticsPurgeMonth()" 
+                style="background: rgba(139, 92, 246, 0.1); border: 1px solid rgba(139, 92, 246, 0.3); color: #8b5cf6;">
+          Purge 1 Month
+        </button>
+        <button class="btn" onclick="analyticsPurgeAll()" 
+                style="background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); color: #ef4444;">
+          Purge ALL
+        </button>
+      </div>
+
+      <div class="orch-tabs">
+        <button class="orch-tab active" data-analytics-tab="dashboard">Dashboard</button>
+        <button class="orch-tab" data-analytics-tab="services">Services</button>
+        <button class="orch-tab" data-analytics-tab="incidents">Incidents</button>
+        <button class="orch-tab" data-analytics-tab="network">Network</button>
+        <button class="orch-tab" data-analytics-tab="internet">Internet</button>
+      </div>
+
+      <div id="analytics-dashboard" class="orch-panel active">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Service Status Overview</h3>
+            <button class="btn primary" onclick="analyticsRefresh()">Refresh</button>
+          </div>
+          <div id="analytics-services-grid" class="playbooks-grid">
+            <div class="text-center text-muted">Loading services...</div>
+          </div>
+        </div>
+      </div>
+
+      <div id="analytics-services" class="orch-panel">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Monitored Services</h3>
+            <button class="btn primary" onclick="analyticsShowAddService()">Add Service</button>
+          </div>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Service Name</th>
+                <th>Endpoint</th>
+                <th>Type</th>
+                <th>Status</th>
+                <th>Interval</th>
+                <th>Enabled</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="analytics-services-list">
+              <tr><td colspan="7" class="text-center text-muted">Loading services...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="analytics-incidents" class="orch-panel">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Recent Incidents (Last 7 Days)</h3>
+            <button class="btn primary" onclick="analyticsLoadIncidents()">Refresh</button>
+          </div>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Service</th>
+                <th>Time</th>
+                <th>Duration</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="analytics-incidents-list">
+              <tr><td colspan="4" class="text-center text-muted">Loading incidents...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- NETWORK MONITORING PANEL -->
+      <div id="analytics-network" class="orch-panel">
+        <!-- Network Stats Cards -->
+        <div class="metrics-grid" style="margin-bottom: 24px;">
+          <div class="metric-card">
+            <div class="metric-header">
+              <div class="metric-label">Total Devices</div>
+            </div>
+            <div class="metric-value" id="net-total-devices">0</div>
+          </div>
+          
+          <div class="metric-card green">
+            <div class="metric-header">
+              <div class="metric-label">Monitored Devices</div>
+            </div>
+            <div class="metric-value" id="net-monitored-devices">0</div>
+          </div>
+          
+          <div class="metric-card cyan">
+            <div class="metric-header">
+              <div class="metric-label">Permanent Devices</div>
+            </div>
+            <div class="metric-value" id="net-permanent-devices">0</div>
+          </div>
+          
+          <div class="metric-card">
+            <div class="metric-header">
+              <div class="metric-label">Scans (24h)</div>
+            </div>
+            <div class="metric-value" id="net-scans-24h">0</div>
+          </div>
+        </div>
+
+        <!-- Network Controls -->
+        <div style="margin-bottom: 24px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center;">
+          <button id="btn-network-scan" class="btn primary" onclick="networkRunScan()">
+            🔍 Run Network Scan
+          </button>
+          <button id="btn-toggle-monitoring" class="btn" onclick="networkToggleMonitoringMode()">
+            ▶️ Start Monitoring
+          </button>
+          <div style="display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: var(--surface-secondary); border-radius: 8px;">
+            <input type="checkbox" id="toggle-alert-new-devices" onchange="networkToggleAlerts()" checked />
+            <label for="toggle-alert-new-devices" style="margin: 0; cursor: pointer;">Alert on new devices</label>
+          </div>
+          <div style="margin-left: auto; padding: 8px 16px; background: var(--surface-secondary); border-radius: 8px;">
+            Last scan: <span id="net-last-scan">Never</span>
+          </div>
+        </div>
+
+        <!-- Discovered Devices -->
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Discovered Devices</h3>
+            <div style="font-size: 14px; color: var(--text-muted);">
+              Click device names to rename • Check boxes to monitor
+            </div>
+          </div>
+          <div style="overflow-x: auto;">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="width: 60px;">Online</th>
+                  <th>MAC Address</th>
+                  <th>Device Name</th>
+                  <th>IP Address</th>
+                  <th>Vendor</th>
+                  <th>Last Seen</th>
+                  <th style="width: 120px;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="network-devices-list">
+                <tr>
+                  <td colspan="7" style="text-align: center; padding: 2rem; color: var(--text-muted);">
+                    No devices found. Run a network scan to discover devices.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Network Events -->
+        <div class="panel" style="margin-top: 24px;">
+          <div class="panel-head">
+            <h3>Network Events (Last 24 Hours)</h3>
+          </div>
+          <div style="overflow-x: auto;">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="width: 60px;"></th>
+                  <th>Event Type</th>
+                  <th>MAC Address</th>
+                  <th>IP Address</th>
+                  <th>Timestamp</th>
+                </tr>
+              </thead>
+              <tbody id="network-events-list">
+                <tr>
+                  <td colspan="5" style="text-align: center; padding: 2rem; color: var(--text-muted);">
+                    No events in the last 24 hours
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ✨ NEW: INTERNET SPEED TEST PANEL -->
+      <div id="analytics-internet" class="orch-panel">
+        <!-- Speed Test Stats Cards -->
+        <div class="metrics-grid" style="margin-bottom: 24px;">
+          <div class="metric-card">
+            <div class="metric-header">
+              <div class="metric-label">Avg Download</div>
+            </div>
+            <div class="metric-value" id="speed-avg-download">--</div>
+          </div>
+          
+          <div class="metric-card green">
+            <div class="metric-header">
+              <div class="metric-label">Avg Upload</div>
+            </div>
+            <div class="metric-value" id="speed-avg-upload">--</div>
+          </div>
+          
+          <div class="metric-card cyan">
+            <div class="metric-header">
+              <div class="metric-label">Avg Ping</div>
+            </div>
+            <div class="metric-value" id="speed-avg-ping">--</div>
+          </div>
+          
+          <div class="metric-card">
+            <div class="metric-header">
+              <div class="metric-label">Total Tests</div>
+            </div>
+            <div class="metric-value" id="speed-total-tests">0</div>
+          </div>
+        </div>
+
+        <!-- Speed Test Actions -->
+        <div style="display: flex; gap: 1rem; margin-bottom: 2rem; flex-wrap: wrap;">
+          <button id="speed-test-btn" class="btn primary" onclick="analyticsRunSpeedTest()">
+            🚀 Run Test Now
+          </button>
+          <button id="speed-monitoring-toggle" class="btn btn-success" onclick="analyticsToggleSpeedMonitoring()">
+            ▶️ Start Auto-Testing
+          </button>
+          <button class="btn secondary" onclick="analyticsLoadInternetDashboard()">
+            🔄 Refresh
+          </button>
+        </div>
+
+        <!-- Schedule Configuration -->
+        <div class="panel" style="margin-bottom: 2rem;">
+          <div class="panel-head">
+            <h3>⏰ Test Schedule</h3>
+          </div>
+          <div class="panel-body">
+            <!-- Notification Toggle -->
+            <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1.5rem; padding: 1rem; background: #2a2a2a; border-radius: 8px;">
+              <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; flex: 1;">
+                <input 
+                  type="checkbox" 
+                  id="notify-on-every-test" 
+                  checked
+                  onchange="analyticsToggleNotifyOnEveryTest()"
+                  style="width: 20px; height: 20px; cursor: pointer;"
+                />
+                <span style="font-weight: 500;">📢 Notify on Every Test</span>
+              </label>
+              <span style="color: #888; font-size: 0.9rem;">When OFF, only get alerts for problems</span>
+            </div>
+
+            <!-- Mode Selection -->
+            <div style="display: flex; gap: 1rem; margin-bottom: 1.5rem;">
+              <button id="schedule-mode-interval" class="btn active" onclick="analyticsSwitchScheduleMode('interval')" style="flex: 1;">
+                ⏱️ Interval Mode
+              </button>
+              <button id="schedule-mode-scheduled" class="btn" onclick="analyticsSwitchScheduleMode('scheduled')" style="flex: 1;">
+                🕐 Scheduled Times
+              </button>
+            </div>
+
+            <!-- Interval Controls -->
+            <div id="interval-controls" style="display: block;">
+              <label style="display: block; margin-bottom: 0.5rem; font-weight: 500;">Run every:</label>
+              <div style="display: flex; align-items: center; gap: 1rem;">
+                <input 
+                  type="range" 
+                  id="interval-hours" 
+                  min="1" 
+                  max="24" 
+                  value="12" 
+                  onchange="analyticsUpdateInterval()"
+                  style="flex: 1;"
+                />
+                <span id="interval-value" style="min-width: 80px; font-weight: 500;">12 hours</span>
+              </div>
+            </div>
+
+            <!-- Scheduled Times Controls -->
+            <div id="scheduled-controls" style="display: none;">
+              <label style="display: block; margin-bottom: 0.5rem; font-weight: 500;">Add test time:</label>
+              <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+                <input 
+                  type="time" 
+                  id="scheduled-time-input" 
+                  class="form-input" 
+                  style="flex: 1;"
+                />
+                <button class="btn btn-success" onclick="analyticsAddScheduledTime()">
+                  ➕ Add
+                </button>
+              </div>
+              
+              <div id="scheduled-times-list">
+                <p style="color: #888; text-align: center;">No times scheduled</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Latest Result -->
+        <div style="margin-bottom: 2rem;">
+          <h4>Latest Result</h4>
+          <div id="speed-latest-result" style="background: #1a1a1a; padding: 2rem; border-radius: 8px; border: 1px solid #2a2a2a;">
+            <p style="text-align: center; color: #888;">No tests yet. Click "Run Test Now"</p>
+          </div>
+        </div>
+
+        <!-- Test History -->
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Recent Tests (Last 7 Days)</h3>
+          </div>
+          <div style="overflow-x: auto;">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>Download</th>
+                  <th>Upload</th>
+                  <th>Ping</th>
+                  <th>Status</th>
+                  <th>Server</th>
+                </tr>
+              </thead>
+              <tbody id="speed-history-tbody">
+                <tr>
+                  <td colspan="6" style="text-align: center; padding: 2rem; color: #888;">Loading...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ATLAS TAB -->
+    <section id="atlas" class="tab-panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <h1>Atlas Topology Map</h1>
+          <div class="panel-subtitle">Live network graph generated from Orchestrator + Analytics</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Topology Overview</h3>
+          <button class="btn primary" onclick="atlasRender()">Refresh</button>
+        </div>
+        <div id="atlas-view"
+             style="width:100%;height:600px;background:rgba(255,255,255,0.02);
+                    border:1px solid var(--surface-border);border-radius:8px;">
+          <div class="text-center text-muted" style="padding:20px;">
+            Loading topology...
+          </div>
+        </div>
+      </div>
+    </section>
+    <!-- SETTINGS TAB - FIXED -->
+    <section id="settings" class="tab-panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <h1>System Settings</h1>
+          <div class="panel-subtitle">Configure Jarvis Prime modules and features</div>
+        </div>
+      </div>
+
+      <!-- HA Readonly Banner -->
+      <div id="settings-readonly-banner" style="display: none; background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 8px; padding: 16px; margin-bottom: 24px;">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <span style="font-size: 24px;">⚠️</span>
+          <div>
+            <div style="color: #f59e0b; font-weight: 600; margin-bottom: 4px;">Home Assistant Mode - Read Only</div>
+            <div style="color: var(--text-muted); font-size: 14px;">
+              Settings are managed through the Home Assistant addon configuration UI. These values are displayed for reference only.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Settings Sub-tabs - FIXED: Changed settings-tab to orch-tab -->
+      <div class="orch-tabs">
+        <button class="orch-tab active" data-settings-tab="general">General</button>
+        <button class="orch-tab" data-settings-tab="llm">LLM & AI</button>
+        <button class="orch-tab" data-settings-tab="personality">Personality</button>
+        <button class="orch-tab" data-settings-tab="integrations">Integrations</button>
+        <button class="orch-tab" data-settings-tab="communications">Communications</button>
+        <button class="orch-tab" data-settings-tab="monitoring">Monitoring</button>
+        <button class="orch-tab" data-settings-tab="push">Push Notifications</button>
+        <button class="orch-tab" data-settings-tab="sentinel">Sentinel</button>
+        <button class="orch-tab" data-settings-tab="backup">Backup & Restore</button>
+      </div>
+
+      <!-- GENERAL PANEL -->
+      <div id="settings-general-panel" class="settings-panel orch-panel active">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>General Settings</h3>
+          </div>
+          
+          <div style="padding: 20px;">
+            <div class="form-group">
+              <label class="form-label">Bot Name</label>
+              <input type="text" id="set-bot-name" placeholder="Jarvis Prime">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Bot Icon</label>
+              <input type="text" id="set-bot-icon" placeholder="🧠">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Jarvis App Name</label>
+              <input type="text" id="set-jarvis-app-name" placeholder="Jarvis">
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-beautify-enabled" />
+                <label for="set-beautify-enabled">Enable message beautification</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-beautify-inline-images" />
+                <label for="set-beautify-inline-images">Show inline images in messages</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-silent-repost" />
+                <label for="set-silent-repost">Silent repost (delete original messages after processing)</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-greeting-enabled" />
+                <label for="set-greeting-enabled">Enable greeting messages</label>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Greeting Times (JSON)</label>
+              <textarea id="set-greeting-times" rows="3" placeholder='{"morning":"06:00","afternoon":"12:00","evening":"18:00","late_night":"22:30","early_morning":"03:00"}'></textarea>
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                JSON object defining when greetings are sent
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Retention Days</label>
+              <input type="number" id="set-retention-days" min="1" placeholder="30">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Number of days to keep messages in inbox
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Retention Hours (for hourly cleanup)</label>
+              <input type="number" id="set-retention-hours" min="1" placeholder="24">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Auto-Purge Policy</label>
+              <select id="set-auto-purge-policy">
+                <option value="off">Off</option>
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+              </select>
+            </div>
+			<div class="form-group">
+              <label class="form-label">Cache Refresh Interval (minutes)</label>
+              <input type="number" id="set-cache-refresh-minutes" min="1" placeholder="60">
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      <!-- LLM & AI PANEL -->
+      <div id="settings-llm-panel" class="settings-panel orch-panel">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>LLM & AI Configuration</h3>
+          </div>
+          
+          <div style="padding: 20px;">
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-llm-enabled" />
+                <label for="set-llm-enabled">Enable LLM processing</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-llm-persona-riffs-enabled" />
+                <label for="set-llm-persona-riffs-enabled">Enable persona riffs (personality-based responses)</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-llm-rewrite-enabled" />
+                <label for="set-llm-rewrite-enabled">Enable message rewriting</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Models Directory</label>
+              <input type="text" id="set-llm-models-dir" placeholder="/share/jarvis_prime/models">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Timeout (seconds)</label>
+              <input type="number" id="set-llm-timeout-seconds" min="1" placeholder="20">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Max CPU %</label>
+              <input type="number" id="set-llm-max-cpu-percent" min="1" max="100" placeholder="80">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Context Tokens</label>
+              <input type="number" id="set-llm-ctx-tokens" min="1" placeholder="6096">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Generation Tokens</label>
+              <input type="number" id="set-llm-gen-tokens" min="1" placeholder="300">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Threads</label>
+              <input type="number" id="set-llm-threads" min="1" placeholder="3">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Models Priority</label>
+              <input type="text" id="set-llm-models-priority" placeholder="phi35_q5_uncensored,phi35_q5,phi35_q4,phi3">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Comma-separated list of model names in priority order
+              </div>
+            </div>
+            
+			<div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-llm-cleanup-on-disable" />
+                <label for="set-llm-cleanup-on-disable">Cleanup models when LLM is disabled</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Riff Max Tokens</label>
+              <input type="number" id="set-llm-riff-max-tokens" min="1" placeholder="32">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Maximum tokens for personality riffs
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Rewrite Max Tokens</label>
+              <input type="number" id="set-llm-rewrite-max-tokens" min="1" placeholder="256">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Maximum tokens for message rewriting
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Max Output Lines</label>
+              <input type="number" id="set-llm-max-lines" min="1" placeholder="30">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">System Prompt (optional)</label>
+              <textarea id="set-llm-system-prompt" rows="4" placeholder="Custom system prompt for the LLM..."></textarea>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-llm-memory-enabled" />
+                <label for="set-llm-memory-enabled">Enable LLM memory/context persistence</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-llm-autodownload" />
+                <label for="set-llm-autodownload">Auto-download missing models</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Hugging Face Token (optional)</label>
+              <input type="password" id="set-llm-hf-token" placeholder="For private model downloads">
+            </div>
+            
+            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">Phi-4 Models</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-llm-phi4-q4-enabled" />
+                <label for="set-llm-phi4-q4-enabled">Enable Phi-4 Q4 Model</label>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phi-4 Q4 URL</label>
+              <input type="text" id="set-llm-phi4-q4-url" placeholder="https://huggingface.co/...">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phi-4 Q4 Path</label>
+              <input type="text" id="set-llm-phi4-q4-path" placeholder="/share/jarvis_prime/models/phi4-q4.gguf">
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-llm-phi4-q5-enabled" />
+                <label for="set-llm-phi4-q5-enabled">Enable Phi-4 Q5 Model</label>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phi-4 Q5 URL</label>
+              <input type="text" id="set-llm-phi4-q5-url" placeholder="https://huggingface.co/...">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phi-4 Q5 Path</label>
+              <input type="text" id="set-llm-phi4-q5-path" placeholder="/share/jarvis_prime/models/phi4-q5.gguf">
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-llm-phi4-q6-enabled" />
+                <label for="set-llm-phi4-q6-enabled">Enable Phi-4 Q6 Model</label>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phi-4 Q6 URL</label>
+              <input type="text" id="set-llm-phi4-q6-url" placeholder="https://huggingface.co/...">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phi-4 Q6 Path</label>
+              <input type="text" id="set-llm-phi4-q6-path" placeholder="/share/jarvis_prime/models/phi4-q6.gguf">
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-llm-phi4-q8-enabled" />
+                <label for="set-llm-phi4-q8-enabled">Enable Phi-4 Q8 Model</label>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phi-4 Q8 URL</label>
+              <input type="text" id="set-llm-phi4-q8-url" placeholder="https://huggingface.co/...">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phi-4 Q8 Path</label>
+              <input type="text" id="set-llm-phi4-q8-path" placeholder="/share/jarvis_prime/models/phi4-q8.gguf">
+            </div>
+            
+            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">Phi-3.5 Models</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-llm-phi35-q4-enabled" />
+                <label for="set-llm-phi35-q4-enabled">Enable Phi-3.5 Q4 Model</label>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phi-3.5 Q4 URL</label>
+              <input type="text" id="set-llm-phi35-q4-url" placeholder="https://huggingface.co/...">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phi-3.5 Q4 Path</label>
+              <input type="text" id="set-llm-phi35-q4-path" placeholder="/share/jarvis_prime/models/phi35-q4.gguf">
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-llm-phi35-q5-enabled" />
+                <label for="set-llm-phi35-q5-enabled">Enable Phi-3.5 Q5 Model</label>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phi-3.5 Q5 URL</label>
+              <input type="text" id="set-llm-phi35-q5-url" placeholder="https://huggingface.co/...">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phi-3.5 Q5 Path</label>
+              <input type="text" id="set-llm-phi35-q5-path" placeholder="/share/jarvis_prime/models/phi35-q5.gguf">
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-llm-phi35-q5-uncensored-enabled" />
+                <label for="set-llm-phi35-q5-uncensored-enabled">Enable Phi-3.5 Q5 Uncensored Model</label>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phi-3.5 Q5 Uncensored URL</label>
+              <input type="text" id="set-llm-phi35-q5-uncensored-url" placeholder="https://huggingface.co/...">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phi-3.5 Q5 Uncensored Path</label>
+              <input type="text" id="set-llm-phi35-q5-uncensored-path" placeholder="/share/jarvis_prime/models/phi35-q5-uncensored.gguf">
+            </div>
+            
+            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">Phi-3 Model</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-llm-phi3-enabled" />
+                <label for="set-llm-phi3-enabled">Enable Phi-3 Model</label>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phi-3 URL</label>
+              <input type="text" id="set-llm-phi3-url" placeholder="https://huggingface.co/...">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phi-3 Path</label>
+              <input type="text" id="set-llm-phi3-path" placeholder="/share/jarvis_prime/models/phi3.gguf">
+            </div>
+
+			
+            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">EnviroGuard</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-llm-enviroguard-enabled" />
+                <label for="set-llm-enviroguard-enabled">Enable EnviroGuard (temperature-based performance adjustment)</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Poll Interval (minutes)</label>
+              <input type="number" id="set-llm-enviroguard-poll-minutes" min="1" placeholder="30">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Hot Temperature Threshold (°C)</label>
+              <input type="number" id="set-llm-enviroguard-hot-c" placeholder="30">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Normal Temperature (°C)</label>
+              <input type="number" id="set-llm-enviroguard-normal-c" placeholder="22">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Cold Temperature Threshold (°C)</label>
+              <input type="number" id="set-llm-enviroguard-cold-c" placeholder="10">
+            </div>
+			<div class="form-group">
+              <label class="form-label">Max Stale Minutes</label>
+              <input type="number" id="set-llm-enviroguard-max-stale-minutes" min="1" placeholder="120">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Max time without temperature update before using manual mode
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Hysteresis (°C)</label>
+              <input type="number" id="set-llm-enviroguard-hysteresis-c" placeholder="2">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Temperature buffer to prevent rapid switching
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Off Temperature (°C)</label>
+              <input type="number" id="set-llm-enviroguard-off-c" placeholder="42">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Temperature threshold to disable LLM completely
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Boost Temperature (°C)</label>
+              <input type="number" id="set-llm-enviroguard-boost-c" placeholder="16">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Temperature threshold for boost performance mode
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Performance Profiles (JSON)</label>
+              <textarea id="set-llm-enviroguard-profiles" rows="6" placeholder='{"manual":{"cpu_percent":80,"ctx_tokens":4096,"timeout_seconds":20},...}'></textarea>
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Define custom performance profiles for different temperature conditions
+              </div>
+            </div>
+            
+            <h5 style="margin-top: 24px; margin-bottom: 12px; color: var(--text-primary); font-size: 14px;">Home Assistant Integration</h5>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-llm-enviroguard-ha-enabled" />
+                <label for="set-llm-enviroguard-ha-enabled">Enable Home Assistant temperature sensor</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Home Assistant URL</label>
+              <input type="text" id="set-llm-enviroguard-ha-base-url" placeholder="http://homeassistant:8123">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Home Assistant Token</label>
+              <input type="password" id="set-llm-enviroguard-ha-token" placeholder="Long-lived access token">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Temperature Sensor Entity</label>
+              <input type="text" id="set-llm-enviroguard-ha-temp-entity" placeholder="sensor.living_room_temperature">
+            </div>
+
+          </div>
+        </div>
+      </div>
+      <!-- PERSONALITY PANEL -->
+      <div id="settings-personality-panel" class="settings-panel orch-panel">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Personality Settings</h3>
+          </div>
+          
+          <div style="padding: 20px;">
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-personality-enabled" />
+                <label for="set-personality-enabled">Enable personality system</label>
+              </div>
+            </div>
+            
+			<div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-personality-persistent" />
+                <label for="set-personality-persistent">Persistent personality (remember previous interactions)</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-personality-family-friendly" />
+                <label for="set-personality-family-friendly">Family-friendly mode (filter inappropriate content)</label>
+              </div>
+            </div>
+
+			
+            <div class="form-group">
+              <label class="form-label">Active Persona</label>
+              <select id="set-active-persona">
+                <option value="auto">Auto</option>
+                <option value="ops">Ops</option>
+                <option value="dude">Dude</option>
+                <option value="chick">Chick</option>
+                <option value="nerd">Nerd</option>
+                <option value="rager">Rager</option>
+                <option value="comedian">Comedian</option>
+                <option value="action">Action</option>
+              </select>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Min Interval Between Riffs (minutes)</label>
+              <input type="number" id="set-personality-min-interval-minutes" min="1" placeholder="90">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Interval Jitter %</label>
+              <input type="number" id="set-personality-interval-jitter-pct" min="0" max="100" placeholder="20">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Daily Max Riffs</label>
+              <input type="number" id="set-personality-daily-max" min="1" placeholder="6">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Quiet Hours</label>
+              <input type="text" id="set-personality-quiet-hours" placeholder="23:00-06:00">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Format: HH:MM-HH:MM (e.g., 23:00-06:00)
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-chat-enabled" />
+                <label for="set-chat-enabled">Enable chat functionality</label>
+              </div>
+            </div>
+            
+            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">Enabled Personas</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-enable-dude" />
+                <label for="set-enable-dude">Enable Dude persona</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-enable-chick" />
+                <label for="set-enable-chick">Enable Chick persona</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-enable-nerd" />
+                <label for="set-enable-nerd">Enable Nerd persona</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-enable-rager" />
+                <label for="set-enable-rager">Enable Rager persona</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-enable-comedian" />
+                <label for="set-enable-comedian">Enable Comedian persona</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-enable-action" />
+                <label for="set-enable-action">Enable Action persona</label>
+              </div>
+            </div>
+			<div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-enable-jarvis" />
+                <label for="set-enable-jarvis">Enable Jarvis persona</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-enable-ops" />
+                <label for="set-enable-ops">Enable Ops persona</label>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      <!-- INTEGRATIONS PANEL -->
+      <div id="settings-integrations-panel" class="settings-panel orch-panel">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Integration Settings</h3>
+          </div>
+          
+          <div style="padding: 20px;">
+            <h4 style="margin-bottom: 16px; color: var(--text-primary);">Weather</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-weather-enabled" />
+                <label for="set-weather-enabled">Enable weather reports</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Latitude</label>
+              <input type="number" id="set-weather-lat" step="0.0001" placeholder="-26.2041">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Longitude</label>
+              <input type="number" id="set-weather-lon" step="0.0001" placeholder="28.0473">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">City Name</label>
+              <input type="text" id="set-weather-city" placeholder="Odendaalsrus">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Report Time</label>
+              <input type="text" id="set-weather-time" placeholder="07:00">
+            </div>
+			<div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-weather-show-indoor" />
+                <label for="set-weather-show-indoor">Show indoor temperature in weather reports</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Indoor Temperature Sensor Entity</label>
+              <input type="text" id="set-weather-indoor-sensor-entity" placeholder="sensor.indoor_temperature">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Home Assistant entity ID for indoor temperature
+              </div>
+            </div>
+
+            
+            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">Daily Digest</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-digest-enabled" />
+                <label for="set-digest-enabled">Enable daily digest</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Digest Time</label>
+              <input type="text" id="set-digest-time" placeholder="08:00">
+            </div>
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-ai-checkins-enabled" />
+                <label for="set-ai-checkins-enabled">Enable AI check-ins (proactive notifications)</label>
+              </div>
+            </div>
+
+            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">Heartbeat</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-heartbeat-enabled" />
+                <label for="set-heartbeat-enabled">Enable heartbeat messages</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Interval (minutes)</label>
+              <input type="number" id="set-heartbeat-interval-minutes" min="1" placeholder="120">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Start Time</label>
+              <input type="text" id="set-heartbeat-start" placeholder="06:00">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">End Time</label>
+              <input type="text" id="set-heartbeat-end" placeholder="20:00">
+            </div>
+            
+            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">Radarr</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-radarr-enabled" />
+                <label for="set-radarr-enabled">Enable Radarr integration</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Radarr URL</label>
+              <input type="text" id="set-radarr-url" placeholder="http://192.168.1.100:7878">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">API Key</label>
+              <input type="text" id="set-radarr-api-key" placeholder="Enter API key">
+            </div>
+            
+            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">Sonarr</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-sonarr-enabled" />
+                <label for="set-sonarr-enabled">Enable Sonarr integration</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Sonarr URL</label>
+              <input type="text" id="set-sonarr-url" placeholder="http://192.168.1.100:8989">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">API Key</label>
+              <input type="text" id="set-sonarr-api-key" placeholder="Enter API key">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- COMMUNICATIONS PANEL -->
+      <div id="settings-communications-panel" class="settings-panel orch-panel">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Communication Channels</h3>
+          </div>
+          
+          <div style="padding: 20px;">
+            <h4 style="margin-bottom: 16px; color: var(--text-primary);">SMTP Intake</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-smtp-enabled" />
+                <label for="set-smtp-enabled">Enable SMTP server</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">SMTP Port</label>
+              <input type="number" id="set-smtp-port" min="1" placeholder="2525">
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-ingest-smtp-enabled" />
+                <label for="set-ingest-smtp-enabled">Enable SMTP message ingestion</label>
+              </div>
+            </div>
+            <h4 style="margin-bottom: 16px; color: var(--text-primary);">SMTP Intake Server</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-smtp-enabled" />
+                <label for="set-smtp-enabled">Enable SMTP server</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Bind Address</label>
+              <input type="text" id="set-smtp-bind" placeholder="0.0.0.0">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Network interface to bind to (0.0.0.0 = all interfaces)
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">SMTP Port</label>
+              <input type="number" id="set-smtp-port" min="1" placeholder="2525">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Max Message Size (bytes)</label>
+              <input type="number" id="set-smtp-max-bytes" min="1" placeholder="262144">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Maximum email size (262144 = 256KB)
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Dummy Recipient</label>
+              <input type="text" id="set-smtp-dummy-rcpt" placeholder="alerts@jarvis.local">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Accept emails to any address (this is just a placeholder)
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-smtp-accept-any-auth" />
+                <label for="set-smtp-accept-any-auth">Accept any authentication (no password checking)</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Title Prefix</label>
+              <input type="text" id="set-smtp-rewrite-title-prefix" placeholder="[SMTP]">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Prefix added to subject lines of SMTP messages
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-smtp-allow-html" />
+                <label for="set-smtp-allow-html">Allow HTML emails</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Default Priority</label>
+              <input type="number" id="set-smtp-priority-default" min="1" max="10" placeholder="5">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Priority Map (JSON)</label>
+              <textarea id="set-smtp-priority-map" rows="3" placeholder='{"high": 7, "urgent": 8, "critical": 9, "low": 3, "normal": 5}'></textarea>
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Map keywords in subject/body to priority levels
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-ingest-smtp-enabled" />
+                <label for="set-ingest-smtp-enabled">Enable SMTP message ingestion</label>
+              </div>
+            </div>
+
+            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">Notification Proxy</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-proxy-enabled" />
+                <label for="set-proxy-enabled">Enable proxy intake</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Bind Address</label>
+              <input type="text" id="set-proxy-bind" placeholder="0.0.0.0">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Proxy Port</label>
+              <input type="number" id="set-proxy-port" min="1" placeholder="2580">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Gotify Proxy URL</label>
+              <input type="text" id="set-proxy-gotify-url" placeholder="http://10.0.0.99:8091">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Gotify server to proxy messages to
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">ntfy Proxy URL</label>
+              <input type="text" id="set-proxy-ntfy-url" placeholder="http://10.0.0.99:8080">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                ntfy server to proxy messages to
+              </div>
+            </div>
+
+            
+            <div class="form-group">
+              <label class="form-label">Proxy Port</label>
+              <input type="number" id="set-proxy-port" min="1" placeholder="2580">
+            </div>
+            
+            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">Webhook Intake</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-webhook-enabled" />
+                <label for="set-webhook-enabled">Enable webhook intake</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Bind Address</label>
+              <input type="text" id="set-webhook-bind" placeholder="0.0.0.0">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Webhook Port</label>
+              <input type="number" id="set-webhook-port" min="1" placeholder="2590">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Webhook Token (optional)</label>
+              <input type="password" id="set-webhook-token" placeholder="Leave blank to accept all requests">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Token for webhook authentication (optional)
+              </div>
+            </div>
+
+            
+            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">Apprise Server</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-intake-apprise-enabled" />
+                <label for="set-intake-apprise-enabled">Enable Apprise intake server</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Apprise Port</label>
+              <input type="number" id="set-intake-apprise-port" min="1" placeholder="2591">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Apprise Token</label>
+              <input type="password" id="set-intake-apprise-token" placeholder="change-me-very-long">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Authentication token for Apprise API
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-intake-apprise-accept-any-key" />
+                <label for="set-intake-apprise-accept-any-key">Accept any key (no key validation)</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Allowed Keys (comma-separated)</label>
+              <input type="text" id="set-intake-apprise-allowed-keys" placeholder="key1,key2,key3">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Only used if "accept any key" is disabled
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-ingest-apprise-enabled" />
+                <label for="set-ingest-apprise-enabled">Enable Apprise message ingestion</label>
+              </div>
+            </div>
+           <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">WebSocket Intake</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-intake-ws-enabled" />
+                <label for="set-intake-ws-enabled">Enable WebSocket intake</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">WebSocket Port</label>
+              <input type="number" id="set-intake-ws-port" min="1" placeholder="8765">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">WebSocket Token</label>
+              <input type="password" id="set-intake-ws-token" placeholder="change-me-very-long">
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      <!-- MONITORING PANEL -->
+      <div id="settings-monitoring-panel" class="settings-panel orch-panel">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Monitoring Services</h3>
+          </div>
+          
+          <div style="padding: 20px;">
+            <h4 style="margin-bottom: 16px; color: var(--text-primary);">Uptime Kuma</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-uptimekuma-enabled" />
+                <label for="set-uptimekuma-enabled">Enable Uptime Kuma integration</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Uptime Kuma URL</label>
+              <input type="text" id="set-uptimekuma-url" placeholder="http://192.168.1.100:3001">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">API Key</label>
+              <input type="text" id="set-uptimekuma-api-key" placeholder="Enter API key">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Status Page Slug (optional)</label>
+              <input type="text" id="set-uptimekuma-status-slug" placeholder="my-status-page">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Slug for public status page
+              </div>
+            </div>
+
+            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">Technitium DNS</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-technitium-enabled" />
+                <label for="set-technitium-enabled">Enable Technitium DNS integration</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Technitium URL</label>
+              <input type="text" id="set-technitium-url" placeholder="http://192.168.1.100:5380">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">API Key</label>
+              <input type="text" id="set-technitium-api-key" placeholder="Enter API key">
+            </div>
+			<div class="form-group">
+              <label class="form-label">Username</label>
+              <input type="text" id="set-technitium-user" placeholder="admin">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Password</label>
+              <input type="password" id="set-technitium-pass" placeholder="Enter password">
+            </div>
+
+          </div>
+        </div>
+      </div>
+     <!-- PUSH NOTIFICATIONS PANEL -->
+      <div id="settings-push-panel" class="settings-panel orch-panel">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Push Notification Services</h3>
+          </div>
+          
+          <div style="padding: 20px;">
+            <h4 style="margin-bottom: 16px; color: var(--text-primary);">Gotify</h4>
+            
+            <div class="form-group">
+              <label class="form-label">Gotify URL</label>
+              <input type="text" id="set-gotify-url" placeholder="http://192.168.1.100:8091">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Client Token</label>
+              <input type="text" id="set-gotify-client-token" placeholder="Enter client token">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">App Token</label>
+              <input type="text" id="set-gotify-app-token" placeholder="Enter app token">
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-push-gotify-enabled" />
+                <label for="set-push-gotify-enabled">Enable Gotify push notifications</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-ingest-gotify-enabled" />
+                <label for="set-ingest-gotify-enabled">Enable Gotify message ingestion</label>
+              </div>
+            </div>
+            
+            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">ntfy</h4>
+            
+            <div class="form-group">
+              <label class="form-label">ntfy URL</label>
+              <input type="text" id="set-ntfy-url" placeholder="http://192.168.1.100:8080">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">ntfy Topic</label>
+              <input type="text" id="set-ntfy-topic" placeholder="jarvis">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">ntfy Username (optional)</label>
+              <input type="text" id="set-ntfy-user" placeholder="For authenticated servers">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">ntfy Password (optional)</label>
+              <input type="password" id="set-ntfy-pass" placeholder="Password">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">ntfy Token (alternative)</label>
+              <input type="password" id="set-ntfy-token" placeholder="Authentication token">
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-push-ntfy-enabled" />
+                <label for="set-push-ntfy-enabled">Enable ntfy push notifications</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-ingest-ntfy-enabled" />
+                <label for="set-ingest-ntfy-enabled">Enable ntfy message ingestion</label>
+              </div>
+            </div>
+            <h4 style="margin-top: 32px; margin-bottom: 16px; color: var(--text-primary);">SMTP Email Notifications</h4>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-push-smtp-enabled" />
+                <label for="set-push-smtp-enabled">Enable SMTP email notifications</label>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">SMTP Host</label>
+              <input type="text" id="set-push-smtp-host" placeholder="smtp.gmail.com">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">SMTP Port</label>
+              <input type="number" id="set-push-smtp-port" min="1" placeholder="587">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Common ports: 25, 465 (SSL), 587 (TLS)
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">SMTP Username</label>
+              <input type="text" id="set-push-smtp-user" placeholder="your-email@gmail.com">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">SMTP Password</label>
+              <input type="password" id="set-push-smtp-pass" placeholder="App password">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Send To Email</label>
+              <input type="email" id="set-push-smtp-to" placeholder="recipient@example.com">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Email address to receive notifications
+              </div>
+            </div>
+
+			
+          </div>
+        </div>
+      </div>
+
+      <!-- NEW: BACKUP & RESTORE PANEL -->
+      <div id="settings-backup-panel" class="settings-panel orch-panel">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Backup & Restore</h3>
+          </div>
+          
+          <div style="padding: 20px;">
+            <div style="background: rgba(14, 165, 233, 0.1); border: 1px solid rgba(14, 165, 233, 0.3); border-radius: 8px; padding: 16px; margin-bottom: 24px;">
+              <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+                <span style="font-size: 24px;">💾</span>
+                <span style="color: #0ea5e9; font-weight: 600;">Full System Backup</span>
+              </div>
+              <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 0;">
+                Create a complete backup of your Jarvis Prime installation including database, playbooks, models, and configuration.
+              </p>
+            </div>
+            
+            <div style="margin-bottom: 32px;">
+              <h4 style="margin: 0 0 12px 0; color: var(--text-primary);">Create Backup</h4>
+              <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
+                Download a complete backup archive (.tar.gz) containing all system data.
+              </p>
+              <button id="backup-download-btn" class="btn primary" style="width: 100%;">
+                📥 Download Full Backup
+              </button>
+            </div>
+            
+            <div style="padding-top: 24px; border-top: 1px solid var(--surface-border);">
+              <h4 style="margin: 0 0 12px 0; color: var(--text-primary);">Restore Backup</h4>
+              <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
+                Upload a backup archive to restore your system. <strong style="color: var(--accent-primary);">This will overwrite all current data.</strong>
+              </p>
+              
+              <div style="background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 6px; padding: 12px; margin-bottom: 16px;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span style="font-size: 18px;">⚠️</span>
+                  <span style="color: #f59e0b; font-size: 13px; font-weight: 500;">
+                    Jarvis will automatically restart after restore completes
+                  </span>
+                </div>
+              </div>
+              
+              <input type="file" id="backup-file-input" accept=".tar.gz,.tgz" style="display: none;">
+              <button id="backup-restore-btn" class="btn" style="width: 100%;">
+                📤 Select Backup File to Restore
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SENTINEL SETTINGS PANEL -->
+      <div id="settings-sentinel-panel" class="settings-panel orch-panel">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Sentinel Configuration</h3>
+          </div>
+          
+          <div style="padding: 20px;">
+            <div style="background: rgba(139, 92, 246, 0.1); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 8px; padding: 16px; margin-bottom: 24px;">
+              <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+                <span style="font-size: 24px;">🛠️</span>
+                <span style="color: #8b5cf6; font-weight: 600;">Autonomous Service Monitoring</span>
+              </div>
+              <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 0;">
+                Configure Sentinel's automated monitoring and self-healing capabilities
+              </p>
+            </div>
+            
+            <h4 style="margin: 24px 0 16px 0; color: var(--text-primary);">Template Repository</h4>
+            
+            <div class="form-group">
+              <label class="form-label">GitHub Repository URL</label>
+              <input type="text" id="set-sentinel-github-url" placeholder="https://github.com/username/repo">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                URL to GitHub repository containing service check templates. Used when syncing templates.
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Templates Path (in repo)</label>
+              <input type="text" id="set-sentinel-github-path" placeholder="templates/" value="templates/">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Path within repository where .json template files are stored
+              </div>
+            </div>
+            
+            <h4 style="margin: 32px 0 16px 0; color: var(--text-primary);">Monitoring Schedule</h4>
+            
+            <div class="form-group">
+              <label class="form-label">Quiet Hours</label>
+              <input type="text" id="set-sentinel-quiet-hours" placeholder="23:00-06:00">
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Time range when Sentinel will suppress non-critical alerts (format: HH:MM-HH:MM)
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <div class="checkbox-group">
+                <input type="checkbox" id="set-sentinel-quiet-enabled" />
+                <label for="set-sentinel-quiet-enabled">Enable quiet hours</label>
+              </div>
+            </div>
+            
+            <h4 style="margin: 32px 0 16px 0; color: var(--text-primary);">Statistics & Data</h4>
+            
+            <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; padding: 16px;">
+              <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+                <span style="font-size: 24px;">⚠️</span>
+                <span style="color: #ef4444; font-weight: 600;">Reset Statistics</span>
+              </div>
+              <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 12px;">
+                Reset all Sentinel dashboard statistics (total checks, repairs made, etc.) to zero. Execution history will be preserved.
+              </p>
+              <button id="sentinel-reset-stats-btn" class="btn danger" style="width: 100%;" onclick="sentinelResetStats()">
+                🗑️ Reset All Statistics
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Save Button (only visible in Docker mode) -->
+      <div style="margin-top: 24px; padding: 20px; background: var(--surface-secondary); border-radius: 8px; display: flex; justify-content: flex-end; gap: 12px;">
+        <button id="settings-save-btn" class="btn primary" onclick="settingsSaveConfig()">Save Settings</button>
+      </div>
+    </section>
+
+    <!-- BACKUP TAB - INTUITIVE BACKUP MANAGER -->
+    <section id="backup" class="tab-panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <h1>🔄 Backup Manager</h1>
+          <div class="panel-subtitle">Agentless backup system with SSH/SMB/NFS support</div>
+        </div>
+      </div>
+
+      <!-- Quick Stats -->
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-header">
+            <div class="metric-label">Total Backups</div>
+          </div>
+          <div class="metric-value" id="backup-stat-total">0</div>
+        </div>
+
+        <div class="metric-card cyan">
+          <div class="metric-header">
+            <div class="metric-label">Total Size</div>
+          </div>
+          <div class="metric-value" id="backup-stat-size">0 GB</div>
+        </div>
+
+        <div class="metric-card green">
+          <div class="metric-header">
+            <div class="metric-label">Success Today</div>
+          </div>
+          <div class="metric-value" id="backup-stat-success">0</div>
+        </div>
+
+        <div class="metric-card red">
+          <div class="metric-header">
+            <div class="metric-label">Failed Today</div>
+          </div>
+          <div class="metric-value" id="backup-stat-failed">0</div>
+        </div>
+
+        <div class="metric-card orange">
+          <div class="metric-header">
+            <div class="metric-label">Active Jobs</div>
+          </div>
+          <div class="metric-value" id="backup-stat-jobs">0</div>
+        </div>
+      </div>
+
+      <!-- Quick Actions -->
+      <div class="glass-card" style="margin-top: 24px;">
+        <div class="card-header">
+          <h3 class="card-title">Quick Actions</h3>
+        </div>
+        <div class="card-body">
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px;">
+            <button class="btn primary" onclick="backupOpenServerModal('source')" style="padding: 12px; display: flex; align-items: center; justify-content: center; gap: 8px;">
+              <svg class="icon" fill="none" viewBox="0 0 24 24">
+                <path d="M12 4v16m8-8H4" stroke="currentColor" stroke-width="2"/>
+              </svg>
+              Add Source Server
+            </button>
+            <button class="btn primary" onclick="backupOpenServerModal('destination')" style="padding: 12px; display: flex; align-items: center; justify-content: center; gap: 8px;">
+              <svg class="icon" fill="none" viewBox="0 0 24 24">
+                <path d="M12 4v16m8-8H4" stroke="currentColor" stroke-width="2"/>
+              </svg>
+              Add Destination Server
+            </button>
+            <button class="btn" onclick="backupOpenJobModal()" style="padding: 12px; display: flex; align-items: center; justify-content: center; gap: 8px;">
+              <svg class="icon" fill="none" viewBox="0 0 24 24">
+                <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" stroke="currentColor" stroke-width="2"/>
+              </svg>
+              Create Backup Job
+            </button>
+            <button class="btn" onclick="backupRefreshAll()" style="padding: 12px; display: flex; align-items: center; justify-content: center; gap: 8px;">
+              <svg class="icon" fill="none" viewBox="0 0 24 24">
+                <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" stroke="currentColor" stroke-width="2"/>
+              </svg>
+              Refresh All
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Server Management -->
+      <div style="margin-top: 32px;">
+        <h2 style="font-size: 20px; font-weight: 600; margin-bottom: 16px; color: var(--text-primary);">Server Configuration</h2>
+        <p style="color: var(--text-muted); margin-bottom: 24px;">Manage source and destination servers for your backups</p>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px;">
+          <!-- Source Servers -->
+          <div class="glass-card">
+            <div class="card-header">
+              <h3 class="card-title">📂 Source Servers</h3>
+              <button class="btn primary btn-sm" onclick="backupOpenServerModal('source')">Add Source</button>
+            </div>
+            <div class="card-body">
+              <div id="backup-source-servers" style="display: flex; flex-direction: column; gap: 12px;">
+                <div class="text-center text-muted" style="padding: 32px;">
+                  No source servers configured<br>
+                  <small>Click "Add Source" to get started</small>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Destination Servers -->
+          <div class="glass-card">
+            <div class="card-header">
+              <h3 class="card-title">💾 Destination Servers</h3>
+              <button class="btn primary btn-sm" onclick="backupOpenServerModal('destination')">Add Destination</button>
+            </div>
+            <div class="card-body">
+              <div id="backup-destination-servers" style="display: flex; flex-direction: column; gap: 12px;">
+                <div class="text-center text-muted" style="padding: 32px;">
+                  No destination servers configured<br>
+                  <small>Click "Add Destination" to get started</small>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Backup Jobs -->
+      <div style="margin-top: 32px;">
+        <h2 style="font-size: 20px; font-weight: 600; margin-bottom: 16px; color: var(--text-primary);">Backup Jobs</h2>
+        <p style="color: var(--text-muted); margin-bottom: 24px;">Configured backup schedules and status</p>
+
+        <div class="glass-card">
+          <div class="card-header">
+            <h3 class="card-title">📅 Active Jobs</h3>
+            <button class="btn primary btn-sm" onclick="backupOpenJobModal()">Create Job</button>
+          </div>
+          <div class="card-body">
+            <div id="backup-jobs-list">
+              <div class="text-center text-muted" style="padding: 32px;">
+                No backup jobs configured<br>
+                <small>Create a job to schedule automated backups</small>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Backup Archives -->
+      <div style="margin-top: 32px;">
+        <h2 style="font-size: 20px; font-weight: 600; margin-bottom: 16px; color: var(--text-primary);">Backup Archives</h2>
+        <p style="color: var(--text-muted); margin-bottom: 24px;">Available backups and restore points</p>
+
+        <div class="glass-card">
+          <div class="card-header">
+            <h3 class="card-title">📦 Available Backups</h3>
+            <div style="display: flex; gap: 8px;">
+              <input type="text" id="backup-search" placeholder="Search backups..." style="padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--surface-secondary); color: var(--text-primary); min-width: 250px;">
+              <button class="btn btn-sm" onclick="backupRefreshArchives()">
+                <svg class="icon" style="width: 16px; height: 16px;" fill="none" viewBox="0 0 24 24">
+                  <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" stroke="currentColor" stroke-width="2"/>
+                </svg>
+                Refresh
+              </button>
+            </div>
+          </div>
+          <div class="card-body">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Backup Name</th>
+                  <th>Job</th>
+                  <th>Source</th>
+                  <th>Size</th>
+                  <th>Date</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="backup-archives-list">
+                <tr>
+                  <td colspan="7" class="text-center text-muted">No backups available</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
   </main>
 
-  <!-- Modals container -->
-  <div id="modals-container"></div>
+  <!-- ALL EXISTING MODALS (from your file - keeping them all) -->
+  <div id="server-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Add Server</h2>
+        <button class="btn" onclick="orchCloseServerModal()">✕</button>
+      </div>
+      <form id="server-form" onsubmit="orchSaveServer(event)">
+        <div class="form-group">
+          <label class="form-label">Server Name *</label>
+          <input type="text" id="srv-name" required placeholder="web-server-01">
+        </div>
+        <div class="form-group">
+          <label class="form-label">IP Address / Hostname *</label>
+          <input type="text" id="srv-host" required placeholder="192.168.1.100">
+        </div>
+        <div class="form-group">
+          <label class="form-label">SSH Port</label>
+          <input type="number" id="srv-port" value="22">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Username *</label>
+          <input type="text" id="srv-user" required placeholder="root">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Password *</label>
+          <input type="password" id="srv-pass" required placeholder="Enter SSH password">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Groups (comma-separated)</label>
+          <input type="text" id="srv-groups" placeholder="web, production">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Description</label>
+          <textarea id="srv-desc" rows="3" placeholder="Production web server"></textarea>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn" onclick="orchCloseServerModal()">Cancel</button>
+          <button type="submit" class="btn primary">Save Server</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
-  <!-- Toast notifications -->
-  <div id="toast"></div>
+  <div id="edit-server-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Edit Server</h2>
+        <button class="btn" onclick="orchCloseEditServerModal()">✕</button>
+      </div>
+      <form id="edit-server-form" onsubmit="orchUpdateServer(event)">
+        <input type="hidden" id="edit-srv-id">
+        <div class="form-group">
+          <label class="form-label">Server Name *</label>
+          <input type="text" id="edit-srv-name" required placeholder="web-server-01">
+        </div>
+        <div class="form-group">
+          <label class="form-label">IP Address / Hostname *</label>
+          <input type="text" id="edit-srv-host" required placeholder="192.168.1.100">
+        </div>
+        <div class="form-group">
+          <label class="form-label">SSH Port</label>
+          <input type="number" id="edit-srv-port" value="22">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Username *</label>
+          <input type="text" id="edit-srv-user" required placeholder="root">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Password</label>
+          <input type="password" id="edit-srv-pass" placeholder="Leave blank to keep current password">
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+            Only enter a new password if you want to change it
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Groups (comma-separated)</label>
+          <input type="text" id="edit-srv-groups" placeholder="web, production">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Description</label>
+          <textarea id="edit-srv-desc" rows="3" placeholder="Production web server"></textarea>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn" onclick="orchCloseEditServerModal()">Cancel</button>
+          <button type="submit" class="btn primary">Update Server</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
-  <!-- Auth Overlay -->
-  <div id="auth-overlay"></div>
+  <div id="schedule-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Create Schedule</h2>
+        <button class="btn" onclick="orchCloseScheduleModal()">✕</button>
+      </div>
+      <form id="schedule-form" onsubmit="orchSaveSchedule(event)">
+        <div class="form-group">
+          <label class="form-label">Job Name *</label>
+          <input type="text" id="sched-name" required placeholder="Weekly Apt Update">
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+            Give this schedule a friendly name (e.g., "Daily Backup", "Weekly Update")
+          </div>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Playbook *</label>
+          <select id="sched-playbook" required>
+            <option value="">Select a playbook...</option>
+          </select>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Server Group</label>
+          <input type="text" id="sched-group" placeholder="web, all (optional)">
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Schedule Preset</label>
+          <select id="sched-preset" onchange="orchApplyPreset()">
+            <option value="">Custom...</option>
+            <option value="0 2 * * *">Every day at 2 AM</option>
+            <option value="0 8 * * 1">Every Monday at 8 AM</option>
+            <option value="0 0 * * *">Daily at midnight</option>
+            <option value="0 */6 * * *">Every 6 hours</option>
+            <option value="0 * * * *">Every hour</option>
+            <option value="*/15 * * * *">Every 15 minutes</option>
+          </select>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Cron Expression *</label>
+          <input type="text" id="sched-cron" required placeholder="0 2 * * *" pattern="[0-9\*\-\,\/ ]+">
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+            Format: minute hour day month weekday (e.g., "0 2 * * *" = 2 AM daily)
+          </div>
+        </div>
+        
+        <div class="form-group">
+          <div class="checkbox-group">
+            <input type="checkbox" id="sched-notify" checked />
+            <label for="sched-notify">Send notification when job completes</label>
+          </div>
+        </div>
+        
+        <div class="modal-footer">
+          <button type="button" class="btn" onclick="orchCloseScheduleModal()">Cancel</button>
+          <button type="submit" class="btn primary">Save Schedule</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
-  <!-- Module Loader Script -->
-  <script>
-  // Component loader - loads HTML modules dynamically
-  window.ModuleLoader = {
-    cache: {},
-    
-    async loadComponent(path) {
-      if (this.cache[path]) return this.cache[path];
+  <div id="history-modal" class="modal">
+    <div class="modal-content" style="max-width: 600px;">
+      <div class="modal-header">
+        <h2>Manage History</h2>
+        <button class="btn" onclick="orchCloseHistoryModal()">✕</button>
+      </div>
       
-      try {
-        const response = await fetch(path + '?v=' + Date.now());
-        if (!response.ok) throw new Error(`Failed to load ${path}`);
-        const html = await response.text();
-        this.cache[path] = html;
-        return html;
-      } catch (err) {
-        console.error(`[ModuleLoader] Error loading ${path}:`, err);
-        return `<div class="error">Failed to load component: ${path}</div>`;
-      }
-    },
-    
-    async loadTab(tabName) {
-      const html = await this.loadComponent(`components/tabs/${tabName}.html`);
-      return html;
-    },
-    
-    async loadModal(modalName) {
-      const html = await this.loadComponent(`components/modals/${modalName}.html`);
-      return html;
-    },
-    
-    async loadAllModals() {
-      const modalNames = [
-        'server-modal',
-        'edit-server-modal',
-        'schedule-modal',
-        'history-modal',
-        'job-output-modal',
-        'analytics-service-modal',
-        'sentinel-modals',
-        'backup-modals'
-      ];
+      <div class="form-group">
+        <label class="form-label">Quick Actions</label>
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;">
+          <button class="btn" onclick="orchPurgeHistory('failed')">Delete Failed Jobs</button>
+          <button class="btn" onclick="orchPurgeHistory('completed')">Delete Successful Jobs</button>
+          <button class="btn" onclick="orchPurgeHistory('older_than_30')">Delete Older Than 30 Days</button>
+          <button class="btn" onclick="orchPurgeHistory('older_than_90')">Delete Older Than 90 Days</button>
+        </div>
+      </div>
+
+      <div style="background: var(--surface-tertiary); border-radius: 8px; padding: 16px; margin: 20px 0;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+          <span style="color: var(--text-muted); font-size: 14px;">Total Entries:</span>
+          <span id="history-total" style="color: var(--text-primary); font-weight: 600;">—</span>
+        </div>
+      </div>
+
+      <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; padding: 16px;">
+        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+          <span style="font-size: 24px;">⚠️</span>
+          <span style="color: #ef4444; font-weight: 600;">Danger Zone</span>
+        </div>
+        <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 12px;">
+          Permanently delete all execution history. This action cannot be undone.
+        </p>
+        <button class="btn danger" style="width: 100%;" onclick="orchPurgeHistory('all')">Delete ALL History</button>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn" onclick="orchCloseHistoryModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="job-output-modal" class="modal">
+    <div class="modal-content" style="max-width: 900px;">
+      <div class="modal-header">
+        <h2 id="job-output-title">Job Output</h2>
+        <button class="btn" onclick="orchCloseJobOutputModal()">✕</button>
+      </div>
+      <div style="margin-bottom: 16px;">
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; padding: 12px; background: var(--surface-tertiary); border-radius: 8px;">
+          <div>
+            <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 4px;">Status</div>
+            <div id="job-output-status">—</div>
+          </div>
+          <div>
+            <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 4px;">Exit Code</div>
+            <div id="job-output-exit-code">—</div>
+          </div>
+          <div>
+            <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 4px;">Started</div>
+            <div id="job-output-started">—</div>
+          </div>
+          <div>
+            <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 4px;">Completed</div>
+            <div id="job-output-completed">—</div>
+          </div>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Output</label>
+        <div class="log-output" id="job-output-content" style="max-height: 500px; min-height: 200px;">
+          <div class="text-center text-muted">No output</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn" onclick="orchCloseJobOutputModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="analytics-service-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="analytics-service-modal-title">Add Service</h2>
+        <button class="btn" onclick="analyticsCloseServiceModal()">✕</button>
+      </div>
+      <form id="analytics-service-form" onsubmit="analyticsSaveService(event)">
+        <input type="hidden" id="analytics-service-id">
+        
+        <div class="form-group">
+          <label class="form-label">Service Name *</label>
+          <input type="text" id="analytics-service-name" required placeholder="Home Assistant">
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Endpoint *</label>
+          <input type="text" id="analytics-service-endpoint" required placeholder="http://homeassistant.local:8123 or 192.168.1.100:22 or 8.8.8.8">
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+            HTTP: Full URL with protocol • TCP: host:port • Ping: hostname or IP
+          </div>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Check Type *</label>
+          <select id="analytics-check-type" required onchange="analyticsToggleStatusCode()">
+            <option value="http">HTTP - Web endpoint</option>
+            <option value="tcp">TCP - Port check</option>
+            <option value="ping">ICMP Ping - Host reachability</option>
+          </select>
+        </div>
+        
+        <div class="form-group" id="analytics-status-code-field">
+          <label class="form-label">Expected HTTP Status Code</label>
+          <input type="number" id="analytics-expected-status" value="200" min="100" max="599">
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Check Interval (seconds)</label>
+          <input type="number" id="analytics-check-interval" value="60" min="10" max="3600">
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Timeout (seconds)</label>
+          <input type="number" id="analytics-check-timeout" value="5" min="1" max="30">
+        </div>
+        
+        <!-- NEW: RETRY & FLAP PROTECTION SECTION -->
+        <div style="margin: 24px 0; padding: 16px; background: rgba(14, 165, 233, 0.08); border: 1px solid rgba(14, 165, 233, 0.2); border-radius: 8px;">
+          <h4 style="margin: 0 0 12px 0; color: var(--text-primary); font-size: 14px; font-weight: 600;">❗ Retry & Flap Protection</h4>
+          
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label class="form-label">Retries</label>
+            <input type="number" id="analytics-retries" value="3" min="1" max="10">
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+              Number of consecutive failures before marking service DOWN
+            </div>
+          </div>
+          
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label class="form-label">Flap Window (seconds)</label>
+            <input type="number" id="analytics-flap-window" value="3600" min="60" max="86400">
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+              Time period to monitor flaps (default: 3600 = 1 hour)
+            </div>
+          </div>
+          
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label class="form-label">Flap Threshold</label>
+            <input type="number" id="analytics-flap-threshold" value="5" min="2" max="50">
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+              Number of status changes to trigger alert suppression
+            </div>
+          </div>
+          
+          <div class="form-group" style="margin-bottom: 0;">
+            <label class="form-label">Suppression Duration (seconds)</label>
+            <input type="number" id="analytics-suppression-duration" value="3600" min="60" max="86400">
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+              How long to suppress alerts after flap threshold exceeded (default: 3600 = 1 hour)
+            </div>
+          </div>
+        </div>
+        
+        
+        <div class="form-group">
+          <div class="checkbox-group">
+            <input type="checkbox" id="analytics-service-enabled" checked />
+            <label for="analytics-service-enabled">Enable monitoring for this service</label>
+          </div>
+        </div>
+        
+        <div class="modal-footer">
+          <button type="button" class="btn" onclick="analyticsCloseServiceModal()">Cancel</button>
+          <button type="submit" class="btn primary">Save Service</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ALL SENTINEL MODALS (keeping them all from your file) - shortened for brevity -->
+  <div id="sentinel-add-server-modal" class="modal"><div class="modal-content"><div class="modal-header"><h2>Add SSH Server</h2><button class="btn" onclick="closeModal()">✕</button></div><form id="sentinel-add-server-form" onsubmit="event.preventDefault(); sentinelUI.addServer(sentinelUI.getFormData('sentinel-add-server-form'));"><div class="form-group"><label class="form-label">Server ID *</label><input type="text" name="id" required placeholder="web-server-01"><div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">Unique identifier (letters, numbers, hyphens only)</div></div><div class="form-group"><label class="form-label">Hostname / IP *</label><input type="text" name="host" required placeholder="192.168.1.100"></div><div class="form-group"><label class="form-label">SSH Port</label><input type="number" name="port" value="22" min="1" max="65535"></div><div class="form-group"><label class="form-label">Username *</label><input type="text" name="username" required placeholder="root"></div><div class="form-group"><label class="form-label">Password *</label><input type="password" name="password" required placeholder="SSH password"></div><div class="form-group"><label class="form-label">Description</label><input type="text" name="description" placeholder="Production web server"></div><div class="modal-footer"><button type="button" class="btn" onclick="closeModal()">Cancel</button><button type="submit" class="btn primary">Add Server</button></div></form></div></div>
+
+<div id="toast"></div>
+
+<!-- 🔐 Auth Overlay -->
+<div id="auth-overlay"></div>
+<script>
+(async () => {
+  try {
+    const res = await fetch("/api/auth/status");
+    if (!res.ok) throw new Error("Auth API not reachable");
+    const { status } = await res.json();
+    if (status === "setup" || status === "login") {
+      const script = document.createElement("script");
+      script.src = "auth.js?v=" + Date.now();
+      document.head.appendChild(script);
+    }
+  } catch (e) {
+    console.error("[auth preload]", e);
+  }
+})();
+</script>
+
+<!-- Core application scripts -->
+<script src="app.js?v=5.0"></script>
+<script src="d3.v7.min.js"></script>
+<script src="orchestrator.js?v=1.3"></script>
+<script src="sentinel.js?v=1.0"></script>
+<script src="analytics.js?v=1.0"></script>
+<script src="settings.js?v=1.0"></script>
+<script src="atlas.js?v=1.0"></script>
+<script src="backup.js?v=1.0"></script>
+
+<!-- BACKUP MODALS -->
+<div id="backup-server-modal" class="modal">
+  <div class="modal-content" style="max-width: 600px;">
+    <div class="modal-header">
+      <h2 id="backup-server-modal-title">Add Server</h2>
+      <button class="btn" onclick="backupCloseServerModal()">✕</button>
+    </div>
+    <form id="backup-server-form" onsubmit="backupSaveServer(event)">
+      <input type="hidden" id="backup-server-type">
       
-      const container = document.getElementById('modals-container');
-      for (const modalName of modalNames) {
-        const html = await this.loadModal(modalName);
-        container.insertAdjacentHTML('beforeend', html);
-      }
-    },
-    
-    clearCache() {
-      this.cache = {};
-    }
-  };
+      <div class="form-group">
+        <label class="form-label">Server Name *</label>
+        <input type="text" id="backup-server-name" required placeholder="Production Server">
+        <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+          Friendly name to identify this server
+        </div>
+      </div>
 
-  // Initialize app when DOM is ready
-  document.addEventListener('DOMContentLoaded', async () => {
-    console.log('[Jarvis] Initializing modular UI...');
-    
-    // Load all modals first (they're shared across tabs)
-    await window.ModuleLoader.loadAllModals();
-    
-    // Load initial dashboard tab
-    const mainContainer = document.getElementById('main-container');
-    const dashboardHTML = await window.ModuleLoader.loadTab('dashboard');
-    mainContainer.innerHTML = dashboardHTML;
-    
-    console.log('[Jarvis] Modular UI loaded successfully');
-  });
-  </script>
+      <div class="form-group">
+        <label class="form-label">Connection Type *</label>
+        <select id="backup-connection-type" required onchange="backupUpdateConnectionFields()">
+          <option value="ssh">SSH/SFTP</option>
+          <option value="smb">SMB/CIFS (Windows Share)</option>
+          <option value="nfs">NFS (Network File System)</option>
+        </select>
+      </div>
 
-  <!-- Auth check -->
-  <script>
-  (async () => {
-    try {
-      const res = await fetch("/api/auth/status");
-      if (!res.ok) throw new Error("Auth API not reachable");
-      const { status } = await res.json();
-      if (status === "setup" || status === "login") {
-        const script = document.createElement("script");
-        script.src = "auth.js?v=" + Date.now();
-        document.head.appendChild(script);
-      }
-    } catch (e) {
-      console.error("[auth preload]", e);
-    }
-  })();
-  </script>
+      <!-- SSH Fields -->
+      <div id="backup-ssh-fields">
+        <div class="form-group">
+          <label class="form-label">Hostname / IP *</label>
+          <input type="text" id="backup-ssh-host" placeholder="192.168.1.100">
+        </div>
 
-  <!-- Core application scripts -->
-  <script src="app.js?v=5.0"></script>
-  <script src="d3.v7.min.js"></script>
-  <script src="orchestrator.js?v=1.3"></script>
-  <script src="sentinel.js?v=1.0"></script>
-  <script src="analytics.js?v=1.0"></script>
-  <script src="settings.js?v=1.0"></script>
-  <script src="atlas.js?v=1.0"></script>
-  <script src="backup.js?v=1.0"></script>
-</body>
+        <div class="form-group">
+          <label class="form-label">SSH Port</label>
+          <input type="number" id="backup-ssh-port" value="22" min="1" max="65535">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Username *</label>
+          <input type="text" id="backup-ssh-username" placeholder="root">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Password *</label>
+          <input type="password" id="backup-ssh-password">
+        </div>
+      </div>
+
+      <!-- SMB Fields -->
+      <div id="backup-smb-fields" style="display: none;">
+        <div class="form-group">
+          <label class="form-label">Hostname / IP *</label>
+          <input type="text" id="backup-smb-host" placeholder="192.168.1.200">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Share Name *</label>
+          <input type="text" id="backup-smb-share" placeholder="backups">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Username</label>
+          <input type="text" id="backup-smb-username" placeholder="backup_user">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Password</label>
+          <input type="password" id="backup-smb-password">
+        </div>
+      </div>
+
+      <!-- NFS Fields -->
+      <div id="backup-nfs-fields" style="display: none;">
+        <div class="form-group">
+          <label class="form-label">Hostname / IP *</label>
+          <input type="text" id="backup-nfs-host" placeholder="192.168.1.150">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Export Path *</label>
+          <input type="text" id="backup-nfs-export" placeholder="/mnt/backups">
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+            The NFS export path on the server
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn" onclick="backupCloseServerModal()">Cancel</button>
+        <button type="button" class="btn" onclick="backupTestConnection()" style="margin-right: auto;">
+          <svg class="icon" style="width: 16px; height: 16px;" fill="none" viewBox="0 0 24 24">
+            <path d="M13 10V3L4 14h7v7l9-11h-7z" stroke="currentColor" stroke-width="2"/>
+          </svg>
+          Test Connection
+        </button>
+        <button type="submit" class="btn primary">Save Server</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="backup-job-modal" class="modal">
+  <div class="modal-content" style="max-width: 700px;">
+    <div class="modal-header">
+      <h2>Create Backup Job</h2>
+      <button class="btn" onclick="backupCloseJobModal()">✕</button>
+    </div>
+    <form id="backup-job-form" onsubmit="backupCreateJob(event)">
+      
+      <div class="form-group">
+        <label class="form-label">Job Name *</label>
+        <input type="text" id="backup-job-name" required placeholder="Daily Production Backup">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Source Server *</label>
+        <select id="backup-job-source" required>
+          <option value="">Select source server...</option>
+        </select>
+      </div>
+</select>
+    </div>
+
+    <!-- === FULL RESTORE MODAL - PASTE THIS ENTIRE BLOCK HERE === -->
+<!-- FULL WORKING RESTORE MODAL -->
+    <!-- === END FULL RESTORE MODAL === -->
+
+    <div class="form-group">
+      <label class="form-label">Source Paths *</label>
+      <div class="form-group">
+        <label class="form-label">Source Paths *</label>
+        <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+          <textarea id="backup-job-paths" required placeholder="/var/www&#10;/etc/nginx&#10;/home/user" rows="4" style="flex: 1;"></textarea>
+          <button type="button" class="btn" onclick="backupOpenFileExplorer('source')" style="height: fit-content;">
+            <svg class="icon" style="width: 16px; height: 16px;" fill="none" viewBox="0 0 24 24">
+              <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" stroke="currentColor" stroke-width="2"/>
+            </svg>
+            Browse
+          </button>
+        </div>
+        <div style="font-size: 12px; color: var(--text-muted);">
+          One path per line. Use absolute paths, or click Browse to select folders.
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Destination Server *</label>
+        <select id="backup-job-destination" required>
+          <option value="">Select destination server...</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Destination Path</label>
+        <div style="display: flex; gap: 8px;">
+          <input type="text" id="backup-job-dest-path" value="/backups" placeholder="/backups" style="flex: 1;">
+          <button type="button" class="btn" onclick="backupOpenFileExplorer('destination')">
+            <svg class="icon" style="width: 16px; height: 16px;" fill="none" viewBox="0 0 24 24">
+              <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" stroke="currentColor" stroke-width="2"/>
+            </svg>
+            Browse
+          </button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Backup Type</label>
+        <select id="backup-job-type">
+          <option value="full">Full Backup</option>
+          <option value="incremental">Incremental Backup</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <div class="checkbox-group">
+          <input type="checkbox" id="backup-job-compress" checked>
+          <label for="backup-job-compress">Compress backup archives</label>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <div class="checkbox-group">
+          <input type="checkbox" id="backup-job-stop-containers">
+          <label for="backup-job-stop-containers">Stop Docker containers during backup</label>
+        </div>
+      </div>
+
+      <div class="form-group" id="backup-container-field" style="display: none;">
+        <label class="form-label">Container Names</label>
+        <input type="text" id="backup-job-containers" placeholder="container1, container2">
+        <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+          Comma-separated list of containers to stop
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Schedule (Cron)</label>
+        <input type="text" id="backup-job-schedule" placeholder="0 2 * * *" value="0 2 * * *">
+        <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+          Cron format: minute hour day month weekday (e.g., "0 2 * * *" = daily at 2 AM)
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Retention Policy</label>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+          <div>
+            <label style="font-size: 13px; color: var(--text-muted); margin-bottom: 4px; display: block;">Keep by Days</label>
+            <input type="number" id="backup-job-retention-days" value="30" min="0" placeholder="0 = disabled">
+          </div>
+          <div>
+            <label style="font-size: 13px; color: var(--text-muted); margin-bottom: 4px; display: block;">Keep by Count</label>
+            <input type="number" id="backup-job-retention-count" value="0" min="0" placeholder="0 = disabled">
+          </div>
+        </div>
+        <div style="font-size: 12px; color: var(--text-muted); margin-top: 8px;">
+          Set days to auto-delete old backups (e.g., 30 days), OR set count to keep only last X backups (e.g., keep 3). Set both to 0 to keep all backups forever.
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn" onclick="backupCloseJobModal()">Cancel</button>
+        <button type="submit" class="btn primary">Create Job</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+
+<div id="backup-job-details-modal" class="modal">
+  <div class="modal-content" style="max-width: 800px;">
+    <div class="modal-header">
+      <h2 id="backup-job-details-title">Job Details</h2>
+      <button class="btn" onclick="backupCloseJobDetailsModal()">✕</button>
+    </div>
+    <div id="backup-job-details-content" style="padding: 24px;">
+      <!-- Job details will be populated here -->
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn" onclick="backupCloseJobDetailsModal()">Close</button>
+      <button type="button" class="btn primary" onclick="backupRunJobFromDetails()">
+        <svg class="icon" style="width: 16px; height: 16px;" fill="none" viewBox="0 0 24 24">
+          <path d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" fill="currentColor"/>
+          <path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" stroke="currentColor" stroke-width="2"/>
+        </svg>
+        Run Now
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- FILE EXPLORER MODAL -->
+<div id="backup-explorer-modal" class="modal">
+  <div class="modal-content" style="max-width: 1000px; max-height: 80vh;">
+    <div class="modal-header">
+      <h2 id="backup-explorer-modal-title">File Explorer</h2>
+      <button class="btn" onclick="backupCloseFileExplorer()">✕</button>
+    </div>
+    <div style="padding: 24px;">
+      
+      <div class="form-group">
+        <label class="form-label">Server</label>
+        <select id="backup-explorer-server" onchange="backupExplorerServerChanged()" style="width: 100%;">
+          <option value="">Select server...</option>
+        </select>
+      </div>
+
+      <div style="padding: 12px; background: var(--surface-secondary); border-radius: 6px; margin-bottom: 16px; font-family: monospace; font-size: 14px;">
+        <strong>Path:</strong> <span id="backup-current-path">/</span>
+      </div>
+
+      <div id="backup-explorer-list" style="max-height: 400px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 8px; background: var(--surface-primary);">
+        <div class="text-muted" style="padding: 32px; text-align: center;">Select a server to browse</div>
+      </div>
+
+      <div style="margin-top: 16px; padding: 12px; background: rgba(14, 165, 233, 0.1); border-radius: 6px; color: #0ea5e9; font-size: 13px;">
+        <strong>💡 Tip:</strong> Click folder names to navigate deeper. Click "Select" on any file or folder to add it to your backup. You can select multiple items.
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn" onclick="backupCloseFileExplorer()">Cancel</button>
+        <button type="button" class="btn primary" onclick="backupConfirmSelection()">Confirm Selection</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- EDIT SERVER MODAL -->
+<div id="backup-edit-server-modal" class="modal">
+  <div class="modal-content" style="max-width: 600px;">
+    <div class="modal-header">
+      <h2>Edit Server</h2>
+      <button class="btn" onclick="backupCloseEditServerModal()">✕</button>
+    </div>
+    <form id="backup-edit-server-form" onsubmit="backupUpdateServer(event)">
+      <input type="hidden" id="backup-edit-server-id">
+      
+      <div class="form-group">
+        <label class="form-label">Server Name *</label>
+        <input type="text" id="backup-edit-server-name" required placeholder="Production Server">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Connection Type</label>
+        <select id="backup-edit-connection-type" onchange="backupUpdateEditConnectionFields()" disabled>
+          <option value="ssh">SSH/SFTP</option>
+          <option value="smb">SMB/CIFS</option>
+          <option value="nfs">NFS</option>
+        </select>
+        <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">Connection type cannot be changed after creation</div>
+      </div>
+
+      <div id="backup-edit-ssh-fields" style="display: none;">
+        <div class="form-group">
+          <label class="form-label">Hostname/IP *</label>
+          <input type="text" id="backup-edit-ssh-host" placeholder="192.168.1.100">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Port</label>
+          <input type="number" id="backup-edit-ssh-port" value="22">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Username *</label>
+          <input type="text" id="backup-edit-ssh-username" placeholder="root">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Password *</label>
+          <input type="password" id="backup-edit-ssh-password">
+        </div>
+      </div>
+
+      <div id="backup-edit-smb-fields" style="display: none;">
+        <div class="form-group">
+          <label class="form-label">Hostname/IP *</label>
+          <input type="text" id="backup-edit-smb-host" placeholder="192.168.1.100">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Share Name *</label>
+          <input type="text" id="backup-edit-smb-share" placeholder="backups">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Username</label>
+          <input type="text" id="backup-edit-smb-username">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Password</label>
+          <input type="password" id="backup-edit-smb-password">
+        </div>
+      </div>
+
+      <div id="backup-edit-nfs-fields" style="display: none;">
+        <div class="form-group">
+          <label class="form-label">NFS Server *</label>
+          <input type="text" id="backup-edit-nfs-host" placeholder="192.168.1.100">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Export Path *</label>
+          <input type="text" id="backup-edit-nfs-export" placeholder="/mnt/backups">
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn" onclick="backupCloseEditServerModal()">Cancel</button>
+        <button type="submit" class="btn primary">Save Changes</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- EDIT JOB MODAL -->
+<div id="backup-edit-job-modal" class="modal">
+  <div class="modal-content" style="max-width: 700px;">
+    <div class="modal-header">
+      <h2>Edit Backup Job</h2>
+      <button class="btn" onclick="backupCloseEditJobModal()">✕</button>
+    </div>
+    <form id="backup-edit-job-form" onsubmit="backupUpdateJob(event)">
+      <input type="hidden" id="backup-edit-job-id">
+      
+      <div class="form-group">
+        <label class="form-label">Job Name *</label>
+        <input type="text" id="backup-edit-job-name" required>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Source Paths *</label>
+        <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+          <textarea id="backup-edit-job-paths" required rows="4" style="flex: 1;"></textarea>
+          <button type="button" class="btn" onclick="backupOpenFileExplorerForEdit('source')" style="height: fit-content;">
+            <svg class="icon" style="width: 16px; height: 16px;" fill="none" viewBox="0 0 24 24">
+              <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" stroke="currentColor" stroke-width="2"/>
+            </svg>
+            Browse
+          </button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Destination Path</label>
+        <div style="display: flex; gap: 8px;">
+          <input type="text" id="backup-edit-job-dest-path" style="flex: 1;">
+          <button type="button" class="btn" onclick="backupOpenFileExplorerForEdit('destination')">
+            <svg class="icon" style="width: 16px; height: 16px;" fill="none" viewBox="0 0 24 24">
+              <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" stroke="currentColor" stroke-width="2"/>
+            </svg>
+            Browse
+          </button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Backup Type</label>
+        <select id="backup-edit-job-type">
+          <option value="full">Full Backup</option>
+          <option value="incremental">Incremental Backup</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <div class="checkbox-group">
+          <input type="checkbox" id="backup-edit-job-compress">
+          <label for="backup-edit-job-compress">Compress backup archives</label>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <div class="checkbox-group">
+          <input type="checkbox" id="backup-edit-job-stop-containers">
+          <label for="backup-edit-job-stop-containers">Stop Docker containers during backup</label>
+        </div>
+      </div>
+
+      <div class="form-group" id="backup-edit-container-field" style="display: none;">
+        <label class="form-label">Container Names</label>
+        <input type="text" id="backup-edit-job-containers" placeholder="container1, container2">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Schedule (Cron)</label>
+        <input type="text" id="backup-edit-job-schedule" value="0 2 * * *">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Retention Policy</label>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+          <div>
+            <label style="font-size: 13px; color: var(--text-muted); margin-bottom: 4px; display: block;">Keep by Days</label>
+            <input type="number" id="backup-edit-job-retention-days" min="0" placeholder="0 = disabled">
+          </div>
+          <div>
+            <label style="font-size: 13px; color: var(--text-muted); margin-bottom: 4px; display: block;">Keep by Count</label>
+            <input type="number" id="backup-edit-job-retention-count" min="0" placeholder="0 = disabled">
+          </div>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <div class="checkbox-group">
+          <input type="checkbox" id="backup-edit-job-enabled">
+          <label for="backup-edit-job-enabled">Job Enabled</label>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn" onclick="backupCloseEditJobModal()">Cancel</button>
+        <button type="submit" class="btn primary">Save Changes</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- RESTORE MODAL -->
+
+<!-- BACKUP PROGRESS MODAL -->
+<div id="backup-progress-modal" class="modal">
+  <div class="modal-content" style="max-width: 700px;">
+    <div class="modal-header">
+      <h2>Backup Progress</h2>
+      <button class="btn" onclick="backupCloseProgressModal()">✕</button>
+    </div>
+    <div style="padding: 24px;">
+      
+      <div style="margin-bottom: 20px;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+          <span style="font-weight: 600;" id="backup-progress-job-name">Job Name</span>
+          <span id="backup-progress-status" style="font-weight: 600; color: #0ea5e9;">Starting...</span>
+        </div>
+        
+        <!-- Progress Bar -->
+        <div style="width: 100%; height: 8px; background: var(--surface-secondary); border-radius: 4px; overflow: hidden; margin-bottom: 8px;">
+          <div id="backup-progress-bar" style="width: 0%; height: 100%; background: linear-gradient(90deg, #0ea5e9, #06b6d4); transition: width 0.3s ease;"></div>
+        </div>
+        
+        <div style="font-size: 13px; color: var(--text-muted);">
+          <span id="backup-progress-percent">0%</span> complete
+        </div>
+      </div>
+
+      <!-- Status Message -->
+      <div style="padding: 16px; background: var(--surface-secondary); border-radius: 8px; border-left: 3px solid #0ea5e9; margin-bottom: 16px;">
+        <div style="font-weight: 600; margin-bottom: 4px;">Current Status:</div>
+        <div id="backup-progress-message" style="color: var(--text-muted);">Initializing backup...</div>
+      </div>
+
+      <!-- Live Log -->
+      <div style="margin-top: 20px;">
+        <div style="font-weight: 600; margin-bottom: 8px;">Activity Log:</div>
+        <div id="backup-progress-log" style="max-height: 200px; overflow-y: auto; padding: 12px; background: var(--surface-secondary); border-radius: 8px; font-family: monospace; font-size: 12px; line-height: 1.6;">
+          <div style="color: var(--text-muted);">Waiting for updates...</div>
+        </div>
+      </div>
+
+      <div class="modal-footer" style="margin-top: 20px;">
+        <button type="button" class="btn" onclick="backupCloseProgressModal()">Close</button>
+        <button type="button" class="btn danger" id="backup-progress-cancel-btn" onclick="backupCancelJob()" style="display: none;">Cancel Backup</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- SINGLE RESTORE MODAL -->
+<div id="backup-restore-modal" class="modal">
+  <div class="modal-content" style="max-width: 600px;">
+    <div class="modal-header">
+      <h2>Restore Backup</h2>
+      <button class="btn" onclick="backupCloseRestoreModal()">✕</button>
+    </div>
+    <div style="padding: 24px;">
+      
+      <!-- Warning -->
+      <div style="margin-bottom: 24px; padding: 16px; background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 8px; display: flex; gap: 12px;">
+        <span style="font-size: 24px;">⚠️</span>
+        <div>
+          <strong style="color: #f59e0b;">Warning</strong>
+          <p style="color: var(--text-muted); margin-top: 4px; font-size: 14px;">
+            Restoring will overwrite existing files at the destination. Make sure you have a recent backup before proceeding.
+          </p>
+        </div>
+      </div>
+
+      <!-- Archive Info -->
+      <div class="form-group">
+        <label class="form-label">Backup to Restore</label>
+        <div id="restore-archive-name" style="font-weight: 600; color: var(--text-primary); padding: 12px; background: var(--surface-secondary); border-radius: 6px;"></div>
+        <div style="margin-top: 8px; font-size: 13px; color: var(--text-muted);">
+          <span id="restore-archive-date"></span> • <span id="restore-archive-size"></span>
+        </div>
+        <div style="margin-top: 8px;">
+          <strong>Original paths:</strong>
+          <pre id="restore-original-paths" style="margin: 0; font-size: 12px; color: var(--text-muted); white-space: pre-wrap; max-height: 60px; overflow-y: auto;"></pre>
+        </div>
+      </div>
+
+      <!-- Restore Location -->
+      <div class="form-group">
+        <label class="form-label">Restore Location</label>
+        <div class="checkbox-group">
+          <input type="radio" id="restore-to-original" name="restore-location" checked onchange="backupToggleRestoreLocation()">
+          <label for="restore-to-original">
+            Restore to original location
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;" id="restore-original-location-text">
+              Loading...
+            </div>
+          </label>
+        </div>
+        <div class="checkbox-group">
+          <input type="radio" id="restore-to-custom" name="restore-location" onchange="backupToggleRestoreLocation()">
+          <label for="restore-to-custom">Restore to custom location</label>
+        </div>
+      </div>
+
+      <!-- Custom Location Fields -->
+      <div id="restore-custom-path-group" style="display: none;">
+        <div class="form-group">
+          <label class="form-label">Destination Server *</label>
+          <select id="restore-dest-server">
+            <option value="">Select destination server...</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Destination Path *</label>
+          <div style="display: flex; gap: 8px;">
+            <input type="text" id="restore-dest-path" placeholder="/restore/location" style="flex: 1;">
+            <button type="button" class="btn" onclick="backupBrowseRestoreDestination()">Browse</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Restore Scope -->
+      <div class="form-group">
+        <label class="form-label">What to Restore</label>
+        <div class="checkbox-group">
+          <input type="radio" id="restore-full" name="restore-scope" checked onchange="backupToggleRestoreScope()">
+          <label for="restore-full">Restore entire backup</label>
+        </div>
+        <div class="checkbox-group">
+          <input type="radio" id="restore-selective" name="restore-scope" onchange="backupToggleRestoreScope()">
+          <label for="restore-selective">Select specific files/folders</label>
+        </div>
+      </div>
+
+      <!-- Selective Restore -->
+      <div id="restore-selective-group" style="display: none;">
+        <div class="form-group">
+          <label class="form-label">Select Items</label>
+          <button type="button" class="btn" onclick="backupBrowseBackupContents()" style="width: 100%;">Browse Backup Contents</button>
+          <div id="restore-selected-items" style="margin-top: 8px; padding: 8px; background: var(--surface-secondary); border-radius: 4px; min-height: 40px; font-size: 13px; color: var(--text-muted);">
+            No items selected
+          </div>
+        </div>
+      </div>
+
+      <!-- Overwrite -->
+      <div class="form-group">
+        <div class="checkbox-group">
+          <input type="checkbox" id="restore-overwrite" checked>
+          <label for="restore-overwrite">Overwrite existing files</label>
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <div class="modal-footer">
+        <button type="button" class="btn" onclick="backupCloseRestoreModal()">Cancel</button>
+        <button type="submit" class="btn danger" onclick="backupSubmitRestore(event)">
+          Restore Backup
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 </html>
