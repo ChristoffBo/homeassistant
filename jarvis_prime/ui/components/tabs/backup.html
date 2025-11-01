@@ -1,0 +1,184 @@
+<!-- BACKUP TAB - INTUITIVE BACKUP MANAGER -->
+    <section id="backup" class="tab-panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <h1>🔄 Backup Manager</h1>
+          <div class="panel-subtitle">Agentless backup system with SSH/SMB/NFS support</div>
+        </div>
+      </div>
+
+      <!-- Quick Stats -->
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-header">
+            <div class="metric-label">Total Backups</div>
+          </div>
+          <div class="metric-value" id="backup-stat-total">0</div>
+        </div>
+
+        <div class="metric-card cyan">
+          <div class="metric-header">
+            <div class="metric-label">Total Size</div>
+          </div>
+          <div class="metric-value" id="backup-stat-size">0 GB</div>
+        </div>
+
+        <div class="metric-card green">
+          <div class="metric-header">
+            <div class="metric-label">Success Today</div>
+          </div>
+          <div class="metric-value" id="backup-stat-success">0</div>
+        </div>
+
+        <div class="metric-card red">
+          <div class="metric-header">
+            <div class="metric-label">Failed Today</div>
+          </div>
+          <div class="metric-value" id="backup-stat-failed">0</div>
+        </div>
+
+        <div class="metric-card orange">
+          <div class="metric-header">
+            <div class="metric-label">Active Jobs</div>
+          </div>
+          <div class="metric-value" id="backup-stat-jobs">0</div>
+        </div>
+      </div>
+
+      <!-- Quick Actions -->
+      <div class="glass-card" style="margin-top: 24px;">
+        <div class="card-header">
+          <h3 class="card-title">Quick Actions</h3>
+        </div>
+        <div class="card-body">
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px;">
+            <button class="btn primary" onclick="backupOpenServerModal('source')" style="padding: 12px; display: flex; align-items: center; justify-content: center; gap: 8px;">
+              <svg class="icon" fill="none" viewBox="0 0 24 24">
+                <path d="M12 4v16m8-8H4" stroke="currentColor" stroke-width="2"/>
+              </svg>
+              Add Source Server
+            </button>
+            <button class="btn primary" onclick="backupOpenServerModal('destination')" style="padding: 12px; display: flex; align-items: center; justify-content: center; gap: 8px;">
+              <svg class="icon" fill="none" viewBox="0 0 24 24">
+                <path d="M12 4v16m8-8H4" stroke="currentColor" stroke-width="2"/>
+              </svg>
+              Add Destination Server
+            </button>
+            <button class="btn" onclick="backupOpenJobModal()" style="padding: 12px; display: flex; align-items: center; justify-content: center; gap: 8px;">
+              <svg class="icon" fill="none" viewBox="0 0 24 24">
+                <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" stroke="currentColor" stroke-width="2"/>
+              </svg>
+              Create Backup Job
+            </button>
+            <button class="btn" onclick="backupRefreshAll()" style="padding: 12px; display: flex; align-items: center; justify-content: center; gap: 8px;">
+              <svg class="icon" fill="none" viewBox="0 0 24 24">
+                <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" stroke="currentColor" stroke-width="2"/>
+              </svg>
+              Refresh All
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Server Management -->
+      <div style="margin-top: 32px;">
+        <h2 style="font-size: 20px; font-weight: 600; margin-bottom: 16px; color: var(--text-primary);">Server Configuration</h2>
+        <p style="color: var(--text-muted); margin-bottom: 24px;">Manage source and destination servers for your backups</p>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px;">
+          <!-- Source Servers -->
+          <div class="glass-card">
+            <div class="card-header">
+              <h3 class="card-title">📂 Source Servers</h3>
+              <button class="btn primary btn-sm" onclick="backupOpenServerModal('source')">Add Source</button>
+            </div>
+            <div class="card-body">
+              <div id="backup-source-servers" style="display: flex; flex-direction: column; gap: 12px;">
+                <div class="text-center text-muted" style="padding: 32px;">
+                  No source servers configured<br>
+                  <small>Click "Add Source" to get started</small>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Destination Servers -->
+          <div class="glass-card">
+            <div class="card-header">
+              <h3 class="card-title">💾 Destination Servers</h3>
+              <button class="btn primary btn-sm" onclick="backupOpenServerModal('destination')">Add Destination</button>
+            </div>
+            <div class="card-body">
+              <div id="backup-destination-servers" style="display: flex; flex-direction: column; gap: 12px;">
+                <div class="text-center text-muted" style="padding: 32px;">
+                  No destination servers configured<br>
+                  <small>Click "Add Destination" to get started</small>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Backup Jobs -->
+      <div style="margin-top: 32px;">
+        <h2 style="font-size: 20px; font-weight: 600; margin-bottom: 16px; color: var(--text-primary);">Backup Jobs</h2>
+        <p style="color: var(--text-muted); margin-bottom: 24px;">Configured backup schedules and status</p>
+
+        <div class="glass-card">
+          <div class="card-header">
+            <h3 class="card-title">📅 Active Jobs</h3>
+            <button class="btn primary btn-sm" onclick="backupOpenJobModal()">Create Job</button>
+          </div>
+          <div class="card-body">
+            <div id="backup-jobs-list">
+              <div class="text-center text-muted" style="padding: 32px;">
+                No backup jobs configured<br>
+                <small>Create a job to schedule automated backups</small>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Backup Archives -->
+      <div style="margin-top: 32px;">
+        <h2 style="font-size: 20px; font-weight: 600; margin-bottom: 16px; color: var(--text-primary);">Backup Archives</h2>
+        <p style="color: var(--text-muted); margin-bottom: 24px;">Available backups and restore points</p>
+
+        <div class="glass-card">
+          <div class="card-header">
+            <h3 class="card-title">📦 Available Backups</h3>
+            <div style="display: flex; gap: 8px;">
+              <input type="text" id="backup-search" placeholder="Search backups..." style="padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--surface-secondary); color: var(--text-primary); min-width: 250px;">
+              <button class="btn btn-sm" onclick="backupRefreshArchives()">
+                <svg class="icon" style="width: 16px; height: 16px;" fill="none" viewBox="0 0 24 24">
+                  <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" stroke="currentColor" stroke-width="2"/>
+                </svg>
+                Refresh
+              </button>
+            </div>
+          </div>
+          <div class="card-body">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Backup Name</th>
+                  <th>Job</th>
+                  <th>Source</th>
+                  <th>Size</th>
+                  <th>Date</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="backup-archives-list">
+                <tr>
+                  <td colspan="7" class="text-center text-muted">No backups available</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
