@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
 Jarvis Prime - Backup Module
-Agentless backup system with SSH/SMB/NFS support
-Runs in separate process to avoid blocking main Jarvis
+FIXED: Cron scheduler now properly tracks and fires scheduled jobs
 
-FIXES:
-- Added browse_archive_contents API to list files in tar.gz
-- Implemented selective restore with file filtering
-- Fixed UI blocking issues with modal dialogs
+CRITICAL FIXES:
+- Cron scheduler now checks every 30 seconds (was 60s)
+- Updates last_run BEFORE starting job to prevent duplicate triggers  
+- Better logging with emoji indicators for debugging
+- Handles first-run jobs properly
 """
 import os
 import json
@@ -1265,7 +1265,7 @@ def restore_worker(restore_id: str, restore_config: Dict, status_queue: Queue):
                 pass
 
 class BackupManager:
-    """Main backup manager"""
+    """Main backup manager with FIXED cron scheduler"""
    
     def __init__(self, data_dir: str):
         self.data_dir = Path(data_dir)
@@ -1276,6 +1276,7 @@ class BackupManager:
         self.statuses = self._load_statuses()
         self.worker_processes = {}
         self.status_updater = None
+        self.scheduler_task = None
         self.servers = {s['id']: s for s in self.get_all_servers()}
        
     def _load_jobs(self):
@@ -1301,12 +1302,13 @@ class BackupManager:
     async def start(self):
         self.status_updater = asyncio.create_task(self._status_updater())
         self.scheduler_task = asyncio.create_task(self._cron_scheduler())
-        logger.info("Backup manager started with cron scheduler")
+        logger.info("Backup manager started with FIXED cron scheduler")
        
     async def stop(self):
         if self.status_updater:
             self.status_updater.cancel()
-        if hasattr(self,"scheduler_task") and self.scheduler_task: self.scheduler_task.cancel()
+        if self.scheduler_task:
+            self.scheduler_task.cancel()
         for process in self.worker_processes.values():
             if process.is_alive():
                 process.terminate()
@@ -1314,6 +1316,7 @@ class BackupManager:
         logger.info("Backup manager stopped")
        
     async def _status_updater(self):
+        """Status updater that also updates job last_run when backup completes"""
         while True:
             try:
                 while not status_queue.empty():
@@ -1331,7 +1334,7 @@ class BackupManager:
                             self.jobs[job_id]['last_run'] = int(time.time())
                             self.jobs[job_id]['last_status'] = update.get('status')
                             self._save_jobs()
-                            logger.info(f"Updated job {job_id} last_run timestamp")
+                            logger.info(f"Updated job {job_id} last_run={self.jobs[job_id]['last_run']}, status={update.get('status')}")
                     
                 finished = [k for k, p in self.worker_processes.items() if not p.is_alive()]
                 for k in finished:
@@ -1344,29 +1347,71 @@ class BackupManager:
                 await asyncio.sleep(1)
                
     async def _cron_scheduler(self):
+        """
+        FIXED CRON SCHEDULER
+        - Checks every 30 seconds (was 60)
+        - Updates last_run BEFORE starting job (prevents duplicate triggers)
+        - Better logging with emoji indicators
+        - Handles first-run jobs properly
+        """
+        logger.info("🔔 Cron scheduler started - checking every 30 seconds")
+        
         while True:
-            now = datetime.now()
-            for job_id, job in list(self.jobs.items()):
-                cron_expr = job.get('cron')
-                if not cron_expr:
-                    continue
-                try:
-                    last_run = job.get('last_run')
-                    if last_run:
-                        last_dt = datetime.fromtimestamp(last_run)
-                    else:
-                        created_at = datetime.fromisoformat(job['created_at'])
-                        last_dt = created_at - timedelta(seconds=1)
-                    iter = croniter(cron_expr, last_dt)
-                    next_dt = iter.get_next(datetime)
-                    if next_dt <= now:
-                        if self.run_job(job_id):
-                            logger.info(f"Scheduled run started for job {job_id}")
+            try:
+                now = datetime.now()
+                current_timestamp = int(now.timestamp())
+                
+                for job_id, job in list(self.jobs.items()):
+                    cron_expr = job.get('cron')
+                    if not cron_expr:
+                        continue
+                    
+                    try:
+                        # Get last run time or use job creation time
+                        last_run = job.get('last_run')
+                        if last_run:
+                            last_run_dt = datetime.fromtimestamp(last_run)
                         else:
-                            logger.debug(f"Scheduled run skipped for job {job_id} (already running)")
-                except Exception as e:
-                    logger.error(f"Cron error for job {job_id}: {e}")
-            await asyncio.sleep(60)
+                            # Never run before - use creation time minus 1 minute
+                            created_at = datetime.fromisoformat(job['created_at'])
+                            last_run_dt = created_at - timedelta(minutes=1)
+                            last_run = int(last_run_dt.timestamp())
+                        
+                        # Check if job should have run between last_run and now
+                        cron_iter = croniter(cron_expr, last_run_dt)
+                        next_run_dt = cron_iter.get_next(datetime)
+                        next_run_timestamp = int(next_run_dt.timestamp())
+                        
+                        # Should we run this job?
+                        if next_run_timestamp <= current_timestamp:
+                            # Check if already running
+                            if job_id in self.worker_processes and self.worker_processes[job_id].is_alive():
+                                logger.debug(f"Skipping scheduled run for {job.get('name')} (already running)")
+                                continue
+                            
+                            # CRITICAL FIX: Update last_run BEFORE starting to prevent duplicate triggers
+                            self.jobs[job_id]['last_run'] = current_timestamp
+                            self._save_jobs()
+                            
+                            logger.info(f"🔔 CRON TRIGGER: Starting scheduled backup '{job.get('name')}' (schedule: {cron_expr})")
+                            
+                            if self.run_job(job_id):
+                                logger.info(f"✅ Scheduled job {job.get('name')} started successfully")
+                            else:
+                                logger.error(f"❌ Failed to start scheduled job {job.get('name')}")
+                        
+                    except Exception as e:
+                        logger.error(f"Cron check error for job {job_id} ({job.get('name')}): {e}", exc_info=True)
+                
+                # Check every 30 seconds for better responsiveness
+                await asyncio.sleep(30)
+                
+            except asyncio.CancelledError:
+                logger.info("Cron scheduler stopped")
+                break
+            except Exception as e:
+                logger.error(f"Cron scheduler error: {e}", exc_info=True)
+                await asyncio.sleep(30)
                
     def create_job(self, job_config: Dict) -> str:
         job_id = str(uuid.uuid4())
@@ -1374,12 +1419,15 @@ class BackupManager:
         job_config['created_at'] = datetime.now().isoformat()
         self.jobs[job_id] = job_config
         self._save_jobs()
+        logger.info(f"Created job {job_id} with cron: {job_config.get('cron', 'none')}")
         return job_id
        
     def run_job(self, job_id: str) -> bool:
         if job_id not in self.jobs:
+            logger.error(f"Job {job_id} not found")
             return False
         if job_id in self.worker_processes and self.worker_processes[job_id].is_alive():
+            logger.warning(f"Job {job_id} already running")
             return False
         job_config = self.jobs[job_id].copy()
         job_config['_data_dir'] = str(self.data_dir)
@@ -1391,6 +1439,7 @@ class BackupManager:
             'message': 'Job queued', 'started_at': datetime.now().isoformat()
         }
         self._save_statuses()
+        logger.info(f"Started job {job_id} ({self.jobs[job_id].get('name')})")
         return True
        
     def get_job_status(self, job_id: str) -> Dict:
@@ -1455,6 +1504,7 @@ class BackupManager:
             with open(archives_file, 'w') as f:
                 json.dump(filtered_archives, f, indent=2)
 
+        logger.info(f"Job {job_id} deleted successfully")
         return True
    
     def get_all_servers(self) -> List[Dict]:
@@ -1869,7 +1919,7 @@ def setup_routes(app):
     app.router.add_delete('/api/backup/archives/{archive_id}', delete_archive)
     app.router.add_post('/api/backup/import-archives', import_archives)
     
-    # NEW: Browse archive contents endpoint
+    # Browse archive contents endpoint
     app.router.add_get('/api/backup/archives/{archive_id}/contents', browse_archive_contents)
    
     app.router.add_post('/api/backup/test-connection', test_connection)
