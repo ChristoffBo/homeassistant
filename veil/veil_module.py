@@ -147,7 +147,7 @@ CONFIG = {
     "blocklist_update_enabled": True,
     "blocklist_update_interval": 86400,
     "blocklist_update_on_start": True,
-    "blocklist_storage_path": "/config/veil_blocklists.json",  # Local storage
+    "blocklist_storage_path": "/share/veil/veil_blocklists.json",  # Local storage
     "whitelist": [],
     "blacklist": [],
     
