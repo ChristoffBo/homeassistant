@@ -71,6 +71,14 @@ import dns.rdtypes.ANY.MX
 import dns.dnssec
 import dns.resolver
 
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
 log = logging.getLogger("veil")
 
 # ==================== CONFIGURATION ====================
