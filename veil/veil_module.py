@@ -1364,14 +1364,30 @@ def strip_ecs(response_wire: bytes) -> bytes:
 # ==================== DNS PROCESSING ====================
 async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
     try:
+        # Basic validation
+        if len(data) < 12:
+            log.warning(f"[dns] Packet too small from {addr[0]}: {len(data)} bytes")
+            return None
+        
+        # Check if it looks like DNS (starts with transaction ID, has flags)
+        if len(data) >= 12:
+            try:
+                # Try to parse as DNS
+                query = dns.message.from_wire(data)
+            except dns.exception.FormError as e:
+                log.error(f"[dns] Malformed DNS packet from {addr[0]}: {e}")
+                log.debug(f"[dns] Packet hex: {data[:50].hex()}")
+                return None
+            except Exception as e:
+                log.error(f"[dns] Failed to parse DNS from {addr[0]}: {e}")
+                return None
+        
         # Rate limiting
         if not await RATE_LIMITER.check_rate_limit(addr[0]):
-            query = dns.message.from_wire(data)
             response = dns.message.make_response(query)
             response.set_rcode(dns.rcode.REFUSED)
             return response.to_wire()
         
-        query = dns.message.from_wire(data)
         qname = str(query.question[0].name).lower().strip('.')
         qtype = query.question[0].rdtype
         
@@ -1484,14 +1500,8 @@ async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
         return response_wire
     
     except Exception as e:
-        log.error(f"[dns] Error processing query: {e}")
-        try:
-            query = dns.message.from_wire(data)
-            response = dns.message.make_response(query)
-            response.set_rcode(dns.rcode.SERVFAIL)
-            return response.to_wire()
-        except:
-            return data
+        log.error(f"[dns] Unexpected error processing query from {addr[0]}: {e}")
+        return None
 
 # ==================== DNS SERVER ====================
 class DNSProtocol(asyncio.DatagramProtocol):
