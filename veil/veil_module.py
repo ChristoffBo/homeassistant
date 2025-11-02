@@ -2372,27 +2372,68 @@ def register_routes(app):
     log.info("[veil] Routes registered")
 
 async def init_veil():
+    log.info("=" * 60)
     log.info("[veil] 🧩 Privacy-First DNS/DHCP initializing")
+    log.info("=" * 60)
     
-    # Load blocklists from local storage first
-    loaded_from_storage = await load_blocklists_local()
+    # Initialize global objects
+    global DNS_CACHE, BLOCKLIST, WHITELIST, BLACKLIST, UPSTREAM_HEALTH, CONN_POOL, DHCP_SERVER
+    global RATE_LIMITER, CACHE_PREWARMER, BLOCKLIST_UPDATER
     
-    # Load from files
-    for bl in CONFIG["blocklists"]:
-        if Path(bl).exists():
-            count = 0
-            with open(bl) as f:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith('#'):
-                        BLOCKLIST.add_sync(line)
-                        count += 1
-            log.info(f"[veil] Loaded {count:,} domains from {bl}")
+    log.info(f"[veil] Enabled: {CONFIG.get('enabled', True)}")
+    log.info(f"[veil] DHCP Enabled: {CONFIG.get('dhcp_enabled', False)}")
+    log.info(f"[veil] DNS Port: {CONFIG.get('dns_port', 53)}")
+    log.info(f"[veil] DNS Bind: {CONFIG.get('dns_bind', '0.0.0.0')}")
+    
+    STATS["start_time"] = time.time()
+    STATS["blocklist_last_update"] = 0
+    
+    DNS_CACHE = DNSCache(max_size=CONFIG.get("cache_max_size", 10000))
+    log.info(f"[veil] DNS Cache initialized (max: {CONFIG.get('cache_max_size', 10000)})")
+    
+    UPSTREAM_HEALTH = UpstreamHealthMonitor()
+    log.info(f"[veil] Upstream health monitor initialized")
+    
+    RATE_LIMITER = RateLimiter(
+        CONFIG.get("rate_limit_qps", 20),
+        CONFIG.get("rate_limit_burst", 50)
+    )
+    log.info(f"[veil] Rate limiter initialized ({CONFIG.get('rate_limit_qps', 20)} qps)")
+    
+    CACHE_PREWARMER = CachePrewarmer()
+    log.info(f"[veil] Cache prewarmer initialized")
+    
+    BLOCKLIST_UPDATER = BlocklistUpdater()
+    log.info(f"[veil] Blocklist updater initialized")
+    
+    CONN_POOL = await get_conn_pool()
+    log.info(f"[veil] Connection pool initialized")
+    
+    DHCP_SERVER = DHCPServer(CONFIG)
+    log.info(f"[veil] DHCP server initialized")
+    
+    # Load blocklists
+    log.info("[veil] Loading blocklists...")
+    loaded_local = await load_blocklists_local()
+    
+    if not loaded_local:
+        log.info("[veil] No local blocklists found, loading from files")
+        for bl in CONFIG.get("blocklists", []):
+            if Path(bl).exists():
+                count = 0
+                with open(bl) as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith('#'):
+                            BLOCKLIST.add_sync(line)
+                            count += 1
+                log.info(f"[veil] Loaded {count:,} domains from {bl}")
     
     log.info(f"[veil] Blocklist: {BLOCKLIST.size:,} domains")
     
     # Start rate limiter
     RATE_LIMITER.start()
+    log.info(f"[veil] Rate limiter started")
     
     # Start cache prewarmer
     if CONFIG.get("cache_prewarm_enabled"):
@@ -2405,39 +2446,56 @@ async def init_veil():
         log.info(f"[veil] Blocklist auto-update: every {CONFIG['blocklist_update_interval']}s")
     
     # Start DNS
+    log.info("[veil] Attempting to start DNS server...")
     if CONFIG.get("enabled", True):
-        await start_dns()
-        
-        features = []
-        if CONFIG.get("doh_enabled"):
-            features.append("DoH")
-        if CONFIG.get("dot_enabled"):
-            features.append("DoT")
-        if CONFIG.get("doq_enabled") and DOQ_AVAILABLE:
-            features.append("DoQ")
-        if CONFIG.get("padding_enabled"):
-            features.append("RFC 7830 padding")
-        if CONFIG.get("case_randomization"):
-            features.append("0x20 encoding")
-        if CONFIG.get("qname_minimization"):
-            features.append("QNAME min")
-        if CONFIG.get("ecs_strip"):
-            features.append("ECS strip")
-        if CONFIG.get("upstream_parallel"):
-            features.append("parallel upstream")
-        if CONFIG.get("dnssec_validate"):
-            features.append("DNSSEC")
-        if CONFIG.get("rate_limit_enabled"):
-            features.append(f"rate limit ({CONFIG['rate_limit_qps']} qps)")
-        if CONFIG.get("safesearch_enabled"):
-            features.append("SafeSearch")
-        
-        log.info(f"[veil] Privacy: {', '.join(features)}")
+        try:
+            await start_dns()
+            
+            features = []
+            if CONFIG.get("doh_enabled"):
+                features.append("DoH")
+            if CONFIG.get("dot_enabled"):
+                features.append("DoT")
+            if CONFIG.get("doq_enabled") and DOQ_AVAILABLE:
+                features.append("DoQ")
+            if CONFIG.get("padding_enabled"):
+                features.append("RFC 7830 padding")
+            if CONFIG.get("case_randomization"):
+                features.append("0x20 encoding")
+            if CONFIG.get("qname_minimization"):
+                features.append("QNAME min")
+            if CONFIG.get("ecs_strip"):
+                features.append("ECS strip")
+            if CONFIG.get("upstream_parallel"):
+                features.append("parallel upstream")
+            if CONFIG.get("dnssec_validate"):
+                features.append("DNSSEC")
+            if CONFIG.get("rate_limit_enabled"):
+                features.append(f"rate limit ({CONFIG['rate_limit_qps']} qps)")
+            if CONFIG.get("safesearch_enabled"):
+                features.append("SafeSearch")
+            
+            log.info(f"[veil] Privacy: {', '.join(features)}")
+        except Exception as e:
+            log.error(f"[veil] ❌ FAILED TO START DNS SERVER: {e}")
+            log.error("[veil] Veil will continue without DNS functionality")
+    else:
+        log.warning("[veil] DNS is DISABLED in config")
     
     # Start DHCP
     if CONFIG.get("dhcp_enabled", False):
-        DHCP_SERVER.start()
-        log.info(f"[veil] DHCP: {CONFIG['dhcp_range_start']} - {CONFIG['dhcp_range_end']}")
+        log.info("[veil] Attempting to start DHCP server...")
+        try:
+            DHCP_SERVER.start()
+            log.info(f"[veil] ✅ DHCP: {CONFIG['dhcp_range_start']} - {CONFIG['dhcp_range_end']}")
+        except Exception as e:
+            log.error(f"[veil] ❌ FAILED TO START DHCP SERVER: {e}")
+    else:
+        log.warning("[veil] DHCP is DISABLED in config")
+    
+    log.info("=" * 60)
+    log.info("[veil] ✅ Initialization complete")
+    log.info("=" * 60)
 
 async def cleanup_veil():
     log.info("[veil] Shutting down")
@@ -2463,11 +2521,23 @@ if __name__ == "__main__":
 
 async def start_background_services(app):
     """Start background services on app startup"""
-    await init_veil()
+    try:
+        log.info("[veil] Starting background services...")
+        await init_veil()
+        log.info("[veil] Background services started successfully")
+    except Exception as e:
+        log.error(f"[veil] CRITICAL: Failed to start background services: {e}")
+        import traceback
+        log.error(traceback.format_exc())
 
 async def cleanup_background_services(app):
     """Cleanup background services on app shutdown"""
-    await cleanup_veil()
+    try:
+        log.info("[veil] Cleaning up background services...")
+        await cleanup_veil()
+        log.info("[veil] Cleanup complete")
+    except Exception as e:
+        log.error(f"[veil] Error during cleanup: {e}")
 
 if __name__ == "__main__":
     import os
@@ -2525,10 +2595,17 @@ if __name__ == "__main__":
         app.router.add_static("/", ui_path, show_index=True)
         log.info(f"[veil] Serving UI from {ui_path}")
 
-    # Setup startup/cleanup hooks - THIS IS CRITICAL
+    # Setup startup/cleanup hooks
     app.on_startup.append(start_background_services)
     app.on_cleanup.append(cleanup_background_services)
 
-    log.info(f"🌐 Web UI available at http://{bind_addr}:{ui_port}")
+    log.info(f"🌐 Web UI will be available at http://{bind_addr}:{ui_port}")
     log.info(f"🧩 Veil v2.0.0 - Privacy-First DNS/DHCP")
-    web.run_app(app, host=bind_addr, port=ui_port, access_log=None)
+    
+    # Run with proper error handling
+    try:
+        web.run_app(app, host=bind_addr, port=ui_port, access_log=None)
+    except Exception as e:
+        log.error(f"[veil] Failed to start: {e}")
+        import traceback
+        traceback.print_exc()
