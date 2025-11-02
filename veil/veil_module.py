@@ -717,7 +717,7 @@ asyncio.create_task(start_blocklist_update())
 
         
         # Save to local storage
-    await save_blocklists_local()
+        await save_blocklists_local()
         
         log.info(f"[blocklist] Update complete: {total_added:,} domains added, {BLOCKLIST.size:,} total")
     
