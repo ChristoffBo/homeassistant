@@ -678,7 +678,7 @@ class BlocklistUpdater:
             log.error(f"[blocklist] Error downloading {url}: {e}")
             return []
 
-       async def update_blocklists(self):
+    async def update_blocklists(self):
         # ✅ Always reload latest config from disk so UI changes are applied
         try:
             with open("/config/options.json", "r") as f:
