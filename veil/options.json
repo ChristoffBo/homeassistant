@@ -1,6 +1,6 @@
 {
   "dns_enabled": true,
-  "dhcp_enabled": false,
+  "dhcp_enabled": true,
   "doh_enabled": true,
   "dot_enabled": true,
   "doq_enabled": true,
