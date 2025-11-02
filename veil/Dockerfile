@@ -14,7 +14,7 @@ WORKDIR /app
 
 COPY veil_module.py /app/veil_module.py
 COPY entrypoint.sh /app/entrypoint.sh
-COPY default_options.json /app/default_options.json
+COPY options.json /app/default_options.json
 COPY logo.png /app/logo.png
 COPY icon.png /app/icon.png
 
