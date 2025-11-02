@@ -678,13 +678,14 @@ class BlocklistUpdater:
             log.error(f"[blocklist] Error downloading {url}: {e}")
             return []
 
-    async def update_blocklists(self):
+       async def update_blocklists(self):
         # ✅ Always reload latest config from disk so UI changes are applied
         try:
             with open("/config/options.json", "r") as f:
                 fresh_cfg = json.load(f)
             CONFIG.update(fresh_cfg)
             log.warning(f"[debug] CONFIG keys: {list(CONFIG.keys())}")
+            log.warning(f"[debug] blocklist_urls type={type(CONFIG.get('blocklist_urls'))} value={CONFIG.get('blocklist_urls')}")
         except Exception as e:
             log.error(f"[blocklist] Failed to reload config: {e}")
             return
@@ -695,8 +696,17 @@ class BlocklistUpdater:
             log.warning("[blocklist] Update disabled in config")
             return
 
-        # 🔧 Read URLs from top level OR nested 'ui' section
-        urls = CONFIG.get("blocklist_urls") or CONFIG.get("ui", {}).get("blocklist_urls", [])
+        # 🔧 Read URLs from top level OR nested 'ui' section, and normalize type
+        urls_raw = CONFIG.get("blocklist_urls") or CONFIG.get("ui", {}).get("blocklist_urls", [])
+        if isinstance(urls_raw, str):
+            urls = [u.strip() for u in urls_raw.split(",") if u.strip()]
+        elif isinstance(urls_raw, dict):
+            urls = list(urls_raw.values())
+        elif isinstance(urls_raw, list):
+            urls = urls_raw
+        else:
+            urls = []
+
         if not urls:
             log.warning(f"[blocklist] No URLs configured. Available keys: {list(CONFIG.keys())}")
             return
