@@ -3,13 +3,14 @@ FROM debian:stable-slim
 ARG DEBIAN_FRONTEND=noninteractive
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    TZ=Africa/Johannesburg
+    TZ=Africa/Johannesburg \
+    PATH="/venv/bin:$PATH"
 
 # ----------------------------------------------------
 # System dependencies
 # ----------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-pip ca-certificates curl gnupg dnsutils iproute2 iputils-ping \
+    python3 python3-venv python3-pip ca-certificates curl gnupg dnsutils iproute2 iputils-ping \
     build-essential libssl-dev && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
@@ -26,10 +27,11 @@ COPY icon.png /app/icon.png
 COPY ui /app/ui
 
 # ----------------------------------------------------
-# Python dependencies (PEP 668-compliant)
+# Python dependencies (inside venv)
 # ----------------------------------------------------
-RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel --break-system-packages && \
-    python3 -m pip install --no-cache-dir --break-system-packages \
+RUN python3 -m venv /venv && \
+    /venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    /venv/bin/pip install --no-cache-dir \
         dnspython \
         aiohttp \
         aiodns \
