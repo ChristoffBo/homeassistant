@@ -2613,33 +2613,51 @@ if __name__ == "__main__":
     app = web.Application()
     
     # Register API routes
-    register_routes(app)
-    
-    # Serve UI
-    ui_path = os.path.join(os.path.dirname(__file__), "ui")
-    if not os.path.exists(ui_path):
-        ui_path = "/app/ui"
-    
-    if not os.path.exists(ui_path):
-        log.warning(f"[veil] UI path {ui_path} not found, serving placeholder")
-        async def placeholder(_):
-            return web.Response(text="🧩 Veil is running, but no UI files found.")
-        app.router.add_get("/", placeholder)
-    else:
-        app.router.add_static("/", ui_path, show_index=True)
-        log.info(f"[veil] Serving UI from {ui_path}")
+    # Register all API routes
+def register_routes(app):
+    app.router.add_post('/api/veil/config', api_config_update)
+    app.router.add_delete('/api/veil/cache', api_cache_flush)
+    app.router.add_post('/api/veil/blocklist/reload', api_blocklist_reload)
+    app.router.add_post('/api/veil/blocklist/update', api_blocklist_update)
+    app.router.add_post('/api/veil/cache/prewarm', api_cache_prewarm)
+    app.router.add_get('/api/veil/query/history', api_query_history)
+    app.router.add_post('/api/veil/blocklist/upload', api_blocklist_upload)
+    app.router.add_post('/api/veil/blacklist/add', api_blacklist_add)
+    app.router.add_delete('/api/veil/blacklist/remove', api_blacklist_remove)
+    app.router.add_post('/api/veil/whitelist/add', api_whitelist_add)
+    app.router.add_delete('/api/veil/whitelist/remove', api_whitelist_remove)
 
-    # Setup startup/cleanup hooks
-    app.on_startup.append(start_background_services)
-    app.on_cleanup.append(cleanup_background_services)
 
-    log.info(f"🌐 Web UI will be available at http://{bind_addr}:{ui_port}")
-    log.info(f"🧩 Veil v2.0.0 - Privacy-First DNS/DHCP")
-    
-    # Run with proper error handling
-    try:
-        web.run_app(app, host=bind_addr, port=ui_port, access_log=None)
-    except Exception as e:
-        log.error(f"[veil] Failed to start: {e}")
-        import traceback
-        traceback.print_exc()
+# === AFTER ALL FUNCTIONS ABOVE ===
+register_routes(app)
+
+# Serve UI
+ui_path = os.path.join(os.path.dirname(__file__), "ui")
+if not os.path.exists(ui_path):
+    ui_path = "/app/ui"
+
+if not os.path.exists(ui_path):
+    log.warning(f"[veil] UI path {ui_path} not found, serving placeholder")
+
+    async def placeholder(_):
+        return web.Response(text="🧩 Veil is running, but no UI files found.")
+    app.router.add_get("/", placeholder)
+else:
+    app.router.add_static("/", ui_path, show_index=True)
+    log.info(f"[veil] Serving UI from {ui_path}")
+
+# Setup startup/cleanup hooks
+app.on_startup.append(start_background_services)
+app.on_cleanup.append(cleanup_background_services)
+
+log.info(f"🌐 Web UI will be available at http://{bind_addr}:{ui_port}")
+log.info(f"🧩 Veil v2.0.0 - Privacy-First DNS/DHCP")
+
+# Run with proper error handling
+try:
+    web.run_app(app, host=bind_addr, port=ui_port, access_log=None)
+except Exception as e:
+    log.error(f"[veil] Failed to start: {e}")
+    import traceback
+    traceback.print_exc()
+
