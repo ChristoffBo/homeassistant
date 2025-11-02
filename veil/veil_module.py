@@ -151,7 +151,7 @@ CONFIG = {
   "blocklist_storage_paths": [
     "/share/veil/veil_blocklists.json",
     "/config/veil_blocklists.json"
-  ],
+  
   "whitelist": [],
   "blacklist": []
 }
