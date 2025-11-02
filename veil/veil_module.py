@@ -2084,6 +2084,18 @@ DHCP_SERVER = DHCPServer()
 async def api_stats(req):
     uptime = int(time.time() - STATS.get("start_time", time.time()))
     
+    # Get upstream health and fill in missing servers from config
+    upstream_health = UPSTREAM_HEALTH.get_status()
+    for server in CONFIG.get("upstream_servers", []):
+        if server not in upstream_health:
+            upstream_health[server] = {
+                "healthy": True,
+                "success_rate": 1.0,
+                "total": 0,
+                "success": 0,
+                "avg_latency": 0
+            }
+    
     # Map internal stats to UI-expected keys
     return web.json_response({
         # Main stats - mapped for UI compatibility
@@ -2115,7 +2127,7 @@ async def api_stats(req):
         "blacklist_size": BLACKLIST.size,
         
         # Health & misc
-        "upstream_health": UPSTREAM_HEALTH.get_status(),
+        "upstream_health": upstream_health,
         "leases": [lease.to_dict() for lease in DHCP_SERVER.leases.values()] if DHCP_SERVER else [],
         
         # Raw STATS for debugging
