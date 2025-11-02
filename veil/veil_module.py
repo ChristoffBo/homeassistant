@@ -559,50 +559,65 @@ BLACKLIST = DomainList("blacklist")
 
 # ==================== BLOCKLIST STORAGE ====================
 async def save_blocklists_local():
-    """Save blocklists to local storage"""
+    """Save blocklists, blacklist, and whitelist to local storage"""
     try:
         storage_path = Path(CONFIG.get("blocklist_storage_path", "/config/veil_blocklists.json"))
         storage_path.parent.mkdir(parents=True, exist_ok=True)
         
         blocklist_domains = await BLOCKLIST.export()
+        blacklist_domains = await BLACKLIST.export()
+        whitelist_domains = await WHITELIST.export()
         
         data = {
             "blocklist": blocklist_domains,
-            "count": len(blocklist_domains),
-            "last_update": STATS["blocklist_last_update"],
+            "blacklist": blacklist_domains,
+            "whitelist": whitelist_domains,
+            "blocklist_count": len(blocklist_domains),
+            "blacklist_count": len(blacklist_domains),
+            "whitelist_count": len(whitelist_domains),
+            "last_update": STATS.get("blocklist_last_update", 0),
             "timestamp": time.time()
         }
         
         with open(storage_path, 'w') as f:
             json.dump(data, f, indent=2)
         
-        log.info(f"[blocklist] Saved {len(blocklist_domains):,} domains to {storage_path}")
+        log.info(f"[storage] Saved {len(blocklist_domains):,} blocklist, {len(blacklist_domains):,} blacklist, {len(whitelist_domains):,} whitelist domains to {storage_path}")
     
     except Exception as e:
-        log.error(f"[blocklist] Failed to save locally: {e}")
+        log.error(f"[storage] Failed to save: {e}")
 
 async def load_blocklists_local():
-    """Load blocklists from local storage"""
+    """Load blocklists, blacklist, and whitelist from local storage"""
     try:
         storage_path = Path(CONFIG.get("blocklist_storage_path", "/config/veil_blocklists.json"))
         
         if not storage_path.exists():
-            log.info("[blocklist] No local storage found")
+            log.info("[storage] No local storage found")
             return False
         
         with open(storage_path) as f:
             data = json.load(f)
         
-        domains = data.get("blocklist", [])
-        await BLOCKLIST.import_list(domains)
+        # Load blocklist
+        blocklist_domains = data.get("blocklist", [])
+        await BLOCKLIST.import_list(blocklist_domains)
+        
+        # Load blacklist
+        blacklist_domains = data.get("blacklist", [])
+        await BLACKLIST.import_list(blacklist_domains)
+        
+        # Load whitelist
+        whitelist_domains = data.get("whitelist", [])
+        await WHITELIST.import_list(whitelist_domains)
         
         STATS["blocklist_last_update"] = data.get("last_update", 0)
         
-        log.info(f"[blocklist] Loaded {len(domains):,} domains from local storage")
+        log.info(f"[storage] Loaded {len(blocklist_domains):,} blocklist, {len(blacklist_domains):,} blacklist, {len(whitelist_domains):,} whitelist domains from local storage")
         return True
     
     except Exception as e:
-        log.error(f"[blocklist] Failed to load from local storage: {e}")
+        log.error(f"[storage] Failed to load: {e}")
         return False
 
 # ==================== BLOCKLIST AUTO-UPDATE ====================
@@ -1483,14 +1498,28 @@ dns_transport = None
 
 async def start_dns():
     global dns_transport
-    loop = asyncio.get_event_loop()
-    transport, protocol = await loop.create_datagram_endpoint(
-        lambda: DNSProtocol(),
-        local_addr=(CONFIG["dns_bind"], CONFIG["dns_port"]),
-        reuse_port=True
-    )
-    dns_transport = transport
-    log.info(f"[dns] Listening on {CONFIG['dns_bind']}:{CONFIG['dns_port']}")
+    try:
+        log.info(f"[dns] Attempting to start DNS server on {CONFIG['dns_bind']}:{CONFIG['dns_port']}")
+        loop = asyncio.get_event_loop()
+        transport, protocol = await loop.create_datagram_endpoint(
+            lambda: DNSProtocol(),
+            local_addr=(CONFIG["dns_bind"], CONFIG["dns_port"]),
+            reuse_port=True
+        )
+        dns_transport = transport
+        log.info(f"[dns] ✅ DNS server SUCCESSFULLY started on {CONFIG['dns_bind']}:{CONFIG['dns_port']}")
+    except PermissionError as e:
+        log.error(f"[dns] ❌ PERMISSION DENIED - Cannot bind to port {CONFIG['dns_port']} (requires root/CAP_NET_BIND_SERVICE)")
+        log.error(f"[dns] Error: {e}")
+        raise
+    except OSError as e:
+        log.error(f"[dns] ❌ FAILED to bind to {CONFIG['dns_bind']}:{CONFIG['dns_port']}")
+        log.error(f"[dns] Error: {e}")
+        log.error(f"[dns] Is another DNS server already running on port {CONFIG['dns_port']}?")
+        raise
+    except Exception as e:
+        log.error(f"[dns] ❌ UNEXPECTED ERROR starting DNS server: {e}")
+        raise
 
 # ==================== DHCP SERVER ====================
 # (DHCP implementation remains exactly as in your original file - no changes needed)
@@ -2083,6 +2112,7 @@ async def api_blocklist_reload(req):
                         if line and not line.startswith('#'):
                             BLOCKLIST.add_sync(line)
         
+        await save_blocklists_local()  # Save after reload
         return web.json_response({"status": "reloaded", "size": BLOCKLIST.size})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=400)
@@ -2137,6 +2167,7 @@ async def api_blocklist_upload(req):
                 BLOCKLIST.add_sync(line)
                 count += 1
         
+        await save_blocklists_local()  # Save after upload
         return web.json_response({"status": "uploaded", "added": count, "total": BLOCKLIST.size})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=400)
@@ -2147,6 +2178,7 @@ async def api_blacklist_add(req):
         domain = data.get('domain', '').strip()
         if domain:
             await BLACKLIST.add(domain)
+            await save_blocklists_local()  # Save after adding
             return web.json_response({"status": "added", "domain": domain})
         return web.json_response({"error": "No domain provided"}, status=400)
     except Exception as e:
@@ -2158,6 +2190,7 @@ async def api_blacklist_remove(req):
         domain = data.get('domain', '').strip()
         if domain:
             await BLACKLIST.remove(domain)
+            await save_blocklists_local()  # Save after removing
             return web.json_response({"status": "removed", "domain": domain})
         return web.json_response({"error": "No domain provided"}, status=400)
     except Exception as e:
@@ -2450,10 +2483,25 @@ if __name__ == "__main__":
         if os.path.exists(cfg_path):
             with open(cfg_path, "r") as f:
                 data = json.load(f)
+                
+                # Map Home Assistant addon config keys to internal keys
+                if "dns_enabled" in data:
+                    data["enabled"] = data["dns_enabled"]
+                if "dns_port_tcp" in data:
+                    data["dns_port"] = data["dns_port_tcp"]
+                if "bind_address" in data:
+                    data["dns_bind"] = data["bind_address"]
+                if "ui_bind" in data:
+                    data["ui_bind"] = data["ui_bind"]
+                if "ui_port" in data:
+                    data["ui_port"] = data["ui_port"]
+                
                 CONFIG.update(data)
                 ui_port = int(data.get("ui_port", 8080))
                 bind_addr = data.get("ui_bind", "0.0.0.0")
                 log.info(f"[veil] Loaded config from {cfg_path}")
+                log.info(f"[veil] DNS enabled: {CONFIG.get('enabled', False)}")
+                log.info(f"[veil] DHCP enabled: {CONFIG.get('dhcp_enabled', False)}")
     except Exception as e:
         log.warning(f"[veil] Could not read {cfg_path}: {e}")
 
