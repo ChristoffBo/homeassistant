@@ -637,12 +637,7 @@ class BlocklistUpdater:
         self.last_update = 0
 
     async def download_blocklist(self, url: str) -> List[str]:
-        """
-        Download and parse a blocklist from multiple formats:
-        - hosts-style ("0.0.0.0 domain.com")
-        - adblock-style ("||domain.com^")
-        - plain domain per line ("domain.com")
-        """
+        """Download and parse a blocklist from common formats."""
         try:
             session = await get_conn_pool()
             log.info(f"[blocklist] Downloading: {url}")
@@ -652,29 +647,21 @@ class BlocklistUpdater:
                     log.error(f"[blocklist] Download failed: {url} (status {resp.status})")
                     return []
 
-                content = await resp.text(errors="ignore")
+                text = await resp.text(errors="ignore")
                 domains = set()
 
-                for line in content.splitlines():
+                for line in text.splitlines():
                     line = line.strip()
-
-                    # Skip comments and invalid lines
                     if not line or line.startswith(('#', '!', ';')):
                         continue
 
                     domain = None
-
-                    # Handle hosts format (e.g., "0.0.0.0 domain.com")
                     if line.startswith(('0.0.0.0 ', '127.0.0.1 ')):
                         parts = line.split()
                         if len(parts) >= 2:
                             domain = parts[1]
-
-                    # Handle Adblock syntax (e.g., "||domain.com^")
                     elif line.startswith('||') and line.endswith('^'):
                         domain = line[2:-1]
-
-                    # Handle plain domain lines (no IP or symbols)
                     elif '.' in line and ' ' not in line and '/' not in line:
                         domain = line
 
@@ -691,27 +678,41 @@ class BlocklistUpdater:
             return []
 
     async def update_blocklists(self):
-        if not CONFIG.get("blocklist_update_enabled"):
-            return
-
-        log.info("[blocklist] Starting update")
+        log.info("[blocklist] Starting update (forced immediate run)")
         urls = CONFIG.get("blocklist_urls", [])
         if not urls:
-            log.debug("[blocklist] No URLs configured")
+            log.error("[blocklist] ❌ No blocklist URLs configured.")
             return
 
         total_added = 0
         for url in urls:
             domains = await self.download_blocklist(url)
-            for domain in domains:
-                BLOCKLIST.add_sync(domain)
+            for d in domains:
+                BLOCKLIST.add_sync(d)
                 total_added += 1
 
-        STATS["blocklist_updates"] += 1
-        STATS["blocklist_last_update"] = time.time()
         self.last_update = time.time()
-        log.info(f"[blocklist] Update complete. Added {total_added:,} domains")
+        log.info(f"[blocklist] ✅ Update complete. Added {total_added:,} domains")
+        STATS["blocklist_updates"] += 1
+        STATS["blocklist_last_update"] = self.last_update
 
+
+# Force blocklist update once on startup
+async def start_blocklist_update():
+    try:
+        if not CONFIG.get("blocklist_urls"):
+            CONFIG["blocklist_urls"] = [
+                "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts",
+                "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/multi.txt",
+                "https://raw.githubusercontent.com/blocklistproject/hosts/main/ads.txt"
+            ]
+        updater = BlocklistUpdater()
+        await updater.update_blocklists()
+    except Exception as e:
+        log.error(f"[blocklist] Startup update error: {e}")
+
+# Schedule immediate run at startup
+asyncio.create_task(start_blocklist_update())
 
 
         
