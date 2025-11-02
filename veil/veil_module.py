@@ -641,58 +641,38 @@ class BlocklistUpdater:
             session = await get_conn_pool()
             log.info(f"[blocklist] Downloading: {url}")
             
-            async def download_blocklist(self, url: str) -> List[str]:
-    """Download and parse a single blocklist with proper error handling and retry logic."""
-    import aiohttp
-    from aiohttp import ClientTimeout
-
-    max_retries = 3
-    for attempt in range(1, max_retries + 1):
-        try:
-            session = await get_conn_pool()
-            log.info(f"[blocklist] Attempt {attempt}/{max_retries} → {url}")
-
             async with session.get(url, timeout=ClientTimeout(total=60)) as resp:
                 if resp.status != 200:
-                    log.error(f"[blocklist] ⚠️  Download failed: {url} (status {resp.status})")
-                    continue
-
+                    log.error(f"[blocklist] Download failed: {url} (status {resp.status})")
+                    return []
+                
                 content = await resp.text()
                 domains = []
-
+                
                 for line in content.split('\n'):
                     line = line.strip()
-                    if not line or line.startswith(('#', '!', ';')):
+                    
+                    if not line or line.startswith('#') or line.startswith('!'):
                         continue
-
-                    # Handle formats like "0.0.0.0 domain.com" or "127.0.0.1 domain.com"
-                    if line.startswith(('0.0.0.0 ', '127.0.0.1 ')):
-                        parts = line.split()
-                        domain = parts[1] if len(parts) > 1 else None
+                    
+                    if line.startswith('0.0.0.0 ') or line.startswith('127.0.0.1 '):
+                        domain = line.split()[1] if len(line.split()) > 1 else None
                     elif line.startswith('||') and line.endswith('^'):
                         domain = line[2:-1]
                     else:
                         domain = line
-
+                    
                     if domain and '.' in domain:
-                        domain = domain.lower().strip('.').split(':')[0]
+                        domain = domain.lower().strip('.')
+                        domain = domain.split(':')[0]
                         domains.append(domain)
-
-                log.info(f"[blocklist] ✅ {len(domains):,} domains parsed from {url}")
+                
+                log.info(f"[blocklist] Downloaded {len(domains):,} domains from {url}")
                 return domains
-
-        except aiohttp.ClientError as e:
-            log.error(f"[blocklist] ❌ Network error fetching {url}: {type(e).__name__} {e}")
-        except asyncio.TimeoutError:
-            log.error(f"[blocklist] ⏱️  Timeout fetching {url}")
+        
         except Exception as e:
-            log.error(f"[blocklist] ❌ Unexpected error fetching {url}: {type(e).__name__} {e}")
-
-        await asyncio.sleep(2)  # small backoff before retry
-
-    log.error(f"[blocklist] ❌ All retries failed for {url}")
-    return []
-
+            log.error(f"[blocklist] Error downloading {url}: {e}")
+            return []
     
     async def update_blocklists(self):
         if not CONFIG.get("blocklist_update_enabled"):
