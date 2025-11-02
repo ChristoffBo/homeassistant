@@ -630,72 +630,67 @@ async def load_blocklists_local():
         return False
 
 # ==================== BLOCKLIST AUTO-UPDATE ====================
-class BlocklistUpdater:
-    def __init__(self):
-        self.running = False
+class BlocklistUpdater:                     ← 0 spaces
+    def __init__(self):                     ← 4 spaces
+        self.running = False                ← 8 spaces
         self.update_task = None
         self.last_update = 0
-    
-    async def download_blocklist(self, url: str) -> List[str]:
-        try:
-            session = await get_conn_pool()
+
+    async def download_blocklist(self, url: str) -> List[str]:    ← 4 spaces
+        """
+        Download and parse a blocklist from multiple formats:
+        - hosts-style ("0.0.0.0 domain.com")
+        - adblock-style ("||domain.com^")
+        - plain domain per line ("domain.com")
+        """
+        try:                                                ← 8 spaces
+            session = await get_conn_pool()                 ← 12 spaces
             log.info(f"[blocklist] Downloading: {url}")
-            
+
             async with session.get(url, timeout=ClientTimeout(total=60)) as resp:
                 if resp.status != 200:
                     log.error(f"[blocklist] Download failed: {url} (status {resp.status})")
                     return []
-                
-                content = await resp.text()
-                domains = []
-                
-                for line in content.split('\n'):
+
+                content = await resp.text(errors="ignore")
+                domains = set()
+
+                for line in content.splitlines():
                     line = line.strip()
-                    
-                    if not line or line.startswith('#') or line.startswith('!'):
+
+                    # Skip comments and invalid lines
+                    if not line or line.startswith(('#', '!', ';')):
                         continue
-                    
-                    if line.startswith('0.0.0.0 ') or line.startswith('127.0.0.1 '):
-                        domain = line.split()[1] if len(line.split()) > 1 else None
+
+                    domain = None
+
+                    # Handle hosts format (e.g., "0.0.0.0 domain.com")
+                    if line.startswith(('0.0.0.0 ', '127.0.0.1 ')):
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            domain = parts[1]
+
+                    # Handle Adblock syntax (e.g., "||domain.com^")
                     elif line.startswith('||') and line.endswith('^'):
                         domain = line[2:-1]
-                    else:
+
+                    # Handle plain domain lines (no IP or symbols)
+                    elif '.' in line and ' ' not in line and '/' not in line:
                         domain = line
-                    
-                    if domain and '.' in domain:
-                        domain = domain.lower().strip('.')
-                        domain = domain.split(':')[0]
-                        domains.append(domain)
-                
-                log.info(f"[blocklist] Downloaded {len(domains):,} domains from {url}")
-                return domains
-        
+
+                    if domain:
+                        domain = domain.lower().strip('.').split(':')[0]
+                        if '.' in domain and not domain.startswith(('localhost', 'broadcasthost')):
+                            domains.add(domain)
+
+                log.info(f"[blocklist] ✅ Parsed {len(domains):,} domains from {url}")
+                return list(domains)
+
         except Exception as e:
             log.error(f"[blocklist] Error downloading {url}: {e}")
             return []
-    
-    async def update_blocklists(self):
-        if not CONFIG.get("blocklist_update_enabled"):
-            return
-        
-        log.info("[blocklist] Starting update")
-        urls = CONFIG.get("blocklist_urls", [])
-        
-        if not urls:
-            log.debug("[blocklist] No URLs configured")
-            return
-        
-        total_added = 0
-        
-        for url in urls:
-            domains = await self.download_blocklist(url)
-            for domain in domains:
-                BLOCKLIST.add_sync(domain)
-                total_added += 1
-        
-        STATS["blocklist_updates"] += 1
-        STATS["blocklist_last_update"] = time.time()
-        self.last_update = time.time()
+
+
         
         # Save to local storage
         await save_blocklists_local()
