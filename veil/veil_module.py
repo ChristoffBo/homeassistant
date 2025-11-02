@@ -2083,6 +2083,8 @@ async def api_stats(req):
     return web.json_response({
         **STATS,
         "uptime_seconds": uptime,
+        "dns_running": dns_transport is not None,
+        "dhcp_running": DHCP_SERVER.running if DHCP_SERVER else False,
         "cache_size": DNS_CACHE.size(),
         "query_history_size": QUERY_HISTORY.size(),
         "blocklist_size": BLOCKLIST.size,
