@@ -139,7 +139,7 @@ CONFIG = {
     "safesearch_youtube": True,
     
     # Blocking
-   {
+   
   "blocking_enabled": true,
   "block_response_type": "NXDOMAIN",
   "block_custom_ip": "0.0.0.0",
