@@ -2,12 +2,11 @@
  * 🧩 Veil UI - Privacy-First DNS/DHCP Management Interface
  * For Jarvis Prime
  */
-
 const VeilUI = {
   stats: {},
   config: {},
   updateInterval: null,
-  
+ 
   /**
    * Initialize Veil UI
    */
@@ -18,7 +17,7 @@ const VeilUI = {
     this.renderUI();
     this.startAutoRefresh();
   },
-  
+ 
   /**
    * Load statistics from API
    */
@@ -31,7 +30,7 @@ const VeilUI = {
       toast('Failed to load Veil statistics', 'error');
     }
   },
-  
+ 
   /**
    * Load configuration from API
    */
@@ -44,19 +43,19 @@ const VeilUI = {
       toast('Failed to load Veil configuration', 'error');
     }
   },
-  
+ 
   /**
    * Start auto-refresh timer
    */
   startAutoRefresh() {
     if (this.updateInterval) clearInterval(this.updateInterval);
-    
+   
     this.updateInterval = setInterval(async () => {
       await this.loadStats();
       this.updateStatsDisplay();
     }, 5000);
   },
-  
+ 
   /**
    * Stop auto-refresh
    */
@@ -66,14 +65,14 @@ const VeilUI = {
       this.updateInterval = null;
     }
   },
-  
+ 
   /**
    * Render main UI
    */
   renderUI() {
     const container = document.getElementById('veil-container');
     if (!container) return;
-    
+   
     container.innerHTML = `
       <div class="veil-dashboard">
         <!-- Header -->
@@ -84,7 +83,7 @@ const VeilUI = {
             <span>Loading...</span>
           </div>
         </div>
-        
+       
         <!-- Stats Cards -->
         <div class="veil-stats-grid">
           <div class="stat-card">
@@ -94,7 +93,7 @@ const VeilUI = {
               <div class="stat-label">DNS Queries</div>
             </div>
           </div>
-          
+         
           <div class="stat-card">
             <div class="stat-icon">⚡</div>
             <div class="stat-content">
@@ -102,7 +101,7 @@ const VeilUI = {
               <div class="stat-label">Cache Hit Rate</div>
             </div>
           </div>
-          
+         
           <div class="stat-card">
             <div class="stat-icon">🛡️</div>
             <div class="stat-content">
@@ -110,7 +109,7 @@ const VeilUI = {
               <div class="stat-label">Blocked</div>
             </div>
           </div>
-          
+         
           <div class="stat-card">
             <div class="stat-icon">📊</div>
             <div class="stat-content">
@@ -118,7 +117,7 @@ const VeilUI = {
               <div class="stat-label">Cache Size</div>
             </div>
           </div>
-          
+         
           <div class="stat-card">
             <div class="stat-icon">🔒</div>
             <div class="stat-content">
@@ -126,7 +125,7 @@ const VeilUI = {
               <div class="stat-label">Privacy Features</div>
             </div>
           </div>
-          
+         
           <div class="stat-card">
             <div class="stat-icon">🖥️</div>
             <div class="stat-content">
@@ -135,7 +134,7 @@ const VeilUI = {
             </div>
           </div>
         </div>
-        
+       
         <!-- Tabs -->
         <div class="veil-tabs">
           <button class="tab-button active" data-tab="dns">DNS</button>
@@ -144,7 +143,7 @@ const VeilUI = {
           <button class="tab-button" data-tab="blocking">Blocking</button>
           <button class="tab-button" data-tab="settings">Settings</button>
         </div>
-        
+       
         <!-- Tab Content -->
         <div class="veil-tab-content">
           <div id="tab-dns" class="tab-pane active"></div>
@@ -155,7 +154,7 @@ const VeilUI = {
         </div>
       </div>
     `;
-    
+   
     this.attachEventListeners();
     this.renderDNSTab();
     this.renderDHCPTab();
@@ -164,7 +163,7 @@ const VeilUI = {
     this.renderSettingsTab();
     this.updateStatsDisplay();
   },
-  
+ 
   /**
    * Attach event listeners
    */
@@ -177,7 +176,7 @@ const VeilUI = {
       });
     });
   },
-  
+ 
   /**
    * Switch tabs
    */
@@ -188,17 +187,17 @@ const VeilUI = {
     document.querySelectorAll('.tab-pane').forEach(pane => {
       pane.classList.remove('active');
     });
-    
+   
     document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
     document.getElementById(`tab-${tab}`).classList.add('active');
   },
-  
+ 
   /**
    * Update stats display
    */
   updateStatsDisplay() {
     const s = this.stats;
-    
+   
     // Status
     const statusEl = document.getElementById('veil-status');
     if (statusEl) {
@@ -208,24 +207,24 @@ const VeilUI = {
         <span>${isHealthy ? 'Healthy' : 'Inactive'}</span>
       `;
     }
-    
+   
     // Stats
     document.getElementById('stat-queries').textContent = (s.dns_queries || 0).toLocaleString();
-    
-    const cacheHitRate = s.dns_queries > 0 
-      ? Math.round((s.dns_cached / s.dns_queries) * 100) 
+   
+    const cacheHitRate = s.dns_queries > 0
+      ? Math.round((s.dns_cached / s.dns_queries) * 100)
       : 0;
     document.getElementById('stat-cached').textContent = `${cacheHitRate}%`;
-    
+   
     document.getElementById('stat-blocked').textContent = (s.dns_blocked || 0).toLocaleString();
     document.getElementById('stat-cache-size').textContent = (s.cache_size || 0).toLocaleString();
-    
+   
     const privacyFeatures = (s.dns_padded || 0) + (s.dns_0x20 || 0) + (s.dns_dnssec_validated || 0);
     document.getElementById('stat-privacy').textContent = privacyFeatures.toLocaleString();
-    
+   
     document.getElementById('stat-dhcp').textContent = (s.dhcp_leases || 0).toLocaleString();
   },
-  
+ 
   /**
    * Render DNS Tab
    */
@@ -234,83 +233,83 @@ const VeilUI = {
     container.innerHTML = `
       <div class="veil-section">
         <h3>DNS Server</h3>
-        
+       
         <div class="setting-row">
           <label>
             <input type="checkbox" id="dns-enabled" ${this.config.enabled ? 'checked' : ''}>
             Enable DNS Server
           </label>
         </div>
-        
+       
         <div class="setting-row">
           <label>DNS Port</label>
           <input type="number" id="dns-port" value="${this.config.dns_port}" min="1" max="65535">
         </div>
-        
+       
         <div class="setting-row">
           <label>Bind Address</label>
           <input type="text" id="dns-bind" value="${this.config.dns_bind}" placeholder="0.0.0.0">
         </div>
       </div>
-      
+     
       <div class="veil-section">
         <h3>Cache</h3>
-        
+       
         <div class="setting-row">
           <label>
             <input type="checkbox" id="cache-enabled" ${this.config.cache_enabled ? 'checked' : ''}>
             Enable Caching
           </label>
         </div>
-        
+       
         <div class="setting-row">
           <label>Cache TTL (seconds)</label>
           <input type="number" id="cache-ttl" value="${this.config.cache_ttl}" min="60">
         </div>
-        
+       
         <div class="setting-row">
           <label>Max Cache Size</label>
           <input type="number" id="cache-max-size" value="${this.config.cache_max_size}" min="100">
         </div>
-        
+       
         <div class="setting-row">
           <label>
             <input type="checkbox" id="stale-serving" ${this.config.stale_serving ? 'checked' : ''}>
             Stale Cache Serving
           </label>
         </div>
-        
+       
         <div class="button-group">
           <button class="btn-secondary" onclick="VeilUI.flushCache()">Flush Cache</button>
           <button class="btn-secondary" onclick="VeilUI.prewarmCache()">Prewarm Cache</button>
         </div>
       </div>
-      
+     
       <div class="veil-section">
         <h3>Upstream Servers</h3>
-        
+       
         <div class="upstream-list" id="upstream-list"></div>
-        
+       
         <div class="setting-row">
           <label>
             <input type="checkbox" id="upstream-parallel" ${this.config.upstream_parallel ? 'checked' : ''}>
             Parallel Upstream Queries
           </label>
         </div>
-        
+       
         <div class="setting-row">
           <label>
             <input type="checkbox" id="upstream-rotation" ${this.config.upstream_rotation ? 'checked' : ''}>
             Rotate Upstream Servers
           </label>
         </div>
-        
+       
         <div class="setting-row">
           <label>Upstream Timeout (seconds)</label>
           <input type="number" id="upstream-timeout" value="${this.config.upstream_timeout}" min="1" max="10" step="0.1">
         </div>
       </div>
-      
+     
       <div class="veil-section">
         <h3>Local Records</h3>
         <div id="local-records-list"></div>
@@ -318,31 +317,31 @@ const VeilUI = {
           <button class="btn-primary" onclick="VeilUI.showAddRecordDialog()">Add Record</button>
         </div>
       </div>
-      
+     
       <div class="button-group">
         <button class="btn-primary" onclick="VeilUI.saveDNSSettings()">Save DNS Settings</button>
       </div>
     `;
-    
+   
     this.renderUpstreamList();
     this.renderLocalRecords();
   },
-  
+ 
   /**
    * Render upstream servers list
    */
   renderUpstreamList() {
     const container = document.getElementById('upstream-list');
     if (!container) return;
-    
+   
     const servers = this.config.upstream_servers || [];
     const health = this.stats.upstream_health || {};
-    
+   
     container.innerHTML = servers.map(server => {
       const status = health[server];
       const isHealthy = !status || status.healthy;
       const latency = status ? status.latency : 0;
-      
+     
       return `
         <div class="upstream-server">
           <span class="status-dot ${isHealthy ? 'status-healthy' : 'status-error'}"></span>
@@ -352,21 +351,21 @@ const VeilUI = {
       `;
     }).join('');
   },
-  
+ 
   /**
    * Render local records
    */
   renderLocalRecords() {
     const container = document.getElementById('local-records-list');
     if (!container) return;
-    
+   
     const records = this.config.local_records || {};
-    
+   
     if (Object.keys(records).length === 0) {
       container.innerHTML = '<p class="empty-state">No local records configured</p>';
       return;
     }
-    
+   
     container.innerHTML = `
       <div class="records-table">
         ${Object.entries(records).map(([domain, record]) => `
@@ -382,7 +381,7 @@ const VeilUI = {
       </div>
     `;
   },
-  
+ 
   /**
    * Render DHCP Tab
    */
@@ -391,64 +390,64 @@ const VeilUI = {
     container.innerHTML = `
       <div class="veil-section">
         <h3>DHCP Server</h3>
-        
+       
         <div class="setting-row">
           <label>
             <input type="checkbox" id="dhcp-enabled" ${this.config.dhcp_enabled ? 'checked' : ''}>
             Enable DHCP Server
           </label>
         </div>
-        
+       
         <div class="setting-row">
           <label>DHCP Port</label>
           <input type="number" id="dhcp-port" value="${this.config.dhcp_port}" min="1" max="65535">
         </div>
-        
+       
         <div class="setting-row">
           <label>Interface</label>
           <input type="text" id="dhcp-interface" value="${this.config.dhcp_interface}" placeholder="eth0">
         </div>
       </div>
-      
+     
       <div class="veil-section">
         <h3>Network Configuration</h3>
-        
+       
         <div class="setting-row">
-          <label>Subnet</label>
+          <label>Subnets</label>
           <input type="text" id="dhcp-subnet" value="${this.config.dhcp_subnet}" placeholder="192.168.1.0">
         </div>
-        
+       
         <div class="setting-row">
           <label>Netmask</label>
           <input type="text" id="dhcp-netmask" value="${this.config.dhcp_netmask}" placeholder="255.255.255.0">
         </div>
-        
+       
         <div class="setting-row">
           <label>Gateway</label>
           <input type="text" id="dhcp-gateway" value="${this.config.dhcp_gateway}" placeholder="192.168.1.1">
         </div>
-        
+       
         <div class="setting-row">
           <label>IP Range Start</label>
           <input type="text" id="dhcp-range-start" value="${this.config.dhcp_range_start}" placeholder="192.168.1.100">
         </div>
-        
+       
         <div class="setting-row">
           <label>IP Range End</label>
           <input type="text" id="dhcp-range-end" value="${this.config.dhcp_range_end}" placeholder="192.168.1.200">
         </div>
-        
+       
         <div class="setting-row">
           <label>Lease Time (seconds)</label>
           <input type="number" id="dhcp-lease-time" value="${this.config.dhcp_lease_time}" min="600">
         </div>
-        
+       
         <div class="setting-row">
           <label>Domain Name</label>
           <input type="text" id="dhcp-domain" value="${this.config.dhcp_domain || ''}" placeholder="local">
         </div>
       </div>
-      
+     
       <div class="veil-section">
         <h3>DNS Servers</h3>
         <div class="setting-row">
@@ -456,7 +455,7 @@ const VeilUI = {
           <input type="text" id="dhcp-dns-servers" value="${(this.config.dhcp_dns_servers || []).join(', ')}" placeholder="192.168.1.1">
         </div>
       </div>
-      
+     
       <div class="veil-section">
         <h3>NTP Servers</h3>
         <div class="setting-row">
@@ -465,17 +464,17 @@ const VeilUI = {
         </div>
         <p class="help-text">Enter IP addresses or hostnames. Hostnames will be resolved automatically.</p>
       </div>
-      
+     
       <div class="veil-section">
         <h3>Options</h3>
-        
+       
         <div class="setting-row">
           <label>
             <input type="checkbox" id="dhcp-ping-check" ${this.config.dhcp_ping_check ? 'checked' : ''}>
             Ping Check Before Offer
           </label>
         </div>
-        
+       
         <div class="setting-row">
           <label>
             <input type="checkbox" id="dhcp-relay-support" ${this.config.dhcp_relay_support ? 'checked' : ''}>
@@ -483,21 +482,21 @@ const VeilUI = {
           </label>
         </div>
       </div>
-      
+     
       <div class="veil-section">
         <h3>Active Leases</h3>
         <div id="dhcp-leases-list"></div>
         <button class="btn-secondary" onclick="VeilUI.loadDHCPLeases()">Refresh Leases</button>
       </div>
-      
+     
       <div class="button-group">
         <button class="btn-primary" onclick="VeilUI.saveDHCPSettings()">Save DHCP Settings</button>
       </div>
     `;
-    
+   
     this.loadDHCPLeases();
   },
-  
+ 
   /**
    * Load and display DHCP leases
    */
@@ -506,15 +505,15 @@ const VeilUI = {
       const response = await fetch('/api/veil/dhcp/leases');
       const data = await response.json();
       const leases = data.leases || [];
-      
+     
       const container = document.getElementById('dhcp-leases-list');
       if (!container) return;
-      
+     
       if (leases.length === 0) {
         container.innerHTML = '<p class="empty-state">No active leases</p>';
         return;
       }
-      
+     
       container.innerHTML = `
         <div class="leases-table">
           <div class="lease-header">
@@ -541,7 +540,7 @@ const VeilUI = {
       console.error('[Veil] Failed to load DHCP leases:', error);
     }
   },
-  
+ 
   /**
    * Format lease expiry time
    */
@@ -551,7 +550,7 @@ const VeilUI = {
     if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
     return `${Math.floor(seconds / 86400)}d`;
   },
-  
+ 
   /**
    * Render Privacy Tab
    */
@@ -560,21 +559,21 @@ const VeilUI = {
     container.innerHTML = `
       <div class="veil-section">
         <h3>Encrypted DNS</h3>
-        
+       
         <div class="setting-row">
           <label>
             <input type="checkbox" id="doh-enabled" ${this.config.doh_enabled ? 'checked' : ''}>
             DNS-over-HTTPS (DoH)
           </label>
         </div>
-        
+       
         <div class="setting-row">
           <label>
             <input type="checkbox" id="dot-enabled" ${this.config.dot_enabled ? 'checked' : ''}>
             DNS-over-TLS (DoT)
           </label>
         </div>
-        
+       
         <div class="setting-row">
           <label>
             <input type="checkbox" id="doq-enabled" ${this.config.doq_enabled ? 'checked' : ''}>
@@ -582,10 +581,10 @@ const VeilUI = {
           </label>
         </div>
       </div>
-      
+     
       <div class="veil-section">
         <h3>Privacy Features</h3>
-        
+       
         <div class="setting-row">
           <label>
             <input type="checkbox" id="ecs-strip" ${this.config.ecs_strip ? 'checked' : ''}>
@@ -593,7 +592,7 @@ const VeilUI = {
           </label>
           <p class="help-text">Prevents location tracking via DNS</p>
         </div>
-        
+       
         <div class="setting-row">
           <label>
             <input type="checkbox" id="padding-enabled" ${this.config.padding_enabled ? 'checked' : ''}>
@@ -601,12 +600,12 @@ const VeilUI = {
           </label>
           <p class="help-text">Uniform query length to prevent fingerprinting</p>
         </div>
-        
+       
         <div class="setting-row">
           <label>Padding Block Size</label>
           <input type="number" id="padding-block-size" value="${this.config.padding_block_size}" min="128" max="512">
         </div>
-        
+       
         <div class="setting-row">
           <label>
             <input type="checkbox" id="case-randomization" ${this.config.case_randomization ? 'checked' : ''}>
@@ -614,14 +613,14 @@ const VeilUI = {
           </label>
           <p class="help-text">Random letter case for entropy</p>
         </div>
-        
+       
         <div class="setting-row">
           <label>
             <input type="checkbox" id="qname-minimization" ${this.config.qname_minimization ? 'checked' : ''}>
             QNAME Minimization (RFC 9156)
           </label>
         </div>
-        
+       
         <div class="setting-row">
           <label>
             <input type="checkbox" id="query-jitter" ${this.config.query_jitter ? 'checked' : ''}>
@@ -630,113 +629,114 @@ const VeilUI = {
           <p class="help-text">Random delays to prevent timing correlation</p>
         </div>
       </div>
-      
+     
       <div class="veil-section">
         <h3>DNSSEC</h3>
-        
+       
         <div class="setting-row">
           <label>
             <input type="checkbox" id="dnssec-validate" ${this.config.dnssec_validate ? 'checked' : ''}>
             DNSSEC Validation
           </label>
         </div>
-        
+       
         <div class="stats-row">
           <div>Validated: ${this.stats.dns_dnssec_validated || 0}</div>
           <div>Failed: ${this.stats.dns_dnssec_failed || 0}</div>
         </div>
       </div>
-      
+     
       <div class="veil-section">
         <h3>Rate Limiting</h3>
-        
+       
         <div class="setting-row">
           <label>
             <input type="checkbox" id="rate-limit-enabled" ${this.config.rate_limit_enabled ? 'checked' : ''}>
             Enable Rate Limiting
           </label>
         </div>
-        
+       
         <div class="setting-row">
           <label>Queries Per Second (per client)</label>
           <input type="number" id="rate-limit-qps" value="${this.config.rate_limit_qps}" min="1" max="100">
         </div>
-        
+       
         <div class="setting-row">
           <label>Burst Allowance</label>
           <input type="number" id="rate-limit-burst" value="${this.config.rate_limit_burst}" min="1" max="200">
         </div>
-        
+       
         <div class="stats-row">
           <div>Rate Limited: ${this.stats.dns_rate_limited || 0}</div>
         </div>
       </div>
-      
+     
       <div class="veil-section">
         <h3>SafeSearch</h3>
-        
+       
         <div class="setting-row">
           <label>
             <input type="checkbox" id="safesearch-enabled" ${this.config.safesearch_enabled ? 'checked' : ''}>
             Enable SafeSearch Enforcement
           </label>
         </div>
-        
+       
         <div class="setting-row">
           <label>
             <input type="checkbox" id="safesearch-google" ${this.config.safesearch_google ? 'checked' : ''}>
             Google SafeSearch
           </label>
         </div>
-        
+       
         <div class="setting-row">
           <label>
             <input type="checkbox" id="safesearch-bing" ${this.config.safesearch_bing ? 'checked' : ''}>
             Bing SafeSearch
           </label>
         </div>
-        
+       
         <div class="setting-row">
           <label>
             <input type="checkbox" id="safesearch-duckduckgo" ${this.config.safesearch_duckduckgo ? 'checked' : ''}>
             DuckDuckGo SafeSearch
           </label>
         </div>
-        
+       
         <div class="setting-row">
           <label>
             <input type="checkbox" id="safesearch-youtube" ${this.config.safesearch_youtube ? 'checked' : ''}>
             YouTube Restricted Mode
           </label>
         </div>
-        
+       
         <div class="stats-row">
           <div>SafeSearch Rewrites: ${this.stats.dns_safesearch || 0}</div>
         </div>
       </div>
-      
+     
       <div class="button-group">
         <button class="btn-primary" onclick="VeilUI.savePrivacySettings()">Save Privacy Settings</button>
       </div>
     `;
   },
-  
+ 
   /**
    * Render Blocking Tab
    */
   renderBlockingTab() {
+    const urls = (this.config.blocklist_urls || []).join('\n');
     const container = document.getElementById('tab-blocking');
     container.innerHTML = `
       <div class="veil-section">
         <h3>Blocking</h3>
-        
+       
         <div class="setting-row">
           <label>
             <input type="checkbox" id="blocking-enabled" ${this.config.blocking_enabled ? 'checked' : ''}>
             Enable Blocking
           </label>
         </div>
-        
+       
         <div class="setting-row">
           <label>Block Response Type</label>
           <select id="block-response-type">
@@ -746,47 +746,52 @@ const VeilUI = {
             <option value="custom_ip" ${this.config.block_response_type === 'custom_ip' ? 'selected' : ''}>Custom IP</option>
           </select>
         </div>
-        
+       
         <div class="setting-row">
           <label>Custom Block IP</label>
           <input type="text" id="block-custom-ip" value="${this.config.block_custom_ip}" placeholder="0.0.0.0">
         </div>
-        
+       
         <div class="stats-row">
           <div>Blocklist Size: ${(this.stats.blocklist_size || 0).toLocaleString()} domains</div>
           <div>Blocked: ${(this.stats.dns_blocked || 0).toLocaleString()}</div>
         </div>
       </div>
-      
+     
       <div class="veil-section">
         <h3>Blocklists</h3>
-        
+       
         <div class="setting-row">
           <label>
             <input type="checkbox" id="blocklist-update-enabled" ${this.config.blocklist_update_enabled ? 'checked' : ''}>
             Auto-Update Blocklists
           </label>
         </div>
-        
+       
         <div class="setting-row">
           <label>Update Interval (seconds)</label>
           <input type="number" id="blocklist-update-interval" value="${this.config.blocklist_update_interval}" min="3600">
         </div>
-        
+       
         <div class="setting-row">
           <label>
             <input type="checkbox" id="blocklist-update-on-start" ${this.config.blocklist_update_on_start ? 'checked' : ''}>
             Update on Start
           </label>
         </div>
-        
+       
+        <div class="setting-row">
+          <label>Blocklist URLs (one per line)</label>
+          <textarea id="blocklist-urls" rows="6" placeholder="https://example.com/blocklist.txt">${urls}</textarea>
+        </div>
+       
         <div class="button-group">
           <button class="btn-secondary" onclick="VeilUI.updateBlocklists()">Update Now</button>
           <button class="btn-secondary" onclick="VeilUI.reloadBlocklists()">Reload</button>
           <button class="btn-secondary" onclick="VeilUI.showUploadBlocklist()">Upload Blocklist</button>
         </div>
       </div>
-      
+     
       <div class="veil-section">
         <h3>Blacklist (Always Block)</h3>
         <div id="blacklist-container"></div>
@@ -795,7 +800,7 @@ const VeilUI = {
           <button class="btn-primary" onclick="VeilUI.addToBlacklist()">Add</button>
         </div>
       </div>
-      
+     
       <div class="veil-section">
         <h3>Whitelist (Never Block)</h3>
         <div id="whitelist-container"></div>
@@ -804,30 +809,30 @@ const VeilUI = {
           <button class="btn-primary" onclick="VeilUI.addToWhitelist()">Add</button>
         </div>
       </div>
-      
+     
       <div class="button-group">
         <button class="btn-primary" onclick="VeilUI.saveBlockingSettings()">Save Blocking Settings</button>
       </div>
     `;
-    
+   
     this.renderBlacklist();
     this.renderWhitelist();
   },
-  
+ 
   /**
    * Render blacklist
    */
   renderBlacklist() {
     const container = document.getElementById('blacklist-container');
     if (!container) return;
-    
+   
     const blacklist = this.config.blacklist || [];
-    
+   
     if (blacklist.length === 0) {
       container.innerHTML = '<p class="empty-state">No blacklisted domains</p>';
       return;
     }
-    
+   
     container.innerHTML = `
       <div class="domain-list">
         ${blacklist.map(domain => `
@@ -841,21 +846,21 @@ const VeilUI = {
       </div>
     `;
   },
-  
+ 
   /**
    * Render whitelist
    */
   renderWhitelist() {
     const container = document.getElementById('whitelist-container');
     if (!container) return;
-    
+   
     const whitelist = this.config.whitelist || [];
-    
+   
     if (whitelist.length === 0) {
       container.innerHTML = '<p class="empty-state">No whitelisted domains</p>';
       return;
     }
-    
+   
     container.innerHTML = `
       <div class="domain-list">
         ${whitelist.map(domain => `
@@ -869,7 +874,7 @@ const VeilUI = {
       </div>
     `;
   },
-  
+ 
   /**
    * Render Settings Tab
    */
@@ -878,40 +883,40 @@ const VeilUI = {
     container.innerHTML = `
       <div class="veil-section">
         <h3>Cache Prewarming</h3>
-        
+       
         <div class="setting-row">
           <label>
             <input type="checkbox" id="cache-prewarm-enabled" ${this.config.cache_prewarm_enabled ? 'checked' : ''}>
             Enable Cache Prewarming
           </label>
         </div>
-        
+       
         <div class="setting-row">
           <label>
             <input type="checkbox" id="cache-prewarm-on-start" ${this.config.cache_prewarm_on_start ? 'checked' : ''}>
             Prewarm on Start
           </label>
         </div>
-        
+       
         <div class="setting-row">
           <label>Prewarm Interval (seconds)</label>
           <input type="number" id="cache-prewarm-interval" value="${this.config.cache_prewarm_interval}" min="600">
         </div>
-        
+       
         <div class="setting-row">
           <label>Concurrent Queries</label>
           <input type="number" id="cache-prewarm-concurrent" value="${this.config.cache_prewarm_concurrent}" min="1" max="50">
         </div>
-        
+       
         <div class="stats-row">
           <div>Runs: ${this.stats.cache_prewarm_runs || 0}</div>
           <div>Domains: ${this.stats.cache_prewarm_domains || 0}</div>
         </div>
       </div>
-      
+     
       <div class="veil-section">
         <h3>Security</h3>
-        
+       
         <div class="setting-row">
           <label>
             <input type="checkbox" id="rebinding-protection" ${this.config.rebinding_protection ? 'checked' : ''}>
@@ -919,10 +924,10 @@ const VeilUI = {
           </label>
         </div>
       </div>
-      
+     
       <div class="veil-section">
         <h3>Logging</h3>
-        
+       
         <div class="setting-row">
           <label>
             <input type="checkbox" id="zero-log" ${this.config.zero_log ? 'checked' : ''}>
@@ -930,13 +935,13 @@ const VeilUI = {
           </label>
         </div>
       </div>
-      
+     
       <div class="button-group">
         <button class="btn-primary" onclick="VeilUI.saveSettings()">Save Settings</button>
       </div>
     `;
   },
-  
+ 
   /**
    * Save DNS settings
    */
@@ -953,10 +958,10 @@ const VeilUI = {
       upstream_rotation: document.getElementById('upstream-rotation').checked,
       upstream_timeout: parseFloat(document.getElementById('upstream-timeout').value)
     };
-    
+   
     await this.updateConfig(config);
   },
-  
+ 
   /**
    * Save DHCP settings
    */
@@ -977,10 +982,10 @@ const VeilUI = {
       dhcp_ping_check: document.getElementById('dhcp-ping-check').checked,
       dhcp_relay_support: document.getElementById('dhcp-relay-support').checked
     };
-    
+   
     await this.updateConfig(config);
   },
-  
+ 
   /**
    * Save privacy settings
    */
@@ -1005,26 +1010,32 @@ const VeilUI = {
       safesearch_duckduckgo: document.getElementById('safesearch-duckduckgo').checked,
       safesearch_youtube: document.getElementById('safesearch-youtube').checked
     };
-    
+   
     await this.updateConfig(config);
   },
-  
+ 
   /**
    * Save blocking settings
    */
   async saveBlockingSettings() {
+    const urls = document.getElementById('blocklist-urls').value
+      .split('\n')
+      .map(s => s.trim())
+      .filter(s => s && s.startsWith('http'));
+ 
     const config = {
       blocking_enabled: document.getElementById('blocking-enabled').checked,
       block_response_type: document.getElementById('block-response-type').value,
       block_custom_ip: document.getElementById('block-custom-ip').value,
       blocklist_update_enabled: document.getElementById('blocklist-update-enabled').checked,
       blocklist_update_interval: parseInt(document.getElementById('blocklist-update-interval').value),
-      blocklist_update_on_start: document.getElementById('blocklist-update-on-start').checked
+      blocklist_update_on_start: document.getElementById('blocklist-update-on-start').checked,
+      blocklist_urls: urls  // ← FIXED: Now saves URLs
     };
-    
+   
     await this.updateConfig(config);
   },
-  
+ 
   /**
    * Save general settings
    */
@@ -1037,10 +1048,10 @@ const VeilUI = {
       rebinding_protection: document.getElementById('rebinding-protection').checked,
       zero_log: document.getElementById('zero-log').checked
     };
-    
+   
     await this.updateConfig(config);
   },
-  
+ 
   /**
    * Update configuration
    */
@@ -1051,10 +1062,11 @@ const VeilUI = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates)
       });
-      
+     
       if (response.ok) {
         toast('Configuration updated', 'success');
         await this.loadConfig();
+        this.renderBlockingTab(); // Re-render to show saved URLs
       } else {
         throw new Error('Failed to update configuration');
       }
@@ -1063,7 +1075,7 @@ const VeilUI = {
       toast('Failed to update configuration', 'error');
     }
   },
-  
+ 
   /**
    * Flush DNS cache
    */
@@ -1079,7 +1091,7 @@ const VeilUI = {
       toast('Failed to flush cache', 'error');
     }
   },
-  
+ 
   /**
    * Prewarm cache
    */
@@ -1094,7 +1106,7 @@ const VeilUI = {
       toast('Failed to prewarm cache', 'error');
     }
   },
-  
+ 
   /**
    * Update blocklists
    */
@@ -1112,7 +1124,7 @@ const VeilUI = {
       toast('Failed to update blocklists', 'error');
     }
   },
-  
+ 
   /**
    * Reload blocklists
    */
@@ -1129,21 +1141,21 @@ const VeilUI = {
       toast('Failed to reload blocklists', 'error');
     }
   },
-  
+ 
   /**
    * Add domain to blacklist
    */
   async addToBlacklist() {
     const domain = document.getElementById('blacklist-domain').value.trim();
     if (!domain) return;
-    
+   
     try {
       const response = await fetch('/api/veil/blacklist/add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ domain })
       });
-      
+     
       if (response.ok) {
         toast(`Added ${domain} to blacklist`, 'success');
         document.getElementById('blacklist-domain').value = '';
@@ -1155,7 +1167,7 @@ const VeilUI = {
       toast('Failed to add domain', 'error');
     }
   },
-  
+ 
   /**
    * Remove domain from blacklist
    */
@@ -1166,7 +1178,7 @@ const VeilUI = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ domain })
       });
-      
+     
       if (response.ok) {
         toast(`Removed ${domain} from blacklist`, 'success');
         await this.loadConfig();
@@ -1177,21 +1189,21 @@ const VeilUI = {
       toast('Failed to remove domain', 'error');
     }
   },
-  
+ 
   /**
    * Add domain to whitelist
    */
   async addToWhitelist() {
     const domain = document.getElementById('whitelist-domain').value.trim();
     if (!domain) return;
-    
+   
     try {
       const response = await fetch('/api/veil/whitelist/add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ domain })
       });
-      
+     
       if (response.ok) {
         toast(`Added ${domain} to whitelist`, 'success');
         document.getElementById('whitelist-domain').value = '';
@@ -1203,7 +1215,7 @@ const VeilUI = {
       toast('Failed to add domain', 'error');
     }
   },
-  
+ 
   /**
    * Remove domain from whitelist
    */
@@ -1214,7 +1226,7 @@ const VeilUI = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ domain })
       });
-      
+     
       if (response.ok) {
         toast(`Removed ${domain} from whitelist`, 'success');
         await this.loadConfig();
@@ -1225,20 +1237,20 @@ const VeilUI = {
       toast('Failed to remove domain', 'error');
     }
   },
-  
+ 
   /**
    * Delete DHCP lease
    */
   async deleteLease(mac) {
     if (!confirm(`Delete lease for ${mac}?`)) return;
-    
+   
     try {
       const response = await fetch('/api/veil/dhcp/lease', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mac })
       });
-      
+     
       if (response.ok) {
         toast('Lease deleted', 'success');
         await this.loadDHCPLeases();
@@ -1248,7 +1260,7 @@ const VeilUI = {
       toast('Failed to delete lease', 'error');
     }
   },
-  
+ 
   /**
    * Cleanup
    */
@@ -1256,7 +1268,6 @@ const VeilUI = {
     this.stopAutoRefresh();
   }
 };
-
 // Auto-initialize when page loads
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => VeilUI.init());
