@@ -637,65 +637,50 @@ class BlocklistUpdater:
         self.last_update = 0
     
     async def download_blocklist(self, url: str) -> List[str]:
-        try:
-            session = await get_conn_pool()
-            log.info(f"[blocklist] Downloading: {url}")
-            
-            async with session.get(url, timeout=ClientTimeout(total=60)) as resp:
-                if resp.status != 200:
-                    log.error(f"[blocklist] Download failed: {url} (status {resp.status})")
-                    return []
-                
-                content = await resp.text()
-                domains = []
-                
-                for line in content.split('\n'):
-                    line = line.strip()
-                    
-                    if not line or line.startswith('#') or line.startswith('!'):
-                        continue
-                    
-                    if line.startswith('0.0.0.0 ') or line.startswith('127.0.0.1 '):
-                        domain = line.split()[1] if len(line.split()) > 1 else None
-                    elif line.startswith('||') and line.endswith('^'):
-                        domain = line[2:-1]
-                    else:
-                        domain = line
-                    
-                    if domain and '.' in domain:
-                        domain = domain.lower().strip('.')
-                        domain = domain.split(':')[0]
-                        domains.append(domain)
-                
-                log.info(f"[blocklist] Downloaded {len(domains):,} domains from {url}")
-                return domains
-        
-        except Exception as e:
-            log.error(f"[blocklist] Error downloading {url}: {e}")
-            return []
-    
-    async def update_blocklists(self):
-        if not CONFIG.get("blocklist_update_enabled"):
-            return
-        
-        log.info("[blocklist] Starting update")
-        urls = CONFIG.get("blocklist_urls", [])
-        
-        if not urls:
-            log.debug("[blocklist] No URLs configured")
-            return
-        
-        total_added = 0
-        
-        for url in urls:
-            domains = await self.download_blocklist(url)
-            for domain in domains:
-                BLOCKLIST.add_sync(domain)
-                total_added += 1
-        
-        STATS["blocklist_updates"] += 1
-        STATS["blocklist_last_update"] = time.time()
-        self.last_update = time.time()
+    try:
+        session = await get_conn_pool()
+        log.info(f"[blocklist] Downloading: {url}")
+
+        async with session.get(url, timeout=ClientTimeout(total=90)) as resp:
+            if resp.status != 200:
+                log.error(f"[blocklist] Download failed: {url} (status {resp.status})")
+                return []
+
+            text = await resp.text()
+            domains = set()
+            for line in text.splitlines():
+                line = line.strip()
+                if not line or line.startswith(("#", "!", ";")):
+                    continue
+
+                # hosts format
+                if line.startswith("0.0.0.0") or line.startswith("127.0.0.1"):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        d = parts[1].lstrip(".")
+                        if d and "." in d:
+                            domains.add(d)
+                    continue
+
+                # Adblock / uBlock / Pi-hole style
+                if line.startswith("||"):
+                    d = line[2:].split("^")[0].replace("*.", "").strip(".")
+                    if d and "." in d:
+                        domains.add(d)
+                    continue
+
+                # wildcard or plain
+                d = line.replace("*.", "").strip(".")
+                if d and " " not in d and "/" not in d and "." in d:
+                    domains.add(d)
+
+            log.info(f"[blocklist] Parsed {len(domains):,} domains from {url}")
+            return list(domains)
+
+    except Exception as e:
+        log.error(f"[blocklist] Error downloading {url}: {e}")
+        return []
+
         
         # Save to local storage
         await save_blocklists_local()
