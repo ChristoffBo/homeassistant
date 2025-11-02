@@ -2612,8 +2612,7 @@ if __name__ == "__main__":
     # Create web application
     app = web.Application()
     
-    # Register API routes
-    # Register all API routes
+# === ROUTE REGISTRATION ===
 def register_routes(app):
     app.router.add_post('/api/veil/config', api_config_update)
     app.router.add_delete('/api/veil/cache', api_cache_flush)
@@ -2627,11 +2626,10 @@ def register_routes(app):
     app.router.add_post('/api/veil/whitelist/add', api_whitelist_add)
     app.router.add_delete('/api/veil/whitelist/remove', api_whitelist_remove)
 
-
-# === AFTER ALL FUNCTIONS ABOVE ===
+# === APP INITIALIZATION ===
 register_routes(app)
 
-# Serve UI
+# === UI SERVING ===
 ui_path = os.path.join(os.path.dirname(__file__), "ui")
 if not os.path.exists(ui_path):
     ui_path = "/app/ui"
@@ -2646,18 +2644,17 @@ else:
     app.router.add_static("/", ui_path, show_index=True)
     log.info(f"[veil] Serving UI from {ui_path}")
 
-# Setup startup/cleanup hooks
+# === BACKGROUND SERVICES ===
 app.on_startup.append(start_background_services)
 app.on_cleanup.append(cleanup_background_services)
 
 log.info(f"🌐 Web UI will be available at http://{bind_addr}:{ui_port}")
 log.info(f"🧩 Veil v2.0.0 - Privacy-First DNS/DHCP")
 
-# Run with proper error handling
+# === START SERVER ===
 try:
     web.run_app(app, host=bind_addr, port=ui_port, access_log=None)
 except Exception as e:
     log.error(f"[veil] Failed to start: {e}")
     import traceback
     traceback.print_exc()
-
