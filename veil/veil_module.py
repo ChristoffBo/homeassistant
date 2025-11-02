@@ -2612,7 +2612,41 @@ if __name__ == "__main__":
     # Create web application
     app = web.Application()
     
-# === ROUTE REGISTRATION ===
+# ========================================
+# ✅ ALL API FUNCTIONS COME FIRST
+# ========================================
+
+async def api_config_update(req):
+    ...
+    return web.json_response({"status": "updated", "config": CONFIG})
+
+async def api_cache_flush(req):
+    await DNS_CACHE.flush()
+    return web.json_response({"status": "flushed"})
+
+async def api_blocklist_reload(req):
+    ...
+async def api_blocklist_update(req):
+    ...
+async def api_cache_prewarm(req):
+    ...
+async def api_query_history(req):
+    ...
+async def api_blocklist_upload(req):
+    ...
+async def api_blacklist_add(req):
+    ...
+async def api_blacklist_remove(req):
+    ...
+async def api_whitelist_add(req):
+    ...
+async def api_whitelist_remove(req):
+    ...
+
+# ========================================
+# ✅ NOW DEFINE register_routes()
+# ========================================
+
 def register_routes(app):
     app.router.add_post('/api/veil/config', api_config_update)
     app.router.add_delete('/api/veil/cache', api_cache_flush)
@@ -2626,10 +2660,16 @@ def register_routes(app):
     app.router.add_post('/api/veil/whitelist/add', api_whitelist_add)
     app.router.add_delete('/api/veil/whitelist/remove', api_whitelist_remove)
 
-# === APP INITIALIZATION ===
+# ========================================
+# ✅ AFTER THAT, CALL register_routes(app)
+# ========================================
+
 register_routes(app)
 
-# === UI SERVING ===
+# ========================================
+# ✅ SERVE UI
+# ========================================
+
 ui_path = os.path.join(os.path.dirname(__file__), "ui")
 if not os.path.exists(ui_path):
     ui_path = "/app/ui"
@@ -2644,17 +2684,16 @@ else:
     app.router.add_static("/", ui_path, show_index=True)
     log.info(f"[veil] Serving UI from {ui_path}")
 
-# === BACKGROUND SERVICES ===
 app.on_startup.append(start_background_services)
 app.on_cleanup.append(cleanup_background_services)
 
 log.info(f"🌐 Web UI will be available at http://{bind_addr}:{ui_port}")
 log.info(f"🧩 Veil v2.0.0 - Privacy-First DNS/DHCP")
 
-# === START SERVER ===
 try:
     web.run_app(app, host=bind_addr, port=ui_port, access_log=None)
 except Exception as e:
     log.error(f"[veil] Failed to start: {e}")
     import traceback
     traceback.print_exc()
+
