@@ -2187,7 +2187,17 @@ async def api_config_get(req):
 async def api_config_update(req):
     try:
         data = await req.json()
-        
+
+        # 🧩 Normalize blocklist_urls from UI textarea (handles list or newline text)
+        if "blocklist_urls" in data:
+            urls = data["blocklist_urls"]
+            if isinstance(urls, str):
+                urls = [u.strip() for u in urls.split("\n") if u.strip()]
+            elif isinstance(urls, list):
+                urls = [u.strip() for u in urls if u.strip()]
+            data["blocklist_urls"] = urls
+            log.info(f"[api] Normalized blocklist_urls: {len(urls)} URLs")
+
         # Parse upstream_servers - extract IPs from DoH URLs if needed
         if "upstream_servers" in data:
             servers = []
@@ -2198,29 +2208,25 @@ async def api_config_update(req):
                 "doh.opendns.com": ["208.67.222.222", "208.67.220.220"],
                 "dns.adguard-dns.com": ["94.140.14.14", "94.140.15.15"]
             }
-            
+
             for server in data["upstream_servers"]:
                 server = server.strip()
                 if not server:
                     continue
-                    
-                # Check if it's a DoH URL
                 if server.startswith("http"):
-                    # Extract domain and map to IPs
                     for domain, ips in doh_map.items():
                         if domain in server:
                             servers.extend(ips)
                             break
                 else:
-                    # It's an IP address
                     servers.append(server)
-            
-            data["upstream_servers"] = list(set(servers))  # Remove duplicates
-        
+
+            data["upstream_servers"] = list(set(servers))
+
         for key, value in data.items():
             if key in CONFIG:
                 CONFIG[key] = value
-        
+
         # Save to file
         try:
             with open('/config/options.json', 'r') as f:
@@ -2231,133 +2237,12 @@ async def api_config_update(req):
             log.info(f"[api] Config saved to /config/options.json")
         except Exception as e:
             log.warning(f"[api] Could not save config to file: {e}")
-        
+
         return web.json_response({"status": "updated", "config": CONFIG})
     except Exception as e:
         log.error(f"[api] Config update error: {e}")
         return web.json_response({"error": str(e)}, status=400)
 
-async def api_cache_flush(req):
-    await DNS_CACHE.flush()
-    return web.json_response({"status": "flushed"})
-
-async def api_blocklist_reload(req):
-    try:
-        await BLOCKLIST.clear()
-        
-        for bl in CONFIG["blocklists"]:
-            if Path(bl).exists():
-                with open(bl) as f:
-                    for line in f:
-                        line = line.strip()
-                        if line and not line.startswith('#'):
-                            BLOCKLIST.add_sync(line)
-        
-        await save_blocklists_local()  # Save after reload
-        return web.json_response({"status": "reloaded", "size": BLOCKLIST.size})
-    except Exception as e:
-        return web.json_response({"error": str(e)}, status=400)
-
-async def api_blocklist_update(req):
-    try:
-        await BLOCKLIST_UPDATER.update_blocklists()
-        return web.json_response({
-            "status": "updated",
-            "size": BLOCKLIST.size,
-            "last_update": STATS["blocklist_last_update"]
-        })
-    except Exception as e:
-        return web.json_response({"error": str(e)}, status=400)
-
-async def api_cache_prewarm(req):
-    """Trigger manual cache prewarm"""
-    try:
-        asyncio.create_task(CACHE_PREWARMER.prewarm_cache())
-        return web.json_response({
-            "status": "started",
-            "message": "Cache prewarm started in background"
-        })
-    except Exception as e:
-        return web.json_response({"error": str(e)}, status=400)
-
-async def api_query_history(req):
-    """Get query history stats"""
-    try:
-        count = int(req.query.get('count', 50))
-        top_domains = await QUERY_HISTORY.get_top(count)
-        return web.json_response({
-            "total_unique": QUERY_HISTORY.size(),
-            "top_domains": top_domains
-        })
-    except Exception as e:
-        return web.json_response({"error": str(e)}, status=400)
-
-async def api_blocklist_upload(req):
-    try:
-        data = await req.post()
-        if 'file' not in data:
-            return web.json_response({"error": "No file provided"}, status=400)
-        
-        file_field = data['file']
-        content = file_field.file.read().decode('utf-8')
-        
-        count = 0
-        for line in content.split('\n'):
-            line = line.strip()
-            if line and not line.startswith('#'):
-                BLOCKLIST.add_sync(line)
-                count += 1
-        
-        await save_blocklists_local()  # Save after upload
-        return web.json_response({"status": "uploaded", "added": count, "total": BLOCKLIST.size})
-    except Exception as e:
-        return web.json_response({"error": str(e)}, status=400)
-
-async def api_blacklist_add(req):
-    try:
-        data = await req.json()
-        domain = data.get('domain', '').strip()
-        if domain:
-            await BLACKLIST.add(domain)
-            await save_blocklists_local()  # Save after adding
-            return web.json_response({"status": "added", "domain": domain})
-        return web.json_response({"error": "No domain provided"}, status=400)
-    except Exception as e:
-        return web.json_response({"error": str(e)}, status=400)
-
-async def api_blacklist_remove(req):
-    try:
-        data = await req.json()
-        domain = data.get('domain', '').strip()
-        if domain:
-            await BLACKLIST.remove(domain)
-            await save_blocklists_local()  # Save after removing
-            return web.json_response({"status": "removed", "domain": domain})
-        return web.json_response({"error": "No domain provided"}, status=400)
-    except Exception as e:
-        return web.json_response({"error": str(e)}, status=400)
-
-async def api_whitelist_add(req):
-    try:
-        data = await req.json()
-        domain = data.get('domain', '').strip()
-        if domain:
-            await WHITELIST.add(domain)
-            return web.json_response({"status": "added", "domain": domain})
-        return web.json_response({"error": "No domain provided"}, status=400)
-    except Exception as e:
-        return web.json_response({"error": str(e)}, status=400)
-
-async def api_whitelist_remove(req):
-    try:
-        data = await req.json()
-        domain = data.get('domain', '').strip()
-        if domain:
-            await WHITELIST.remove(domain)
-            return web.json_response({"status": "removed", "domain": domain})
-        return web.json_response({"error": "No domain provided"}, status=400)
-    except Exception as e:
-        return web.json_response({"error": str(e)}, status=400)
 
 async def api_rewrite_add(req):
     try:
