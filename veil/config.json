@@ -6,8 +6,14 @@
   "startup": "services",
   "boot": "auto",
   "arch": ["amd64", "armv7", "armhf", "aarch64"],
+
   "host_network": true,
+  "full_access": true,
+  "privileged": ["NET_ADMIN"],
+  "devices": ["/dev/net/tun"],
+
   "map": ["config:rw"],
+
   "ports": {
     "53/udp": 53,
     "53/tcp": 53,
@@ -24,6 +30,7 @@
     "9090/tcp": 9090,
     "9180/tcp": 9180
   },
+
   "options": {
     "dns_enabled": true,
     "dhcp_enabled": false,
@@ -32,6 +39,7 @@
     "doq_enabled": true,
     "ui_enabled": true
   },
+
   "schema": {
     "dns_enabled": "bool",
     "dhcp_enabled": "bool",
