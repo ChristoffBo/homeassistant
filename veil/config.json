@@ -2,7 +2,7 @@
   "name": "Veil",
   "version": "1.0.0",
   "slug": "veil",
-  "description": "Veil — Privacy-First DNS/DHCP server with full port exposure for all protocols.",
+  "description": "Veil — Privacy-First DNS/DHCP server.",
   "startup": "services",
   "boot": "auto",
   "arch": ["amd64", "armv7", "armhf", "aarch64"],
