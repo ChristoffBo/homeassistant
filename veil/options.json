@@ -46,6 +46,7 @@
   "blocklists": [],
   "blocklist_urls": [],
   "blocklist_update_enabled": true,
+  "block_response_type": "NXDOMAIN",
   "blocklist_update_interval": 86400,
   "blocklist_storage_path": "/config/veil_blocklists.json",
 
