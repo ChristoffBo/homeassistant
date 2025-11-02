@@ -9,10 +9,15 @@
 
   "host_network": true,
   "full_access": true,
+  "homeassistant_api": true,
   "privileged": ["NET_ADMIN"],
   "devices": ["/dev/net/tun"],
-
   "map": ["config:rw"],
+
+  "ingress": true,
+  "ingress_port": 8080,
+  "panel_icon": "mdi:shield-lock",
+  "panel_title": "Veil",
 
   "ports": {
     "53/udp": 53,
