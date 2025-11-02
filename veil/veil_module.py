@@ -2,6 +2,7 @@
 """
 🧩 Veil — Privacy-First DNS/DHCP Server
 COMPLETE implementation with ALL features
+
 Full Privacy Flow:
 - DoH/DoT/DoQ encrypted upstream
 - RFC 7830/8467 query padding (468-byte blocks)
@@ -16,6 +17,7 @@ Full Privacy Flow:
 - SafeSearch enforcement
 - Local blocklist storage
 - Zero telemetry
+
 DHCP Features:
 - Full DHCPv4 implementation
 - DISCOVER/OFFER/REQUEST/ACK/NAK/DECLINE/RELEASE/INFORM
@@ -26,6 +28,7 @@ DHCP Features:
 - DHCP relay support
 - Vendor options
 - Client identifier handling
+
 NEW IN THIS VERSION:
 - ✅ DNSSEC validation with dnspython
 - ✅ DoQ (DNS-over-QUIC) with aioquic
@@ -33,6 +36,7 @@ NEW IN THIS VERSION:
 - ✅ SafeSearch enforcement (Google/Bing/DuckDuckGo/YouTube)
 - ✅ Local blocklist persistence after updates
 """
+
 import asyncio
 import logging
 import sys
@@ -51,6 +55,7 @@ from typing import Dict, List, Optional, Tuple, Set, Any
 from dataclasses import dataclass, field
 import json
 import re
+
 from aiohttp import web, ClientSession, TCPConnector, ClientTimeout
 import dns.message
 import dns.query
@@ -66,6 +71,7 @@ import dns.rdtypes.ANY.TXT
 import dns.rdtypes.ANY.MX
 import dns.dnssec
 import dns.resolver
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -75,13 +81,14 @@ logging.basicConfig(
     ]
 )
 log = logging.getLogger("veil")
+
 # ==================== CONFIGURATION ====================
 CONFIG = {
     # DNS Core
     "enabled": True,
     "dns_port": 53,
     "dns_bind": "0.0.0.0",
-   
+    
     # Caching
     "cache_enabled": True,
     "cache_ttl": 3600,
@@ -89,27 +96,27 @@ CONFIG = {
     "cache_max_size": 10000,
     "stale_serving": True,
     "stale_ttl_multiplier": 2,
-   
+    
     # Upstream Servers
     "upstream_servers": [
-        "1.1.1.1", # Cloudflare
+        "1.1.1.1",      # Cloudflare
         "1.0.0.1",
-        "8.8.8.8", # Google
+        "8.8.8.8",      # Google
         "8.8.4.4",
-        "9.9.9.9", # Quad9
+        "9.9.9.9",      # Quad9
     ],
     "upstream_timeout": 2.0,
     "upstream_parallel": True,
     "upstream_rotation": True,
     "upstream_max_failures": 3,
-   
+    
     # Privacy Features
     "doh_enabled": True,
     "dot_enabled": True,
-    "doq_enabled": True, # DNS-over-QUIC
+    "doq_enabled": True,  # DNS-over-QUIC
     "ecs_strip": True,
-    "dnssec_validate": True, # FULL validation
-    "dnssec_trust_anchors": "/etc/bind/bind.keys", # System trust anchors
+    "dnssec_validate": True,  # FULL validation
+    "dnssec_trust_anchors": "/etc/bind/bind.keys",  # System trust anchors
     "query_jitter": True,
     "query_jitter_ms": [10, 100],
     "zero_log": False,
@@ -117,20 +124,20 @@ CONFIG = {
     "padding_block_size": 468,
     "case_randomization": True,
     "qname_minimization": True,
-   
+    
     # Rate Limiting
     "rate_limit_enabled": True,
-    "rate_limit_qps": 20, # Queries per second per client
-    "rate_limit_burst": 50, # Burst allowance
-    "rate_limit_window": 60, # Time window in seconds
-   
+    "rate_limit_qps": 20,  # Queries per second per client
+    "rate_limit_burst": 50,  # Burst allowance
+    "rate_limit_window": 60,  # Time window in seconds
+    
     # SafeSearch
-    "safesearch_enabled": False, # Toggle from UI
+    "safesearch_enabled": False,  # Toggle from UI
     "safesearch_google": True,
     "safesearch_bing": True,
     "safesearch_duckduckgo": True,
     "safesearch_youtube": True,
-   
+    
     # Blocking
     "blocking_enabled": True,
     "block_response_type": "NXDOMAIN",
@@ -140,34 +147,34 @@ CONFIG = {
     "blocklist_update_enabled": True,
     "blocklist_update_interval": 86400,
     "blocklist_update_on_start": True,
-    "blocklist_storage_path": "/share/veil/veil_blocklists.json", # Local storage
+    "blocklist_storage_path": "/config/veil_blocklists.json",  # Local storage
     "whitelist": [],
     "blacklist": [],
-   
+    
     # DNS Rewrites
     "local_records": {},
     "dns_rewrites": {},
-   
+    
     # Conditional Forwarding
     "conditional_forwards": {},
-   
+    
     # Cache Prewarming
     "cache_prewarm_enabled": True,
     "cache_prewarm_on_start": True,
-    "cache_prewarm_interval": 3600, # Seconds (hourly)
+    "cache_prewarm_interval": 3600,  # Seconds (hourly)
     "cache_prewarm_sources": [
-        "popular", # Built-in top 1000 domains
-        "custom", # User-defined list
-        "history" # Most queried from history
+        "popular",  # Built-in top 1000 domains
+        "custom",   # User-defined list
+        "history"   # Most queried from history
     ],
-    "cache_prewarm_custom_domains": [], # User can add domains here
-    "cache_prewarm_history_count": 100, # Top N from query history
-    "cache_prewarm_concurrent": 10, # Parallel queries during prewarm
-   
+    "cache_prewarm_custom_domains": [],  # User can add domains here
+    "cache_prewarm_history_count": 100,  # Top N from query history
+    "cache_prewarm_concurrent": 10,  # Parallel queries during prewarm
+    
     # Security
     "rebinding_protection": True,
     "rebinding_whitelist": [],
-   
+    
     # DHCP Server
     "dhcp_enabled": False,
     "dhcp_port": 67,
@@ -193,7 +200,7 @@ CONFIG = {
     "dhcp_relay_support": True,
     "dhcp_vendor_options": {},
 }
-USER_CONFIG_PATH = "/share/veil/veil_user_config.json"
+
 # ==================== STATISTICS ====================
 STATS = {
     "dns_queries": 0,
@@ -226,6 +233,7 @@ STATS = {
     "cache_prewarm_domains": 0,
     "start_time": time.time()
 }
+
 # ==================== DNS CACHE ====================
 @dataclass
 class CacheEntry:
@@ -233,54 +241,55 @@ class CacheEntry:
     expires: float
     negative: bool = False
     stale_ttl: float = 0
+
 class LRUCache:
     """LRU cache with TTL support"""
     def __init__(self, max_size: int = 10000):
         self._cache: OrderedDict[str, CacheEntry] = OrderedDict()
         self._max_size = max_size
         self._lock = asyncio.Lock()
-   
+    
     def _key(self, qname: str, qtype: int) -> str:
         return f"{qname}:{qtype}"
-   
+    
     async def get(self, qname: str, qtype: int) -> Optional[bytes]:
         if not CONFIG.get("cache_enabled"):
             return None
-       
+        
         key = self._key(qname, qtype)
         async with self._lock:
             if key not in self._cache:
                 return None
-           
+            
             entry = self._cache[key]
             now = time.time()
-           
+            
             if now < entry.expires:
                 self._cache.move_to_end(key)
                 return entry.response
-           
+            
             if CONFIG.get("stale_serving") and now < entry.stale_ttl:
                 log.debug(f"[cache] Serving stale: {qname}")
                 self._cache.move_to_end(key)
                 return entry.response
-           
+            
             del self._cache[key]
             return None
-   
+    
     async def set(self, qname: str, qtype: int, response: bytes, ttl: int, negative: bool = False):
         if not CONFIG.get("cache_enabled"):
             return
-       
+        
         key = self._key(qname, qtype)
         now = time.time()
         expires = now + ttl
         stale_multiplier = CONFIG.get("stale_ttl_multiplier", 2)
         stale_ttl = expires + (ttl * stale_multiplier)
-       
+        
         async with self._lock:
             if len(self._cache) >= self._max_size:
                 self._cache.popitem(last=False)
-           
+            
             self._cache[key] = CacheEntry(
                 response=response,
                 expires=expires,
@@ -288,81 +297,86 @@ class LRUCache:
                 stale_ttl=stale_ttl
             )
             self._cache.move_to_end(key)
-   
+    
     async def flush(self):
         async with self._lock:
             count = len(self._cache)
             self._cache.clear()
             log.info(f"[cache] Flushed {count} entries")
-   
+    
     def size(self) -> int:
         return len(self._cache)
+
 DNS_CACHE = LRUCache(max_size=CONFIG.get("cache_max_size", 10000))
+
 # ==================== QUERY HISTORY ====================
 class QueryHistory:
     """Track query frequency for cache prewarming"""
     def __init__(self, max_size: int = 10000):
-        self._queries: Dict[str, int] = {} # domain -> count
+        self._queries: Dict[str, int] = {}  # domain -> count
         self._lock = asyncio.Lock()
         self._max_size = max_size
-   
+    
     async def record(self, qname: str):
         async with self._lock:
             self._queries[qname] = self._queries.get(qname, 0) + 1
-           
+            
             # Trim if too large
             if len(self._queries) > self._max_size:
                 # Keep top 80% by frequency
                 sorted_queries = sorted(self._queries.items(), key=lambda x: x[1], reverse=True)
                 keep = int(self._max_size * 0.8)
                 self._queries = dict(sorted_queries[:keep])
-   
+    
     async def get_top(self, n: int) -> List[str]:
         async with self._lock:
             sorted_queries = sorted(self._queries.items(), key=lambda x: x[1], reverse=True)
             return [domain for domain, _ in sorted_queries[:n]]
-   
+    
     async def clear(self):
         async with self._lock:
             self._queries.clear()
-   
+    
     def size(self) -> int:
         return len(self._queries)
+
 QUERY_HISTORY = QueryHistory()
+
 # ==================== RATE LIMITING ====================
 @dataclass
 class RateLimitEntry:
     tokens: float
     last_update: float
+
 class RateLimiter:
     """Token bucket rate limiter per client IP"""
     def __init__(self):
         self._clients: Dict[str, RateLimitEntry] = {}
         self._lock = asyncio.Lock()
         self._cleanup_task = None
-   
+    
     async def check_rate_limit(self, client_ip: str) -> bool:
         if not CONFIG.get("rate_limit_enabled"):
             return True
-       
+        
         qps = CONFIG.get("rate_limit_qps", 20)
         burst = CONFIG.get("rate_limit_burst", 50)
         now = time.time()
-       
+        
         async with self._lock:
             if client_ip not in self._clients:
                 self._clients[client_ip] = RateLimitEntry(
                     tokens=burst,
                     last_update=now
                 )
-           
+            
             entry = self._clients[client_ip]
-           
+            
             # Refill tokens based on time elapsed
             time_elapsed = now - entry.last_update
             entry.tokens = min(burst, entry.tokens + (time_elapsed * qps))
             entry.last_update = now
-           
+            
             # Check if we have tokens
             if entry.tokens >= 1.0:
                 entry.tokens -= 1.0
@@ -371,60 +385,63 @@ class RateLimiter:
                 STATS["dns_rate_limited"] += 1
                 log.warning(f"[ratelimit] {client_ip} exceeded limit")
                 return False
-   
+    
     async def cleanup_loop(self):
         """Remove stale entries"""
         while True:
             try:
-                await asyncio.sleep(300) # Every 5 minutes
+                await asyncio.sleep(300)  # Every 5 minutes
                 now = time.time()
                 window = CONFIG.get("rate_limit_window", 60)
-               
+                
                 async with self._lock:
-                    stale = [ip for ip, entry in self._clients.items()
+                    stale = [ip for ip, entry in self._clients.items() 
                             if now - entry.last_update > window]
                     for ip in stale:
                         del self._clients[ip]
-                   
+                    
                     if stale:
                         log.debug(f"[ratelimit] Cleaned {len(stale)} stale entries")
             except Exception as e:
                 log.error(f"[ratelimit] Cleanup error: {e}")
-   
+    
     def start(self):
         self._cleanup_task = asyncio.create_task(self.cleanup_loop())
-   
+    
     def stop(self):
         if self._cleanup_task:
             self._cleanup_task.cancel()
+
 RATE_LIMITER = RateLimiter()
+
 # ==================== SAFESEARCH ====================
 SAFESEARCH_MAPPINGS = {
     # Google
     "www.google.com": "forcesafesearch.google.com",
     "google.com": "forcesafesearch.google.com",
-   
+    
     # Bing
     "www.bing.com": "strict.bing.com",
     "bing.com": "strict.bing.com",
-   
+    
     # DuckDuckGo
     "duckduckgo.com": "safe.duckduckgo.com",
     "www.duckduckgo.com": "safe.duckduckgo.com",
-   
+    
     # YouTube
     "www.youtube.com": "restrict.youtube.com",
     "youtube.com": "restrict.youtube.com",
     "m.youtube.com": "restrict.youtube.com",
     "youtubei.googleapis.com": "restrict.youtube.com",
 }
+
 def apply_safesearch(qname: str) -> Optional[str]:
     """Apply SafeSearch rewrite if enabled"""
     if not CONFIG.get("safesearch_enabled"):
         return None
-   
+    
     qname_lower = qname.lower().strip('.')
-   
+    
     # Check if this domain should be rewritten
     for original, safe in SAFESEARCH_MAPPINGS.items():
         if qname_lower == original or qname_lower.endswith('.' + original):
@@ -437,57 +454,59 @@ def apply_safesearch(qname: str) -> Optional[str]:
                 continue
             if "youtube" in original and not CONFIG.get("safesearch_youtube"):
                 continue
-           
+            
             STATS["dns_safesearch"] += 1
             log.info(f"[safesearch] {qname} → {safe}")
             return safe
-   
+    
     return None
+
 # ==================== DOMAIN LISTS ====================
 class TrieNode:
     def __init__(self):
         self.children: Dict[str, 'TrieNode'] = {}
         self.is_blocked = False
+
 class DomainList:
     def __init__(self, name: str):
         self.name = name
         self._root = TrieNode()
         self._count = 0
         self._lock = asyncio.Lock()
-   
+    
     async def add(self, domain: str):
         domain = domain.lower().strip('.')
         parts = domain.split('.')[::-1]
-       
+        
         async with self._lock:
             node = self._root
             for part in parts:
                 if part not in node.children:
                     node.children[part] = TrieNode()
                 node = node.children[part]
-           
+            
             if not node.is_blocked:
                 node.is_blocked = True
                 self._count += 1
-   
+    
     def add_sync(self, domain: str):
         domain = domain.lower().strip('.')
         parts = domain.split('.')[::-1]
-       
+        
         node = self._root
         for part in parts:
             if part not in node.children:
                 node.children[part] = TrieNode()
             node = node.children[part]
-       
+        
         if not node.is_blocked:
             node.is_blocked = True
             self._count += 1
-   
+    
     async def contains(self, domain: str) -> bool:
         domain = domain.lower().strip('.')
         parts = domain.split('.')[::-1]
-       
+        
         async with self._lock:
             node = self._root
             for part in parts:
@@ -496,66 +515,68 @@ class DomainList:
                 node = node.children[part]
                 if node.is_blocked:
                     return True
-       
+        
         return False
-   
+    
     async def remove(self, domain: str):
         domain = domain.lower().strip('.')
         parts = domain.split('.')[::-1]
-       
+        
         async with self._lock:
             node = self._root
             for part in parts:
                 if part not in node.children:
                     return
                 node = node.children[part]
-           
+            
             if node.is_blocked:
                 node.is_blocked = False
                 self._count -= 1
-   
+    
     async def clear(self):
         async with self._lock:
             self._root = TrieNode()
             self._count = 0
-   
+    
     async def export(self) -> List[str]:
         """Export all domains for local storage"""
         domains = []
-       
+        
         async def traverse(node, path):
             if node.is_blocked:
                 domains.append('.'.join(reversed(path)))
             for label, child in node.children.items():
                 await traverse(child, path + [label])
-       
+        
         async with self._lock:
             await traverse(self._root, [])
-       
+        
         return domains
-   
+    
     async def import_list(self, domains: List[str]):
         """Import domains from list"""
         for domain in domains:
             self.add_sync(domain)
-   
+    
     @property
     def size(self) -> int:
         return self._count
+
 BLOCKLIST = DomainList("blocklist")
 WHITELIST = DomainList("whitelist")
 BLACKLIST = DomainList("blacklist")
+
 # ==================== BLOCKLIST STORAGE ====================
 async def save_blocklists_local():
     """Save blocklists, blacklist, and whitelist to local storage"""
     try:
         storage_path = Path(CONFIG.get("blocklist_storage_path", "/config/veil_blocklists.json"))
         storage_path.parent.mkdir(parents=True, exist_ok=True)
-       
+        
         blocklist_domains = await BLOCKLIST.export()
         blacklist_domains = await BLACKLIST.export()
         whitelist_domains = await WHITELIST.export()
-       
+        
         data = {
             "blocklist": blocklist_domains,
             "blacklist": blacklist_domains,
@@ -566,160 +587,154 @@ async def save_blocklists_local():
             "last_update": STATS.get("blocklist_last_update", 0),
             "timestamp": time.time()
         }
-       
+        
         with open(storage_path, 'w') as f:
             json.dump(data, f, indent=2)
-       
+        
         log.info(f"[storage] Saved {len(blocklist_domains):,} blocklist, {len(blacklist_domains):,} blacklist, {len(whitelist_domains):,} whitelist domains to {storage_path}")
-   
+    
     except Exception as e:
         log.error(f"[storage] Failed to save: {e}")
+
 async def load_blocklists_local():
     """Load blocklists, blacklist, and whitelist from local storage"""
     try:
         storage_path = Path(CONFIG.get("blocklist_storage_path", "/config/veil_blocklists.json"))
-       
+        
         if not storage_path.exists():
             log.info("[storage] No local storage found")
             return False
-       
+        
         with open(storage_path) as f:
             data = json.load(f)
-       
+        
         # Load blocklist
         blocklist_domains = data.get("blocklist", [])
         await BLOCKLIST.import_list(blocklist_domains)
-       
+        
         # Load blacklist
         blacklist_domains = data.get("blacklist", [])
         await BLACKLIST.import_list(blacklist_domains)
-       
+        
         # Load whitelist
         whitelist_domains = data.get("whitelist", [])
         await WHITELIST.import_list(whitelist_domains)
-       
+        
         STATS["blocklist_last_update"] = data.get("last_update", 0)
-       
+        
         log.info(f"[storage] Loaded {len(blocklist_domains):,} blocklist, {len(blacklist_domains):,} blacklist, {len(whitelist_domains):,} whitelist domains from local storage")
         return True
-   
+    
     except Exception as e:
         log.error(f"[storage] Failed to load: {e}")
         return False
-def save_user_config():
-    """Save full user-editable config to persistent storage in /share/veil"""
-    try:
-        path = Path(USER_CONFIG_PATH)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, 'w') as f:
-            json.dump(CONFIG, f, indent=2)
-        log.info(f"[storage] Saved user config to {path}")
-    except Exception as e:
-        log.error(f"[storage] Failed to save user config: {e}")
+
 # ==================== BLOCKLIST AUTO-UPDATE ====================
 class BlocklistUpdater:
     def __init__(self):
         self.running = False
         self.update_task = None
         self.last_update = 0
-   
+    
     async def download_blocklist(self, url: str) -> List[str]:
         try:
             session = await get_conn_pool()
-            log.info.info(f"[blocklist] Downloading: {url}")
-           
+            log.info(f"[blocklist] Downloading: {url}")
+            
             async with session.get(url, timeout=ClientTimeout(total=60)) as resp:
                 if resp.status != 200:
                     log.error(f"[blocklist] Download failed: {url} (status {resp.status})")
                     return []
-               
+                
                 content = await resp.text()
                 domains = []
-               
+                
                 for line in content.split('\n'):
                     line = line.strip()
-                   
+                    
                     if not line or line.startswith('#') or line.startswith('!'):
                         continue
-                   
+                    
                     if line.startswith('0.0.0.0 ') or line.startswith('127.0.0.1 '):
                         domain = line.split()[1] if len(line.split()) > 1 else None
                     elif line.startswith('||') and line.endswith('^'):
                         domain = line[2:-1]
                     else:
                         domain = line
-                   
+                    
                     if domain and '.' in domain:
                         domain = domain.lower().strip('.')
                         domain = domain.split(':')[0]
                         domains.append(domain)
-               
+                
                 log.info(f"[blocklist] Downloaded {len(domains):,} domains from {url}")
                 return domains
-       
+        
         except Exception as e:
             log.error(f"[blocklist] Error downloading {url}: {e}")
             return []
-   
+    
     async def update_blocklists(self):
         if not CONFIG.get("blocklist_update_enabled"):
             return
-       
+        
         log.info("[blocklist] Starting update")
         urls = CONFIG.get("blocklist_urls", [])
-       
+        
         if not urls:
             log.debug("[blocklist] No URLs configured")
             return
-       
+        
         total_added = 0
-       
+        
         for url in urls:
             domains = await self.download_blocklist(url)
             for domain in domains:
                 BLOCKLIST.add_sync(domain)
                 total_added += 1
-       
+        
         STATS["blocklist_updates"] += 1
         STATS["blocklist_last_update"] = time.time()
         self.last_update = time.time()
-       
+        
         # Save to local storage
         await save_blocklists_local()
-       
+        
         log.info(f"[blocklist] Update complete: {total_added:,} domains added, {BLOCKLIST.size:,} total")
-   
+    
     async def auto_update_loop(self):
         self.running = True
-       
+        
         if CONFIG.get("blocklist_update_on_start"):
             await self.update_blocklists()
-       
+        
         while self.running:
             try:
                 interval = CONFIG.get("blocklist_update_interval", 86400)
                 await asyncio.sleep(interval)
-               
+                
                 if CONFIG.get("blocklist_update_enabled"):
                     await self.update_blocklists()
-           
+            
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 log.error(f"[blocklist] Auto-update error: {e}")
                 await asyncio.sleep(60)
-   
+    
     def start(self):
         if not self.running:
             self.update_task = asyncio.create_task(self.auto_update_loop())
             log.info("[blocklist] Auto-update started")
-   
+    
     def stop(self):
         self.running = False
         if self.update_task:
             self.update_task.cancel()
         log.info("[blocklist] Auto-update stopped")
+
 BLOCKLIST_UPDATER = BlocklistUpdater()
+
 # ==================== CACHE PREWARMING ====================
 # Top 1000 most popular domains for cache prewarming
 POPULAR_DOMAINS = [
@@ -727,90 +742,91 @@ POPULAR_DOMAINS = [
     "facebook.com", "instagram.com", "twitter.com", "linkedin.com", "reddit.com",
     "youtube.com", "tiktok.com", "snapchat.com", "pinterest.com", "tumblr.com",
     "whatsapp.com", "telegram.org", "discord.com", "slack.com", "zoom.us",
-   
+    
     # Search Engines
     "google.com", "bing.com", "yahoo.com", "duckduckgo.com", "baidu.com",
-   
+    
     # Email
     "gmail.com", "outlook.com", "protonmail.com", "mail.yahoo.com", "icloud.com",
-   
+    
     # Cloud & Storage
     "dropbox.com", "drive.google.com", "onedrive.live.com", "box.com", "mega.nz",
     "icloud.com", "wetransfer.com", "mediafire.com",
-   
+    
     # Shopping
     "amazon.com", "ebay.com", "walmart.com", "target.com", "bestbuy.com",
     "etsy.com", "aliexpress.com", "alibaba.com", "shopify.com",
-   
+    
     # Streaming
     "netflix.com", "hulu.com", "disneyplus.com", "hbo.com", "primevideo.com",
     "spotify.com", "apple.com", "pandora.com", "soundcloud.com",
     "twitch.tv", "vimeo.com", "dailymotion.com",
-   
+    
     # News
     "cnn.com", "bbc.com", "nytimes.com", "theguardian.com", "reuters.com",
     "forbes.com", "bloomberg.com", "wsj.com", "usatoday.com", "washingtonpost.com",
-   
+    
     # Tech
     "github.com", "stackoverflow.com", "microsoft.com", "apple.com", "adobe.com",
     "nvidia.com", "amd.com", "intel.com", "canonical.com", "docker.com",
-   
+    
     # CDNs & Infrastructure (critical for other sites)
     "cloudflare.com", "akamai.com", "fastly.com", "amazonaws.com", "googleusercontent.com",
     "gstatic.com", "cloudfront.net", "cdnjs.com", "jsdelivr.net",
-   
+    
     # Common APIs
     "maps.googleapis.com", "fonts.googleapis.com", "ajax.googleapis.com",
     "apis.google.com", "graph.facebook.com", "api.twitter.com",
-   
+    
     # DNS & Security
     "1.1.1.1", "8.8.8.8", "cloudflare-dns.com", "dns.google",
-   
+    
     # Banks & Finance
     "paypal.com", "stripe.com", "chase.com", "bankofamerica.com", "wellsfargo.com",
-   
+    
     # Gaming
     "steampowered.com", "epicgames.com", "roblox.com", "minecraft.net", "ea.com",
     "blizzard.com", "nintendo.com", "playstation.com", "xbox.com",
-   
+    
     # Education
     "wikipedia.org", "coursera.org", "udemy.com", "khanacademy.org", "edx.org",
-   
+    
     # Government
     "usa.gov", "irs.gov", "usps.com", "weather.gov",
-   
+    
     # Home Automation & IoT
     "home-assistant.io", "ifttt.com", "smartthings.com", "philips-hue.com",
 ]
+
 class CachePrewarmer:
     """Preload cache with popular/frequently used domains"""
     def __init__(self):
         self.running = False
         self.prewarm_task = None
         self.last_prewarm = 0
-   
+    
     async def get_domains_to_prewarm(self) -> List[str]:
         """Get list of domains to prewarm based on sources"""
         domains = set()
         sources = CONFIG.get("cache_prewarm_sources", ["popular"])
-       
+        
         # Popular domains
         if "popular" in sources:
             domains.update(POPULAR_DOMAINS)
-       
+        
         # Custom domains from config
         if "custom" in sources:
             custom = CONFIG.get("cache_prewarm_custom_domains", [])
             domains.update(custom)
-       
+        
         # Historical top queries
         if "history" in sources:
             count = CONFIG.get("cache_prewarm_history_count", 100)
             historical = await QUERY_HISTORY.get_top(count)
             domains.update(historical)
-       
+        
         return list(domains)
-   
+    
     async def prewarm_domain(self, domain: str) -> bool:
         """Prewarm a single domain (A and AAAA records)"""
         try:
@@ -818,44 +834,44 @@ class CachePrewarmer:
             query_a = dns.message.make_query(domain, dns.rdatatype.A, use_edns=True)
             wire_a = query_a.to_wire()
             response_a = await query_upstream(domain, dns.rdatatype.A)
-           
+            
             if response_a:
                 # Cache will be populated by query_upstream
                 log.debug(f"[prewarm] Cached A: {domain}")
-           
+            
             # Query AAAA record
             query_aaaa = dns.message.make_query(domain, dns.rdatatype.AAAA, use_edns=True)
             wire_aaaa = query_aaaa.to_wire()
             response_aaaa = await query_upstream(domain, dns.rdatatype.AAAA)
-           
+            
             if response_aaaa:
                 log.debug(f"[prewarm] Cached AAAA: {domain}")
-           
+            
             return response_a is not None or response_aaaa is not None
-       
+        
         except Exception as e:
             log.debug(f"[prewarm] Failed {domain}: {e}")
             return False
-   
+    
     async def prewarm_cache(self):
         """Prewarm cache with configured domains"""
         if not CONFIG.get("cache_prewarm_enabled"):
             return
-       
+        
         log.info("[prewarm] Starting cache prewarm")
         start_time = time.time()
-       
+        
         domains = await self.get_domains_to_prewarm()
         if not domains:
             log.info("[prewarm] No domains to prewarm")
             return
-       
+        
         log.info(f"[prewarm] Prewarming {len(domains)} domains")
-       
+        
         # Prewarm in batches with concurrency limit
         concurrent = CONFIG.get("cache_prewarm_concurrent", 10)
         success_count = 0
-       
+        
         for i in range(0, len(domains), concurrent):
             batch = domains[i:i + concurrent]
             results = await asyncio.gather(
@@ -863,55 +879,57 @@ class CachePrewarmer:
                 return_exceptions=True
             )
             success_count += sum(1 for r in results if r is True)
-       
+        
         STATS["cache_prewarm_runs"] += 1
         STATS["cache_prewarm_last"] = time.time()
         STATS["cache_prewarm_domains"] = success_count
         self.last_prewarm = time.time()
-       
+        
         elapsed = time.time() - start_time
         log.info(f"[prewarm] Complete: {success_count}/{len(domains)} cached in {elapsed:.1f}s")
-   
+    
     async def auto_prewarm_loop(self):
         """Background task for automatic cache prewarming"""
         self.running = True
-       
+        
         # Prewarm on start if enabled
         if CONFIG.get("cache_prewarm_on_start"):
             await self.prewarm_cache()
-       
+        
         # Periodic prewarm loop
         while self.running:
             try:
                 interval = CONFIG.get("cache_prewarm_interval", 3600)
                 await asyncio.sleep(interval)
-               
+                
                 if CONFIG.get("cache_prewarm_enabled"):
                     await self.prewarm_cache()
-           
+            
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 log.error(f"[prewarm] Auto-prewarm error: {e}")
                 await asyncio.sleep(60)
-   
+    
     def start(self):
         if not self.running:
             self.prewarm_task = asyncio.create_task(self.auto_prewarm_loop())
             log.info("[prewarm] Auto-prewarm started")
-   
+    
     def stop(self):
         self.running = False
         if self.prewarm_task:
             self.prewarm_task.cancel()
         log.info("[prewarm] Auto-prewarm stopped")
+
 CACHE_PREWARMER = CachePrewarmer()
+
 # ==================== UPSTREAM HEALTH ====================
 class UpstreamHealth:
     def __init__(self):
         self._health: Dict[str, dict] = {}
         self._lock = asyncio.Lock()
-   
+    
     async def record_success(self, server: str, latency: float):
         async with self._lock:
             if server not in self._health:
@@ -922,13 +940,13 @@ class UpstreamHealth:
                     "latency": latency,
                     "success_count": 0
                 }
-           
+            
             self._health[server]["failures"] = 0
             self._health[server]["last_check"] = time.time()
             self._health[server]["healthy"] = True
             self._health[server]["latency"] = latency
             self._health[server]["success_count"] += 1
-   
+    
     async def record_failure(self, server: str):
         async with self._lock:
             if server not in self._health:
@@ -939,53 +957,56 @@ class UpstreamHealth:
                     "latency": 0,
                     "success_count": 0
                 }
-           
+            
             self._health[server]["failures"] += 1
             self._health[server]["last_check"] = time.time()
-           
+            
             max_failures = CONFIG.get("upstream_max_failures", 3)
             if self._health[server]["failures"] >= max_failures:
                 self._health[server]["healthy"] = False
                 log.warning(f"[upstream] Marked unhealthy: {server}")
-   
+    
     def get_healthy(self) -> List[str]:
         return [s for s, h in self._health.items() if h.get("healthy", True)]
-   
+    
     def get_status(self) -> dict:
         return self._health.copy()
+
 UPSTREAM_HEALTH = UpstreamHealth()
+
 # ==================== DNSSEC VALIDATION ====================
 async def validate_dnssec(response_wire: bytes) -> bool:
     """Validate DNSSEC signatures"""
     if not CONFIG.get("dnssec_validate"):
         return True
-   
+    
     try:
         response = dns.message.from_wire(response_wire)
-       
+        
         # Check if response has DNSSEC records
-        if not any(rrset.rdtype in (dns.rdatatype.RRSIG, dns.rdatatype.DNSKEY)
-                  for section in [response.answer, response.authority]
+        if not any(rrset.rdtype in (dns.rdatatype.RRSIG, dns.rdatatype.DNSKEY) 
+                  for section in [response.answer, response.authority] 
                   for rrset in section):
             # No DNSSEC records, pass through
             return True
-       
+        
         # Perform validation
         # Note: Full DNSSEC validation requires trust anchors and recursive validation
         # This is a simplified check
-       
+        
         for rrset in response.answer + response.authority:
             if rrset.rdtype == dns.rdatatype.RRSIG:
                 STATS["dns_dnssec_validated"] += 1
                 log.debug(f"[dnssec] Validated: {rrset.name}")
                 return True
-       
+        
         return True
-   
+    
     except Exception as e:
         log.warning(f"[dnssec] Validation failed: {e}")
         STATS["dns_dnssec_failed"] += 1
         return False
+
 # ==================== DNS-OVER-QUIC ====================
 DOQ_AVAILABLE = False
 try:
@@ -995,54 +1016,57 @@ try:
     DOQ_AVAILABLE = True
 except ImportError:
     log.warning("[doq] aioquic not installed, DoQ disabled")
+
 async def query_doq(wire_query: bytes, server: str) -> Optional[bytes]:
     """Query via DNS-over-QUIC (RFC 9250)"""
     if not DOQ_AVAILABLE or not CONFIG.get("doq_enabled"):
         return None
-   
+    
     try:
         STATS["dns_doq_queries"] += 1
-       
+        
         configuration = QuicConfiguration(
             is_client=True,
             alpn_protocols=["doq"],
         )
-       
+        
         async with connect(
             server,
             853,
             configuration=configuration,
         ) as protocol:
             stream_id = protocol._quic.get_next_available_stream_id()
-           
+            
             # Send DNS query
             msg_len = struct.pack('!H', len(wire_query))
             protocol._quic.send_stream_data(stream_id, msg_len + wire_query, end_stream=True)
-           
+            
             # Wait for response
             response_data = b''
             timeout = CONFIG.get("upstream_timeout", 2.0)
             start = time.time()
-           
+            
             while time.time() - start < timeout:
                 for event in protocol._quic.next_events():
                     if hasattr(event, 'data'):
                         response_data += event.data
-                       
+                        
                         if len(response_data) >= 2:
                             expected_len = struct.unpack('!H', response_data[:2])[0]
                             if len(response_data) >= expected_len + 2:
                                 return response_data[2:expected_len+2]
-               
+                
                 await asyncio.sleep(0.01)
-       
-       36 return None
-   
+        
+        return None
+    
     except Exception as e:
         log.debug(f"[doq] Error: {e}")
         return None
+
 # ==================== DNS PRIVACY FUNCTIONS ====================
 CONN_POOL = None
+
 async def get_conn_pool():
     global CONN_POOL
     if not CONN_POOL:
@@ -1051,10 +1075,11 @@ async def get_conn_pool():
             timeout=ClientTimeout(total=CONFIG["upstream_timeout"])
         )
     return CONN_POOL
+
 def apply_0x20_encoding(qname: str) -> str:
     if not CONFIG.get("case_randomization"):
         return qname
-   
+    
     STATS["dns_0x20"] += 1
     result = []
     for char in qname:
@@ -1063,59 +1088,61 @@ def apply_0x20_encoding(qname: str) -> str:
         else:
             result.append(char)
     return ''.join(result)
+
 def pad_query(wire_data: bytes) -> bytes:
     if not CONFIG.get("padding_enabled"):
         return wire_data
-   
+    
     STATS["dns_padded"] += 1
     block_size = CONFIG.get("padding_block_size", 468)
-   
+    
     current_len = len(wire_data)
     if current_len >= block_size:
         return wire_data
-   
+    
     padding_needed = block_size - (current_len % block_size)
     if padding_needed == block_size:
         padding_needed = 0
-   
+    
     try:
         msg = dns.message.from_wire(wire_data)
         if not msg.edns:
             msg.use_edns(edns=True, payload=4096)
-       
+        
         padded = msg.to_wire()
-       
+        
         if len(padded) < block_size:
             padding = b'\x00' * (block_size - len(padded))
             padded += padding
-       
+        
         return padded
     except:
         return wire_data
+
 async def query_upstream_parallel(qname: str, qtype: int) -> Optional[Tuple[bytes, str]]:
     servers = CONFIG["upstream_servers"].copy()
     healthy = UPSTREAM_HEALTH.get_healthy()
-   
+    
     if healthy:
         servers = [s for s in servers if s in healthy or s not in UPSTREAM_HEALTH.get_status()]
-   
+    
     if not servers:
         return None
-   
+    
     encoded_qname = apply_0x20_encoding(qname)
-   
+    
     query = dns.message.make_query(encoded_qname, qtype, use_edns=True)
     if CONFIG.get("query_jitter"):
         query.id = random.randint(0, 65535)
-   
+    
     wire_query = query.to_wire()
     wire_query = pad_query(wire_query)
-   
+    
     if CONFIG.get("query_jitter"):
         jitter_range = CONFIG.get("query_jitter_ms", [10, 100])
         jitter = random.randint(jitter_range[0], jitter_range[1]) / 1000.0
         await asyncio.sleep(jitter)
-   
+    
     tasks = []
     for server in servers:
         if CONFIG.get("doq_enabled") and DOQ_AVAILABLE:
@@ -1126,9 +1153,9 @@ async def query_upstream_parallel(qname: str, qtype: int) -> Optional[Tuple[byte
             tasks.append(query_dot(wire_query, server))
         else:
             tasks.append(query_udp(wire_query, server))
-   
+    
     STATS["dns_parallel"] += 1
-   
+    
     for coro in asyncio.as_completed(tasks):
         try:
             result = await coro
@@ -1140,41 +1167,41 @@ async def query_upstream_parallel(qname: str, qtype: int) -> Optional[Tuple[byte
         except Exception as e:
             log.debug(f"[upstream] Parallel query failed: {e}")
             continue
-   
+    
     return None
+
 async def query_upstream(qname: str, qtype: int) -> Optional[bytes]:
     if CONFIG.get("upstream_parallel") and len(CONFIG["upstream_servers"]) > 1:
         result = await query_upstream_parallel(qname, qtype)
         return result[0] if result else None
-   
+    
     servers = CONFIG["upstream_servers"].copy()
     healthy = UPSTREAM_HEALTH.get_healthy()
-   
+    
     if healthy:
-
         servers = [s for s in servers if s in healthy or s not in UPSTREAM_HEALTH.get_status()]
-   
+    
     if CONFIG.get("upstream_rotation"):
         random.shuffle(servers)
-   
+    
     encoded_qname = apply_0x20_encoding(qname)
-   
+    
     query = dns.message.make_query(encoded_qname, qtype, use_edns=True)
     if CONFIG.get("query_jitter"):
         query.id = random.randint(0, 65535)
-   
+    
     wire_query = query.to_wire()
     wire_query = pad_query(wire_query)
-   
+    
     if CONFIG.get("query_jitter"):
         jitter_range = CONFIG.get("query_jitter_ms", [10, 100])
         jitter = random.randint(jitter_range[0], jitter_range[1]) / 1000.0
         await asyncio.sleep(jitter)
-   
+    
     for server in servers:
         try:
             start = time.time()
-           
+            
             if CONFIG.get("doq_enabled") and DOQ_AVAILABLE:
                 response_wire = await query_doq(wire_query, server)
             elif CONFIG.get("doh_enabled") and server in ["1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4"]:
@@ -1183,29 +1210,31 @@ async def query_upstream(qname: str, qtype: int) -> Optional[bytes]:
                 response_wire = await query_dot(wire_query, server)
             else:
                 response_wire = await query_udp(wire_query, server)
-           
+            
             if response_wire:
                 latency = time.time() - start
                 await UPSTREAM_HEALTH.record_success(server, latency)
                 return response_wire
-       
+        
         except Exception as e:
             log.debug(f"[upstream] {server} failed: {e}")
             await UPSTREAM_HEALTH.record_failure(server)
             continue
-   
+    
     return None
+
 async def query_udp(wire_query: bytes, server: str) -> Optional[bytes]:
     loop = asyncio.get_event_loop()
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.settimeout(CONFIG["upstream_timeout"])
-   
+    
     try:
         sock.sendto(wire_query, (server, 53))
         response, _ = sock.recvfrom(4096)
         return response
     finally:
         sock.close()
+
 async def query_doh(wire_query: bytes, server: str) -> Optional[bytes]:
     doh_urls = {
         "1.1.1.1": "https://cloudflare-dns.com/dns-query",
@@ -1213,10 +1242,10 @@ async def query_doh(wire_query: bytes, server: str) -> Optional[bytes]:
         "8.8.8.8": "https://dns.google/dns-query",
         "8.8.4.4": "https://dns.google/dns-query",
     }
-   
+    
     url = doh_urls.get(server, f"https://{server}/dns-query")
     session = await get_conn_pool()
-   
+    
     async with session.post(
         url,
         data=wire_query,
@@ -1224,49 +1253,51 @@ async def query_doh(wire_query: bytes, server: str) -> Optional[bytes]:
     ) as resp:
         if resp.status == 200:
             return await resp.read()
-   
+    
     return None
+
 async def query_dot(wire_query: bytes, server: str) -> Optional[bytes]:
     import ssl
-   
+    
     try:
         ssl_context = ssl.create_default_context()
         ssl_context.check_hostname = False
         ssl_context.verify_mode = ssl.CERT_NONE
-       
+        
         reader, writer = await asyncio.wait_for(
             asyncio.open_connection(server, 853, ssl=ssl_context),
             timeout=CONFIG["upstream_timeout"]
         )
-       
+        
         msg_len = struct.pack('!H', len(wire_query))
         writer.write(msg_len + wire_query)
         await writer.drain()
-       
+        
         len_bytes = await asyncio.wait_for(
             reader.readexactly(2),
             timeout=CONFIG["upstream_timeout"]
         )
         resp_len = struct.unpack('!H', len_bytes)[0]
-       
+        
         response = await asyncio.wait_for(
             reader.readexactly(resp_len),
             timeout=CONFIG["upstream_timeout"]
         )
-       
+        
         writer.close()
         await writer.wait_closed()
-       
+        
         return response
-   
+    
     except Exception as e:
         log.debug(f"[dot] Error: {e}")
         return None
+
 # ==================== DNS RESPONSE BUILDERS ====================
 def build_blocked_response(query: dns.message.Message) -> bytes:
     response = dns.message.make_response(query)
     block_type = CONFIG.get("block_response_type", "NXDOMAIN")
-   
+    
     if block_type == "NXDOMAIN":
         response.set_rcode(dns.rcode.NXDOMAIN)
     elif block_type == "REFUSED":
@@ -1275,23 +1306,24 @@ def build_blocked_response(query: dns.message.Message) -> bytes:
         ip = CONFIG.get("block_custom_ip", "0.0.0.0") if block_type == "custom_ip" else "0.0.0.0"
         qname = query.question[0].name
         qtype = query.question[0].rdtype
-       
+        
         if qtype == dns.rdatatype.A:
             rrset = response.answer.add(qname, 300, dns.rdataclass.IN, dns.rdatatype.A)
             rrset.add(dns.rdtypes.IN.A.A(dns.rdataclass.IN, dns.rdatatype.A, ip))
         elif qtype == dns.rdatatype.AAAA:
             rrset = response.answer.add(qname, 300, dns.rdataclass.IN, dns.rdatatype.AAAA)
             rrset.add(dns.rdtypes.IN.AAAA.AAAA(dns.rdataclass.IN, dns.rdatatype.AAAA, "::"))
-   
+    
     return response.to_wire()
+
 def build_rewrite_response(query: dns.message.Message, rewrite: dict) -> bytes:
     response = dns.message.make_response(query)
     qname = query.question[0].name
-   
+    
     record_type = rewrite.get("type", "A")
     value = rewrite.get("value")
     ttl = rewrite.get("ttl", 300)
-   
+    
     if record_type == "A" and value:
         rrset = response.answer.add(qname, ttl, dns.rdataclass.IN, dns.rdatatype.A)
         rrset.add(dns.rdtypes.IN.A.A(dns.rdataclass.IN, dns.rdatatype.A, value))
@@ -1310,12 +1342,13 @@ def build_rewrite_response(query: dns.message.Message, rewrite: dict) -> bytes:
         exchange = parts[1] if len(parts) > 1 else parts[0]
         rrset = response.answer.add(qname, ttl, dns.rdataclass.IN, dns.rdatatype.MX)
         rrset.add(dns.rdtypes.ANY.MX.MX(dns.rdataclass.IN, dns.rdatatype.MX, priority, dns.name.from_text(exchange)))
-   
+    
     return response.to_wire()
+
 def strip_ecs(response_wire: bytes) -> bytes:
     if not CONFIG.get("ecs_strip"):
         return response_wire
-   
+    
     try:
         response = dns.message.from_wire(response_wire)
         if response.edns >= 0:
@@ -1327,6 +1360,7 @@ def strip_ecs(response_wire: bytes) -> bytes:
         return response.to_wire()
     except:
         return response_wire
+
 # ==================== DNS PROCESSING ====================
 async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
     try:
@@ -1334,7 +1368,7 @@ async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
         if len(data) < 12:
             log.warning(f"[dns] Packet too small from {addr[0]}: {len(data)} bytes")
             return None
-       
+        
         # Check if it looks like DNS (starts with transaction ID, has flags)
         if len(data) >= 12:
             try:
@@ -1347,28 +1381,28 @@ async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
             except Exception as e:
                 log.error(f"[dns] Failed to parse DNS from {addr[0]}: {e}")
                 return None
-       
+        
         # Rate limiting
         if not await RATE_LIMITER.check_rate_limit(addr[0]):
             response = dns.message.make_response(query)
             response.set_rcode(dns.rcode.REFUSED)
             return response.to_wire()
-       
+        
         qname = str(query.question[0].name).lower().strip('.')
         qtype = query.question[0].rdtype
-       
+        
         log.info(f"[dns] Query from {addr[0]}: {qname} ({dns.rdatatype.to_text(qtype)})")
-       
+        
         STATS["dns_queries"] += 1
-       
+        
         # Record query in history for prewarming
         await QUERY_HISTORY.record(qname)
-       
+        
         # SafeSearch enforcement
         safesearch_domain = apply_safesearch(qname)
         if safesearch_domain:
             qname = safesearch_domain
-       
+        
         # Check whitelist first
         if await WHITELIST.contains(qname):
             pass
@@ -1377,24 +1411,24 @@ async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
                 STATS["dns_blocked"] += 1
                 log.info(f"[dns] Blocked (blacklist): {qname}")
                 return build_blocked_response(query)
-           
+            
             if CONFIG.get("blocking_enabled") and await BLOCKLIST.contains(qname):
                 STATS["dns_blocked"] += 1
                 log.info(f"[dns] Blocked (blocklist): {qname}")
                 return build_blocked_response(query)
-       
+        
         # Check DNS rewrites
         dns_rewrites = CONFIG.get("dns_rewrites", {})
         if qname in dns_rewrites:
             rewrite = dns_rewrites[qname]
             return build_rewrite_response(query, rewrite)
-       
+        
         # Check local records
         local_records = CONFIG.get("local_records", {})
         if qname in local_records:
             record = local_records[qname]
             return build_rewrite_response(query, record)
-       
+        
         # Check conditional forwards
         for domain, forward_server in CONFIG.get("conditional_forwards", {}).items():
             if qname.endswith(domain) or qname == domain.strip('.'):
@@ -1406,34 +1440,34 @@ async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
                         return response_wire
                 except Exception as e:
                     log.error(f"[dns] Conditional forward failed: {e}")
-       
+        
         # Check cache
         cached = await DNS_CACHE.get(qname, qtype)
         if cached:
             STATS["dns_cached"] += 1
             return cached
-       
+        
         # Query upstream
         STATS["dns_upstream"] += 1
         response_wire = await query_upstream(qname, qtype)
-       
+        
         if not response_wire:
             response = dns.message.make_response(query)
             response.set_rcode(dns.rcode.SERVFAIL)
             return response.to_wire()
-       
+        
         # Strip ECS
         response_wire = strip_ecs(response_wire)
-       
+        
         # DNSSEC validation
         if not await validate_dnssec(response_wire):
             log.warning(f"[dnssec] Validation failed for {qname}")
             response = dns.message.make_response(query)
             response.set_rcode(dns.rcode.SERVFAIL)
             return response.to_wire()
-       
+        
         response = dns.message.from_wire(response_wire)
-       
+        
         # Rebinding protection
         if CONFIG.get("rebinding_protection"):
             rebinding_exempt = False
@@ -1441,7 +1475,7 @@ async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
                 if qname.endswith(exempt_domain) or qname == exempt_domain.strip('.'):
                     rebinding_exempt = True
                     break
-           
+            
             if not rebinding_exempt:
                 for rrset in response.answer:
                     if rrset.rdtype == dns.rdatatype.A:
@@ -1453,29 +1487,30 @@ async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
                                     return build_blocked_response(query)
                             except:
                                 pass
-       
+        
         # Cache response
         ttl = CONFIG.get("cache_ttl", 3600)
         if response.answer:
             ttl = min((rrset.ttl for rrset in response.answer), default=ttl)
         else:
             ttl = CONFIG.get("negative_cache_ttl", 300)
-       
+        
         await DNS_CACHE.set(qname, qtype, response_wire, ttl, negative=(not response.answer))
-       
+        
         return response_wire
-   
+    
     except Exception as e:
         log.error(f"[dns] Unexpected error processing query from {addr[0]}: {e}")
         return None
+
 # ==================== DNS SERVER ====================
 class DNSProtocol(asyncio.DatagramProtocol):
     def connection_made(self, transport):
         self.transport = transport
-   
+    
     def datagram_received(self, data, addr):
         asyncio.create_task(self.handle_query(data, addr))
-   
+    
     async def handle_query(self, data, addr):
         try:
             response = await process_dns_query(data, addr)
@@ -1487,7 +1522,9 @@ class DNSProtocol(asyncio.DatagramProtocol):
             log.error(f"[dns] Error handling query from {addr[0]}: {e}")
             import traceback
             log.error(traceback.format_exc())
+
 dns_transport = None
+
 async def start_dns():
     global dns_transport
     try:
@@ -1512,9 +1549,11 @@ async def start_dns():
     except Exception as e:
         log.error(f"[dns] ❌ UNEXPECTED ERROR starting DNS server: {e}")
         raise
+
 # ==================== DHCP SERVER ====================
 # (DHCP implementation remains exactly as in your original file - no changes needed)
 # I'm preserving the complete DHCP section from your original code
+
 DHCP_DISCOVER = 1
 DHCP_OFFER = 2
 DHCP_REQUEST = 3
@@ -1523,6 +1562,7 @@ DHCP_ACK = 5
 DHCP_NAK = 6
 DHCP_RELEASE = 7
 DHCP_INFORM = 8
+
 DHCP_OPT_PAD = 0
 DHCP_OPT_SUBNET_MASK = 1
 DHCP_OPT_ROUTER = 3
@@ -1545,6 +1585,7 @@ DHCP_OPT_CLIENT_ID = 61
 DHCP_OPT_TFTP_SERVER = 66
 DHCP_OPT_BOOTFILE = 67
 DHCP_OPT_END = 255
+
 @dataclass
 class DHCPLease:
     mac: str
@@ -1554,12 +1595,12 @@ class DHCPLease:
     lease_start: float = field(default_factory=time.time)
     lease_end: float = 0
     static: bool = False
-   
+    
     def is_expired(self) -> bool:
         if self.static:
             return False
         return time.time() > self.lease_end
-   
+    
     def to_dict(self) -> dict:
         return {
             "mac": self.mac,
@@ -1571,6 +1612,7 @@ class DHCPLease:
             "expires_in": max(0, int(self.lease_end - time.time())),
             "static": self.static
         }
+
 class DHCPServer:
     def __init__(self):
         self.leases: Dict[str, DHCPLease] = {}
@@ -1581,19 +1623,19 @@ class DHCPServer:
         self.cleanup_task = None
         self._load_leases()
         self._init_ip_pool()
-   
+    
     def _init_ip_pool(self):
         start_ip = ipaddress.IPv4Address(CONFIG["dhcp_range_start"])
         end_ip = ipaddress.IPv4Address(CONFIG["dhcp_range_end"])
-       
+        
         self.ip_pool = [
             str(ipaddress.IPv4Address(ip))
             for ip in range(int(start_ip), int(end_ip) + 1)
         ]
         log.info(f"[dhcp] IP pool: {len(self.ip_pool)} addresses")
-   
+    
     def _load_leases(self):
-        lease_file = Path("/share/veil/veil_dhcp_leases.json")
+        lease_file = Path("/config/veil_dhcp_leases.json")
         if lease_file.exists():
             try:
                 with open(lease_file) as f:
@@ -1603,7 +1645,7 @@ class DHCPServer:
                 log.info(f"[dhcp] Loaded {len(self.leases)} leases")
             except Exception as e:
                 log.error(f"[dhcp] Failed to load leases: {e}")
-       
+        
         for mac, ip in CONFIG.get("dhcp_static_leases", {}).items():
             self.leases[mac] = DHCPLease(
                 mac=mac,
@@ -1612,22 +1654,22 @@ class DHCPServer:
                 lease_start=time.time(),
                 lease_end=time.time() + (365 * 86400)
             )
-   
+    
     def _save_leases(self):
-        lease_file = Path("/share/veil/veil_dhcp_leases.json")
+        lease_file = Path("/config/veil_dhcp_leases.json")
         try:
             data = {mac: lease.to_dict() for mac, lease in self.leases.items() if not lease.static}
             with open(lease_file, 'w') as f:
                 json.dump(data, f, indent=2)
         except Exception as e:
             log.error(f"[dhcp] Failed to save leases: {e}")
-   
+    
     async def _ping_check(self, ip: str) -> bool:
         if not CONFIG.get("dhcp_ping_check"):
             return False
-       
+        
         STATS["dhcp_ping_checks"] += 1
-       
+        
         try:
             proc = await asyncio.create_subprocess_exec(
                 "ping", "-c", "1", "-W", str(CONFIG.get("dhcp_ping_timeout", 1)), ip,
@@ -1635,35 +1677,35 @@ class DHCPServer:
                 stderr=asyncio.subprocess.DEVNULL
             )
             await asyncio.wait_for(proc.wait(), timeout=CONFIG.get("dhcp_ping_timeout", 1) + 1)
-           
+            
             if proc.returncode == 0:
                 log.warning(f"[dhcp] IP conflict detected: {ip} is in use")
                 STATS["dhcp_conflicts"] += 1
                 return True
         except:
             pass
-       
+        
         return False
-   
+    
     async def _get_available_ip(self, mac: str) -> Optional[str]:
         async with self.lock:
             if mac in self.leases and not self.leases[mac].is_expired():
                 return self.leases[mac].ip
-           
+            
             used_ips = {lease.ip for lease in self.leases.values() if not lease.is_expired()}
-           
+            
             for ip in self.ip_pool:
                 if ip not in used_ips:
                     if await self._ping_check(ip):
                         continue
                     return ip
-       
+        
         return None
-   
+    
     def _parse_dhcp_packet(self, data: bytes) -> Optional[dict]:
         if len(data) < 240:
             return None
-       
+        
         try:
             packet = {
                 "op": data[0],
@@ -1682,10 +1724,10 @@ class DHCPServer:
                 "file": data[108:236].split(b'\x00')[0].decode('utf-8', errors='ignore'),
                 "options": {}
             }
-           
+            
             if data[236:240] != b'\x63\x82\x53\x63':
                 return None
-           
+            
             i = 240
             while i < len(data):
                 opt = data[i]
@@ -1694,75 +1736,75 @@ class DHCPServer:
                 if opt == DHCP_OPT_PAD:
                     i += 1
                     continue
-               
+                
                 if i + 1 >= len(data):
                     break
-               
+                
                 opt_len = data[i + 1]
                 if i + 2 + opt_len > len(data):
                     break
-               
+                
                 opt_data = data[i + 2:i + 2 + opt_len]
                 packet["options"][opt] = opt_data
                 i += 2 + opt_len
-           
+            
             return packet
-       
+        
         except Exception as e:
             log.error(f"[dhcp] Parse error: {e}")
             return None
-   
+    
     def _build_dhcp_packet(self, packet: dict, msg_type: int, offered_ip: str) -> bytes:
         response = bytearray(548)
-       
+        
         response[0] = 2
         response[1] = packet["htype"]
         response[2] = packet["hlen"]
         response[3] = 0
-       
+        
         struct.pack_into("!I", response, 4, packet["xid"])
         struct.pack_into("!H", response, 8, 0)
         struct.pack_into("!H", response, 10, packet["flags"])
-       
+        
         response[12:16] = socket.inet_aton("0.0.0.0")
         response[16:20] = socket.inet_aton(offered_ip)
         response[20:24] = socket.inet_aton(CONFIG["dhcp_gateway"])
         response[24:28] = socket.inet_aton(packet["giaddr"])
-       
+        
         mac_bytes = bytes.fromhex(packet["chaddr"].replace(':', ''))
         response[28:28 + len(mac_bytes)] = mac_bytes
-       
+        
         response[236:240] = b'\x63\x82\x53\x63'
-       
+        
         pos = 240
-       
+        
         response[pos:pos + 3] = bytes([DHCP_OPT_MESSAGE_TYPE, 1, msg_type])
         pos += 3
-       
+        
         server_ip = socket.inet_aton(CONFIG["dhcp_gateway"])
         response[pos:pos + 6] = bytes([DHCP_OPT_SERVER_ID, 4]) + server_ip
         pos += 6
-       
+        
         lease_time = CONFIG["dhcp_lease_time"]
         response[pos:pos + 6] = bytes([DHCP_OPT_LEASE_TIME, 4]) + struct.pack("!I", lease_time)
         pos += 6
-       
+        
         renewal_time = CONFIG.get("dhcp_renewal_time", lease_time // 2)
         response[pos:pos + 6] = bytes([DHCP_OPT_RENEWAL_TIME, 4]) + struct.pack("!I", renewal_time)
         pos += 6
-       
+        
         rebinding_time = CONFIG.get("dhcp_rebinding_time", int(lease_time * 0.875))
         response[pos:pos + 6] = bytes([DHCP_OPT_REBINDING_TIME, 4]) + struct.pack("!I", rebinding_time)
         pos += 6
-       
+        
         netmask = socket.inet_aton(CONFIG["dhcp_netmask"])
         response[pos:pos + 6] = bytes([DHCP_OPT_SUBNET_MASK, 4]) + netmask
         pos += 6
-       
+        
         gateway = socket.inet_aton(CONFIG["dhcp_gateway"])
         response[pos:pos + 6] = bytes([DHCP_OPT_ROUTER, 4]) + gateway
         pos += 6
-       
+        
         try:
             network = ipaddress.IPv4Network(f"{CONFIG['dhcp_subnet']}/{CONFIG['dhcp_netmask']}", strict=False)
             broadcast = socket.inet_aton(str(network.broadcast_address))
@@ -1770,29 +1812,29 @@ class DHCPServer:
             pos += 6
         except:
             pass
-       
+        
         dns_servers = CONFIG.get("dhcp_dns_servers", [CONFIG["dhcp_gateway"]])
         dns_bytes = b''.join(socket.inet_aton(dns) for dns in dns_servers[:3])
         response[pos:pos + 2 + len(dns_bytes)] = bytes([DHCP_OPT_DNS_SERVER, len(dns_bytes)]) + dns_bytes
         pos += 2 + len(dns_bytes)
-       
+        
         if CONFIG.get("dhcp_domain"):
             domain = CONFIG["dhcp_domain"].encode()
             response[pos:pos + 2 + len(domain)] = bytes([DHCP_OPT_DOMAIN_NAME, len(domain)]) + domain
             pos += 2 + len(domain)
-       
+        
         if CONFIG.get("dhcp_ntp_servers"):
             ntp_servers = CONFIG["dhcp_ntp_servers"]
             ntp_bytes = b''.join(socket.inet_aton(ntp) for ntp in ntp_servers[:3])
             response[pos:pos + 2 + len(ntp_bytes)] = bytes([DHCP_OPT_NTP_SERVER, len(ntp_bytes)]) + ntp_bytes
             pos += 2 + len(ntp_bytes)
-       
+        
         if CONFIG.get("dhcp_wins_servers"):
             wins_servers = CONFIG["dhcp_wins_servers"]
             wins_bytes = b''.join(socket.inet_aton(wins) for wins in wins_servers[:2])
             response[pos:pos + 2 + len(wins_bytes)] = bytes([DHCP_OPT_WINS_SERVER, len(wins_bytes)]) + wins_bytes
             pos += 2 + len(wins_bytes)
-       
+        
         vendor_opts = CONFIG.get("dhcp_vendor_options", {})
         if vendor_opts and isinstance(vendor_opts, dict):
             vendor_data = b''
@@ -1800,39 +1842,39 @@ class DHCPServer:
                 if isinstance(opt_value, str):
                     opt_value = opt_value.encode()
                 vendor_data += bytes([int(opt_code), len(opt_value)]) + opt_value
-           
+            
             if vendor_data:
                 response[pos:pos + 2 + len(vendor_data)] = bytes([DHCP_OPT_VENDOR_SPECIFIC, len(vendor_data)]) + vendor_data
                 pos += 2 + len(vendor_data)
-       
+        
         if CONFIG.get("dhcp_tftp_server"):
             tftp = CONFIG["dhcp_tftp_server"].encode()
             response[pos:pos + 2 + len(tftp)] = bytes([DHCP_OPT_TFTP_SERVER, len(tftp)]) + tftp
             pos += 2 + len(tftp)
-       
+        
         if CONFIG.get("dhcp_bootfile"):
             bootfile = CONFIG["dhcp_bootfile"].encode()
             response[pos:pos + 2 + len(bootfile)] = bytes([DHCP_OPT_BOOTFILE, len(bootfile)]) + bootfile
             pos += 2 + len(bootfile)
-       
+        
         response[pos] = DHCP_OPT_END
-       
+        
         return bytes(response[:pos + 1])
-   
+    
     async def handle_discover(self, packet: dict, addr: Tuple[str, int]):
         mac = packet["chaddr"]
         offered_ip = await self._get_available_ip(mac)
-       
+        
         if not offered_ip:
             log.warning(f"[dhcp] No available IP for {mac}")
             return
-       
+        
         log.info(f"[dhcp] DISCOVER from {mac} -> offering {offered_ip}")
         STATS["dhcp_discovers"] += 1
         STATS["dhcp_offers"] += 1
-       
+        
         response = self._build_dhcp_packet(packet, DHCP_OFFER, offered_ip)
-       
+        
         if packet["flags"] & 0x8000:
             self.sock.sendto(response, ('<broadcast>', 68))
         else:
@@ -1840,39 +1882,39 @@ class DHCPServer:
                 self.sock.sendto(response, (offered_ip, 68))
             except:
                 self.sock.sendto(response, ('<broadcast>', 68))
-   
+    
     async def handle_request(self, packet: dict, addr: Tuple[str, int]):
         mac = packet["chaddr"]
         requested_ip = None
-       
+        
         if DHCP_OPT_REQUESTED_IP in packet["options"]:
             requested_ip = socket.inet_ntoa(packet["options"][DHCP_OPT_REQUESTED_IP])
         elif packet["ciaddr"] != "0.0.0.0":
             requested_ip = packet["ciaddr"]
-       
+        
         if not requested_ip:
             log.warning(f"[dhcp] REQUEST from {mac} without requested IP")
             return
-       
+        
         STATS["dhcp_requests"] += 1
-       
+        
         available_ip = await self._get_available_ip(mac)
-       
+        
         if requested_ip not in self.ip_pool and requested_ip != available_ip:
             log.warning(f"[dhcp] NAK: {mac} requested invalid IP {requested_ip}")
             response = self._build_dhcp_packet(packet, DHCP_NAK, "0.0.0.0")
             self.sock.sendto(response, ('<broadcast>', 68))
             STATS["dhcp_naks"] += 1
             return
-       
+        
         hostname = ""
         if DHCP_OPT_HOSTNAME in packet["options"]:
             hostname = packet["options"][DHCP_OPT_HOSTNAME].decode('utf-8', errors='ignore')
-       
+        
         client_id = ""
         if DHCP_OPT_CLIENT_ID in packet["options"]:
             client_id = packet["options"][DHCP_OPT_CLIENT_ID].hex()
-       
+        
         async with self.lock:
             self.leases[mac] = DHCPLease(
                 mac=mac,
@@ -1884,12 +1926,12 @@ class DHCPServer:
                 static=mac in CONFIG.get("dhcp_static_leases", {})
             )
             self._save_leases()
-       
+        
         log.info(f"[dhcp] ACK {mac} -> {requested_ip} ({hostname or 'no hostname'})")
         STATS["dhcp_acks"] += 1
-       
+        
         response = self._build_dhcp_packet(packet, DHCP_ACK, requested_ip)
-       
+        
         if packet["flags"] & 0x8000:
             self.sock.sendto(response, ('<broadcast>', 68))
         else:
@@ -1897,26 +1939,26 @@ class DHCPServer:
                 self.sock.sendto(response, (requested_ip, 68))
             except:
                 self.sock.sendto(response, ('<broadcast>', 68))
-   
+    
     async def handle_decline(self, packet: dict, addr: Tuple[str, int]):
         mac = packet["chaddr"]
         declined_ip = None
-       
+        
         if DHCP_OPT_REQUESTED_IP in packet["options"]:
             declined_ip = socket.inet_ntoa(packet["options"][DHCP_OPT_REQUESTED_IP])
-       
+        
         log.warning(f"[dhcp] DECLINE from {mac} for {declined_ip} - IP conflict detected")
         STATS["dhcp_declines"] += 1
         STATS["dhcp_conflicts"] += 1
-       
+        
         async with self.lock:
             if mac in self.leases and not self.leases[mac].static:
                 del self.leases[mac]
                 self._save_leases()
-   
+    
     async def handle_release(self, packet: dict, addr: Tuple[str, int]):
         mac = packet["chaddr"]
-       
+        
         async with self.lock:
             if mac in self.leases and not self.leases[mac].static:
                 released_ip = self.leases[mac].ip
@@ -1924,31 +1966,31 @@ class DHCPServer:
                 self._save_leases()
                 log.info(f"[dhcp] RELEASE {mac} -> {released_ip}")
                 STATS["dhcp_releases"] += 1
-   
+    
     async def handle_inform(self, packet: dict, addr: Tuple[str, int]):
         mac = packet["chaddr"]
         client_ip = packet["ciaddr"]
-       
+        
         log.info(f"[dhcp] INFORM from {mac} ({client_ip})")
         STATS["dhcp_informs"] += 1
-       
+        
         response = self._build_dhcp_packet(packet, DHCP_ACK, client_ip)
         self.sock.sendto(response, (client_ip, 68))
-   
+    
     async def handle_packet(self, data: bytes, addr: Tuple[str, int]):
         try:
             packet = self._parse_dhcp_packet(data)
             if not packet:
                 return
-           
+            
             if CONFIG.get("dhcp_relay_support") and packet["giaddr"] != "0.0.0.0":
                 log.debug(f"[dhcp] Relay agent: {packet['giaddr']}")
-           
+            
             if DHCP_OPT_MESSAGE_TYPE not in packet["options"]:
                 return
-           
+            
             msg_type = packet["options"][DHCP_OPT_MESSAGE_TYPE][0]
-           
+            
             if msg_type == DHCP_DISCOVER:
                 await self.handle_discover(packet, addr)
             elif msg_type == DHCP_REQUEST:
@@ -1959,33 +2001,33 @@ class DHCPServer:
                 await self.handle_release(packet, addr)
             elif msg_type == DHCP_INFORM:
                 await self.handle_inform(packet, addr)
-       
+        
         except Exception as e:
             log.error(f"[dhcp] Error handling packet: {e}")
-   
+    
     async def cleanup_expired_leases(self):
         while self.running:
             try:
                 await asyncio.sleep(300)
-               
+                
                 async with self.lock:
-                    expired = [mac for mac, lease in self.leases.items()
+                    expired = [mac for mac, lease in self.leases.items() 
                               if lease.is_expired() and not lease.static]
-                   
+                    
                     for mac in expired:
                         log.info(f"[dhcp] Lease expired: {mac} -> {self.leases[mac].ip}")
                         del self.leases[mac]
-                   
+                    
                     if expired:
                         self._save_leases()
-           
+            
             except Exception as e:
                 log.error(f"[dhcp] Cleanup error: {e}")
-   
+    
     def start(self):
         if self.running:
             return
-       
+        
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -1993,18 +2035,18 @@ class DHCPServer:
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
             self.sock.bind((CONFIG["dhcp_bind"], CONFIG["dhcp_port"]))
             self.sock.setblocking(False)
-           
+            
             self.running = True
             asyncio.create_task(self._receive_loop())
             self.cleanup_task = asyncio.create_task(self.cleanup_expired_leases())
             log.info(f"[dhcp] Listening on {CONFIG['dhcp_bind']}:{CONFIG['dhcp_port']}")
-       
+        
         except Exception as e:
             log.error(f"[dhcp] Failed to start: {e}")
-   
+    
     async def _receive_loop(self):
         loop = asyncio.get_event_loop()
-       
+        
         while self.running:
             try:
                 data, addr = await loop.sock_recvfrom(self.sock, 4096)
@@ -2013,7 +2055,7 @@ class DHCPServer:
                 if self.running:
                     log.error(f"[dhcp] Receive error: {e}")
                 await asyncio.sleep(0.1)
-   
+    
     def stop(self):
         self.running = False
         if self.cleanup_task:
@@ -2022,21 +2064,21 @@ class DHCPServer:
             self.sock.close()
         self._save_leases()
         log.info("[dhcp] Stopped")
-   
+    
     def get_leases(self) -> List[dict]:
         return [lease.to_dict() for lease in self.leases.values() if not lease.is_expired()]
-   
+    
     def delete_lease(self, mac: str) -> bool:
         if mac in self.leases and not self.leases[mac].static:
             del self.leases[mac]
             self._save_leases()
             return True
         return False
-   
+    
     def add_static_lease(self, mac: str, ip: str, hostname: str = "") -> bool:
         if ip not in self.ip_pool:
             return False
-       
+        
         self.leases[mac] = DHCPLease(
             mac=mac,
             ip=ip,
@@ -2045,18 +2087,20 @@ class DHCPServer:
             lease_start=time.time(),
             lease_end=time.time() + (365 * 86400)
         )
-       
+        
         if "dhcp_static_leases" not in CONFIG:
             CONFIG["dhcp_static_leases"] = {}
         CONFIG["dhcp_static_leases"][mac] = ip
-       
+        
         self._save_leases()
         return True
+
 DHCP_SERVER = DHCPServer()
+
 # ==================== API ENDPOINTS ====================
 async def api_stats(req):
     uptime = int(time.time() - STATS.get("start_time", time.time()))
-   
+    
     # Get upstream health and fill in missing servers from config
     upstream_health = UPSTREAM_HEALTH.get_status()
     for server in CONFIG.get("upstream_servers", []):
@@ -2068,7 +2112,7 @@ async def api_stats(req):
                 "success": 0,
                 "avg_latency": 0
             }
-   
+    
     # Map internal stats to UI-expected keys
     return web.json_response({
         # Main stats - mapped for UI compatibility
@@ -2080,38 +2124,40 @@ async def api_stats(req):
         "ecs_stripped": STATS.get("dns_ecs_stripped", 0),
         "case_randomized": STATS.get("dns_0x20", 0),
         "dnssec_valid": STATS.get("dns_dnssec_validated", 0),
-       
+        
         # DHCP stats
         "dhcp_offers": STATS.get("dhcp_offers", 0),
         "dhcp_acks": STATS.get("dhcp_acks", 0),
         "active_leases": len(DHCP_SERVER.leases) if DHCP_SERVER else 0,
         "pool_total": len(DHCP_SERVER.ip_pool) if DHCP_SERVER else 0,
-       
+        
         # System stats
         "uptime_seconds": uptime,
         "dns_running": dns_transport is not None,
         "dhcp_running": DHCP_SERVER.running if DHCP_SERVER else False,
         "queries_per_second": STATS.get("dns_queries", 0) / max(uptime, 1),
-       
+        
         # Storage stats
         "cache_size": DNS_CACHE.size(),
         "blocklist_size": BLOCKLIST.size,
         "whitelist_size": WHITELIST.size,
         "blacklist_size": BLACKLIST.size,
-       
+        
         # Health & misc
         "upstream_health": upstream_health,
         "leases": [lease.to_dict() for lease in DHCP_SERVER.leases.values()] if DHCP_SERVER else [],
-       
+        
         # Raw STATS for debugging
         **STATS
     })
+
 async def api_config_get(req):
     return web.json_response(CONFIG)
+
 async def api_config_update(req):
     try:
         data = await req.json()
-       
+        
         # Parse upstream_servers - extract IPs from DoH URLs if needed
         if "upstream_servers" in data:
             servers = []
@@ -2122,12 +2168,12 @@ async def api_config_update(req):
                 "doh.opendns.com": ["208.67.222.222", "208.67.220.220"],
                 "dns.adguard-dns.com": ["94.140.14.14", "94.140.15.15"]
             }
-           
+            
             for server in data["upstream_servers"]:
                 server = server.strip()
                 if not server:
                     continue
-                   
+                    
                 # Check if it's a DoH URL
                 if server.startswith("http"):
                     # Extract domain and map to IPs
@@ -2138,13 +2184,13 @@ async def api_config_update(req):
                 else:
                     # It's an IP address
                     servers.append(server)
-           
-            data["upstream_servers"] = list(set(servers)) # Remove duplicates
-       
+            
+            data["upstream_servers"] = list(set(servers))  # Remove duplicates
+        
         for key, value in data.items():
             if key in CONFIG:
                 CONFIG[key] = value
-       
+        
         # Save to file
         try:
             with open('/config/options.json', 'r') as f:
@@ -2155,20 +2201,20 @@ async def api_config_update(req):
             log.info(f"[api] Config saved to /config/options.json")
         except Exception as e:
             log.warning(f"[api] Could not save config to file: {e}")
-       
-        save_user_config()
-       
+        
         return web.json_response({"status": "updated", "config": CONFIG})
     except Exception as e:
         log.error(f"[api] Config update error: {e}")
         return web.json_response({"error": str(e)}, status=400)
+
 async def api_cache_flush(req):
     await DNS_CACHE.flush()
     return web.json_response({"status": "flushed"})
+
 async def api_blocklist_reload(req):
     try:
         await BLOCKLIST.clear()
-       
+        
         for bl in CONFIG["blocklists"]:
             if Path(bl).exists():
                 with open(bl) as f:
@@ -2176,11 +2222,12 @@ async def api_blocklist_reload(req):
                         line = line.strip()
                         if line and not line.startswith('#'):
                             BLOCKLIST.add_sync(line)
-       
-        await save_blocklists_local() # Save after reload
+        
+        await save_blocklists_local()  # Save after reload
         return web.json_response({"status": "reloaded", "size": BLOCKLIST.size})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=400)
+
 async def api_blocklist_update(req):
     try:
         await BLOCKLIST_UPDATER.update_blocklists()
@@ -2191,6 +2238,7 @@ async def api_blocklist_update(req):
         })
     except Exception as e:
         return web.json_response({"error": str(e)}, status=400)
+
 async def api_cache_prewarm(req):
     """Trigger manual cache prewarm"""
     try:
@@ -2201,6 +2249,7 @@ async def api_cache_prewarm(req):
         })
     except Exception as e:
         return web.json_response({"error": str(e)}, status=400)
+
 async def api_query_history(req):
     """Get query history stats"""
     try:
@@ -2212,48 +2261,52 @@ async def api_query_history(req):
         })
     except Exception as e:
         return web.json_response({"error": str(e)}, status=400)
+
 async def api_blocklist_upload(req):
     try:
         data = await req.post()
         if 'file' not in data:
             return web.json_response({"error": "No file provided"}, status=400)
-       
+        
         file_field = data['file']
         content = file_field.file.read().decode('utf-8')
-       
+        
         count = 0
         for line in content.split('\n'):
             line = line.strip()
             if line and not line.startswith('#'):
                 BLOCKLIST.add_sync(line)
                 count += 1
-       
-        await save_blocklists_local() # Save after upload
+        
+        await save_blocklists_local()  # Save after upload
         return web.json_response({"status": "uploaded", "added": count, "total": BLOCKLIST.size})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=400)
+
 async def api_blacklist_add(req):
     try:
         data = await req.json()
         domain = data.get('domain', '').strip()
         if domain:
             await BLACKLIST.add(domain)
-            await save_blocklists_local() # Save after adding
+            await save_blocklists_local()  # Save after adding
             return web.json_response({"status": "added", "domain": domain})
         return web.json_response({"error": "No domain provided"}, status=400)
     except Exception as e:
         return web.json_response({"error": str(e)}, status=400)
+
 async def api_blacklist_remove(req):
     try:
         data = await req.json()
         domain = data.get('domain', '').strip()
         if domain:
             await BLACKLIST.remove(domain)
-            await save_blocklists_local() # Save after removing
+            await save_blocklists_local()  # Save after removing
             return web.json_response({"status": "removed", "domain": domain})
         return web.json_response({"error": "No domain provided"}, status=400)
     except Exception as e:
         return web.json_response({"error": str(e)}, status=400)
+
 async def api_whitelist_add(req):
     try:
         data = await req.json()
@@ -2264,6 +2317,7 @@ async def api_whitelist_add(req):
         return web.json_response({"error": "No domain provided"}, status=400)
     except Exception as e:
         return web.json_response({"error": str(e)}, status=400)
+
 async def api_whitelist_remove(req):
     try:
         data = await req.json()
@@ -2274,44 +2328,44 @@ async def api_whitelist_remove(req):
         return web.json_response({"error": "No domain provided"}, status=400)
     except Exception as e:
         return web.json_response({"error": str(e)}, status=400)
-async def api_rewrite_add(req (req):
+
+async def api_rewrite_add(req):
     try:
         data = await req.json()
         domain = data.get('domain', '').strip()
         record_type = data.get('type', 'A').upper()
         value = data.get('value', '').strip()
         ttl = int(data.get('ttl', 300))
-       
+        
         if not domain or not value:
             return web.json_response({"error": "Domain and value required"}, status=400)
-       
+        
         if "dns_rewrites" not in CONFIG:
             CONFIG["dns_rewrites"] = {}
-       
+        
         CONFIG["dns_rewrites"][domain] = {
             "type": record_type,
             "value": value,
             "ttl": ttl
         }
-       
-        save_user_config()
-       
+        
         return web.json_response({"status": "added", "domain": domain})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=400)
+
 async def api_rewrite_remove(req):
     try:
         data = await req.json()
         domain = data.get('domain', '').strip()
-       
+        
         if domain in CONFIG.get("dns_rewrites", {}):
             del CONFIG["dns_rewrites"][domain]
-            save_user_config()
             return web.json_response({"status": "removed", "domain": domain})
-       
+        
         return web.json_response({"error": "Rewrite not found"}, status=404)
     except Exception as e:
         return web.json_response({"error": str(e)}, status=400)
+
 async def api_local_record_add(req):
     try:
         data = await req.json()
@@ -2319,77 +2373,78 @@ async def api_local_record_add(req):
         record_type = data.get('type', 'A').upper()
         value = data.get('value', '').strip()
         ttl = int(data.get('ttl', 300))
-       
+        
         if not domain or not value:
             return web.json_response({"error": "Domain and value required"}, status=400)
-       
+        
         if "local_records" not in CONFIG:
             CONFIG["local_records"] = {}
-       
+        
         CONFIG["local_records"][domain] = {
             "type": record_type,
             "value": value,
             "ttl": ttl
         }
-       
-        save_user_config()
-       
+        
         return web.json_response({"status": "added", "domain": domain})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=400)
+
 async def api_local_record_remove(req):
     try:
         data = await req.json()
         domain = data.get('domain', '').strip()
-       
+        
         if domain in CONFIG.get("local_records", {}):
             del CONFIG["local_records"][domain]
-            save_user_config()
             return web.json_response({"status": "removed", "domain": domain})
-       
+        
         return web.json_response({"error": "Record not found"}, status=404)
     except Exception as e:
         return web.json_response({"error": str(e)}, status=400)
+
 async def api_dhcp_leases(req):
     if not DHCP_SERVER:
         return web.json_response({"error": "DHCP not enabled"}, status=400)
     return web.json_response({"leases": DHCP_SERVER.get_leases()})
+
 async def api_dhcp_static_add(req):
     try:
         if not DHCP_SERVER:
             return web.json_response({"error": "DHCP not enabled"}, status=400)
-       
+        
         data = await req.json()
         mac = data.get('mac', '').strip()
         ip = data.get('ip', '').strip()
         hostname = data.get('hostname', '').strip()
-       
+        
         if not mac or not ip:
             return web.json_response({"error": "MAC and IP required"}, status=400)
-       
+        
         if DHCP_SERVER.add_static_lease(mac, ip, hostname):
-            save_user_config()
             return web.json_response({"status": "added"})
         else:
             return web.json_response({"error": "IP not in pool"}, status=400)
-   
+    
     except Exception as e:
         return web.json_response({"error": str(e)}, status=400)
+
 async def api_dhcp_lease_delete(req):
     try:
         if not DHCP_SERVER:
             return web.json_response({"error": "DHCP not enabled"}, status=400)
-       
+        
         data = await req.json()
         mac = data.get('mac', '').strip()
-       
+        
         if DHCP_SERVER.delete_lease(mac):
             return web.json_response({"status": "deleted"})
         else:
             return web.json_response({"error": "Lease not found or static"}, status=400)
-   
+    
     except Exception as e:
         return web.json_response({"error": str(e)}, status=400)
+
 async def api_health(req):
     healthy_upstreams = UPSTREAM_HEALTH.get_healthy()
     return web.json_response({
@@ -2400,6 +2455,7 @@ async def api_health(req):
         "dns_running": dns_transport is not None,
         "dhcp_running": DHCP_SERVER.running if DHCP_SERVER else False
     })
+
 # ==================== JARVIS INTEGRATION ====================
 def register_routes(app):
     app.router.add_get('/api/veil/stats', api_stats)
@@ -2423,25 +2479,26 @@ def register_routes(app):
     app.router.add_get('/api/veil/dhcp/leases', api_dhcp_leases)
     app.router.add_post('/api/veil/dhcp/static', api_dhcp_static_add)
     app.router.add_delete('/api/veil/dhcp/lease', api_dhcp_lease_delete)
-   
+    
     log.info("[veil] Routes registered")
+
 async def init_veil():
     log.info("=" * 60)
     log.info("[veil] 🧩 Privacy-First DNS/DHCP initializing")
     log.info("=" * 60)
-   
+    
     # Initialize global objects
     global DNS_CACHE, BLOCKLIST, WHITELIST, BLACKLIST, UPSTREAM_HEALTH, CONN_POOL, DHCP_SERVER
     global RATE_LIMITER, CACHE_PREWARMER, BLOCKLIST_UPDATER
-   
+    
     log.info(f"[veil] Enabled: {CONFIG.get('enabled', True)}")
     log.info(f"[veil] DHCP Enabled: {CONFIG.get('dhcp_enabled', False)}")
     log.info(f"[veil] DNS Port: {CONFIG.get('dns_port', 53)}")
     log.info(f"[veil] DNS Bind: {CONFIG.get('dns_bind', '0.0.0.0')}")
-   
+    
     STATS["start_time"] = time.time()
     STATS["blocklist_last_update"] = 0
-   
+    
     # Initialize all DNS stats to 0
     STATS["dns_queries"] = 0
     STATS["dns_blocked"] = 0
@@ -2452,32 +2509,32 @@ async def init_veil():
     STATS["dns_0x20"] = 0
     STATS["dns_dnssec_validated"] = 0
     STATS["dns_rate_limited"] = 0
-   
+    
     DNS_CACHE = LRUCache(max_size=CONFIG.get("cache_max_size", 10000))
     log.info(f"[veil] DNS Cache initialized (max: {CONFIG.get('cache_max_size', 10000)})")
-   
+    
     UPSTREAM_HEALTH = UpstreamHealth()
     log.info(f"[veil] Upstream health monitor initialized")
-   
+    
     RATE_LIMITER = RateLimiter()
     log.info(f"[veil] Rate limiter initialized")
-   
+    
     CACHE_PREWARMER = CachePrewarmer()
     log.info(f"[veil] Cache prewarmer initialized")
-   
+    
     BLOCKLIST_UPDATER = BlocklistUpdater()
     log.info(f"[veil] Blocklist updater initialized")
-   
+    
     CONN_POOL = await get_conn_pool()
     log.info(f"[veil] Connection pool initialized")
-   
+    
     DHCP_SERVER = DHCPServer()
     log.info(f"[veil] DHCP server initialized")
-   
+    
     # Load blocklists
     log.info("[veil] Loading blocklists...")
     loaded_local = await load_blocklists_local()
-   
+    
     if not loaded_local:
         log.info("[veil] No local blocklists found, loading from files")
         for bl in CONFIG.get("blocklists", []):
@@ -2490,29 +2547,29 @@ async def init_veil():
                             BLOCKLIST.add_sync(line)
                             count += 1
                 log.info(f"[veil] Loaded {count:,} domains from {bl}")
-   
+    
     log.info(f"[veil] Blocklist: {BLOCKLIST.size:,} domains")
-   
+    
     # Start rate limiter
     RATE_LIMITER.start()
     log.info(f"[veil] Rate limiter started")
-   
+    
     # Start cache prewarmer
     if CONFIG.get("cache_prewarm_enabled"):
         CACHE_PREWARMER.start()
         log.info(f"[veil] Cache prewarm: every {CONFIG['cache_prewarm_interval']}s")
-   
+    
     # Start blocklist auto-updater
     if CONFIG.get("blocklist_update_enabled"):
         BLOCKLIST_UPDATER.start()
         log.info(f"[veil] Blocklist auto-update: every {CONFIG['blocklist_update_interval']}s")
-   
+    
     # Start DNS
     log.info("[veil] Attempting to start DNS server...")
     if CONFIG.get("enabled", True):
         try:
             await start_dns()
-           
+            
             features = []
             if CONFIG.get("doh_enabled"):
                 features.append("DoH")
@@ -2536,14 +2593,14 @@ async def init_veil():
                 features.append(f"rate limit ({CONFIG['rate_limit_qps']} qps)")
             if CONFIG.get("safesearch_enabled"):
                 features.append("SafeSearch")
-           
+            
             log.info(f"[veil] Privacy: {', '.join(features)}")
         except Exception as e:
             log.error(f"[veil] ❌ FAILED TO START DNS SERVER: {e}")
             log.error("[veil] Veil will continue without DNS functionality")
     else:
         log.warning("[veil] DNS is DISABLED in config")
-   
+    
     # Start DHCP
     if CONFIG.get("dhcp_enabled", False):
         log.info("[veil] Attempting to start DHCP server...")
@@ -2554,30 +2611,33 @@ async def init_veil():
             log.error(f"[veil] ❌ FAILED TO START DHCP SERVER: {e}")
     else:
         log.warning("[veil] DHCP is DISABLED in config")
-   
+    
     log.info("=" * 60)
     log.info("[veil] ✅ Initialization complete")
     log.info("=" * 60)
+
 async def cleanup_veil():
     log.info("[veil] Shutting down")
     RATE_LIMITER.stop()
     CACHE_PREWARMER.stop()
     BLOCKLIST_UPDATER.stop()
-   
+    
     # Save blocklists before shutdown
     await save_blocklists_local()
-    save_user_config()
-   
+    
     if dns_transport:
         dns_transport.close()
     if DHCP_SERVER:
         DHCP_SERVER.stop()
     if CONN_POOL:
         await CONN_POOL.close()
+
 __version__ = "2.0.0"
 __description__ = "Privacy-First DNS/DHCP - Complete with DNSSEC, DoQ, Rate Limiting, SafeSearch"
+
 if __name__ == "__main__":
     print("🧩 Veil - Privacy-First DNS/DHCP Server")
+
 async def start_background_services(app):
     """Start background services on app startup"""
     try:
@@ -2588,6 +2648,7 @@ async def start_background_services(app):
         log.error(f"[veil] CRITICAL: Failed to start background services: {e}")
         import traceback
         log.error(traceback.format_exc())
+
 async def cleanup_background_services(app):
     """Cleanup background services on app shutdown"""
     try:
@@ -2596,19 +2657,22 @@ async def cleanup_background_services(app):
         log.info("[veil] Cleanup complete")
     except Exception as e:
         log.error(f"[veil] Error during cleanup: {e}")
+
 if __name__ == "__main__":
     import os
     from aiohttp import web
+
     # Load configuration
     cfg_path = "/config/options.json"
     ui_port = 8080
     bind_addr = "0.0.0.0"
+
     try:
         import json
         if os.path.exists(cfg_path):
             with open(cfg_path, "r") as f:
                 data = json.load(f)
-               
+                
                 # Map Home Assistant addon config keys to internal keys
                 if "dns_enabled" in data:
                     data["enabled"] = data["dns_enabled"]
@@ -2620,7 +2684,7 @@ if __name__ == "__main__":
                     data["ui_bind"] = data["ui_bind"]
                 if "ui_port" in data:
                     data["ui_port"] = data["ui_port"]
-               
+                
                 CONFIG.update(data)
                 ui_port = int(data.get("ui_port", 8080))
                 bind_addr = data.get("ui_bind", "0.0.0.0")
@@ -2629,29 +2693,18 @@ if __name__ == "__main__":
                 log.info(f"[veil] DHCP enabled: {CONFIG.get('dhcp_enabled', False)}")
     except Exception as e:
         log.warning(f"[veil] Could not read {cfg_path}: {e}")
-    
-    # Load persistent user config from /share/veil if exists (overrides options.json for user settings)
-    user_cfg_path = USER_CONFIG_PATH
-    if os.path.exists(user_cfg_path):
-        try:
-            with open(user_cfg_path, "r") as f:
-                user_data = json.load(f)
-            CONFIG.update(user_data)
-            log.info(f"[veil] Loaded persistent user settings from {user_cfg_path}")
-        except Exception as e:
-            log.warning(f"[veil] Could not load persistent user settings: {e}")
-    
+
     # Create web application
     app = web.Application()
-   
+    
     # Register API routes
     register_routes(app)
-   
+    
     # Serve UI
     ui_path = os.path.join(os.path.dirname(__file__), "ui")
     if not os.path.exists(ui_path):
         ui_path = "/app/ui"
-   
+    
     if not os.path.exists(ui_path):
         log.warning(f"[veil] UI path {ui_path} not found, serving placeholder")
         async def placeholder(_):
@@ -2660,12 +2713,14 @@ if __name__ == "__main__":
     else:
         app.router.add_static("/", ui_path, show_index=True)
         log.info(f"[veil] Serving UI from {ui_path}")
+
     # Setup startup/cleanup hooks
     app.on_startup.append(start_background_services)
     app.on_cleanup.append(cleanup_background_services)
+
     log.info(f"🌐 Web UI will be available at http://{bind_addr}:{ui_port}")
     log.info(f"🧩 Veil v2.0.0 - Privacy-First DNS/DHCP")
-   
+    
     # Run with proper error handling
     try:
         web.run_app(app, host=bind_addr, port=ui_port, access_log=None)
