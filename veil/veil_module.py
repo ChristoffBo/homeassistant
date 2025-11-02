@@ -154,7 +154,6 @@ CONFIG = {
   
   "whitelist": [],
   "blacklist": []
-}
     
     # DNS Rewrites
     "local_records": {},
