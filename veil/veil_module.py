@@ -689,13 +689,16 @@ class BlocklistUpdater:
             log.error(f"[blocklist] Failed to reload config: {e}")
             return
 
-        if not CONFIG.get("blocklist_update_enabled", False):
+        # 🔧 Read 'blocklist_update_enabled' from top level OR nested 'ui' section
+        update_enabled = CONFIG.get("blocklist_update_enabled") or CONFIG.get("ui", {}).get("blocklist_update_enabled")
+        if not update_enabled:
             log.warning("[blocklist] Update disabled in config")
             return
 
-        urls = CONFIG.get("blocklist_urls", [])
+        # 🔧 Read URLs from top level OR nested 'ui' section
+        urls = CONFIG.get("blocklist_urls") or CONFIG.get("ui", {}).get("blocklist_urls", [])
         if not urls:
-            log.warning("[blocklist] No URLs configured")
+            log.warning(f"[blocklist] No URLs configured. Available keys: {list(CONFIG.keys())}")
             return
 
         log.info("[blocklist] Starting update")
@@ -728,7 +731,8 @@ class BlocklistUpdater:
             try:
                 interval = CONFIG.get("blocklist_update_interval", 86400)
                 await asyncio.sleep(interval)
-                if CONFIG.get("blocklist_update_enabled", False):
+                update_enabled = CONFIG.get("blocklist_update_enabled") or CONFIG.get("ui", {}).get("blocklist_update_enabled")
+                if update_enabled:
                     await self.update_blocklists()
             except asyncio.CancelledError:
                 break
