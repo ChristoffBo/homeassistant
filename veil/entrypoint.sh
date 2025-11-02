@@ -14,7 +14,7 @@ chown -R root:root "${DATA_DIR}" "${SHARE_DIR}" "${CONFIG_DIR}" /var/log/veil
 if [ ! -f "${OPTIONS_FILE}" ]; then
   echo "Creating default options.json in /data..."
   cp -a "${DEFAULT_OPTS}" "${OPTIONS_FILE}"
-  chmod 600 "${OPTIONS_FILE}"
+  chmod 777 "${OPTIONS_FILE}"
 fi
 
 # 🔗 Symlink for legacy path expectations
