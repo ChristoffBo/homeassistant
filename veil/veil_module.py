@@ -2427,5 +2427,39 @@ __description__ = "Privacy-First DNS/DHCP - Complete with DNSSEC, DoQ, Rate Limi
 
 if __name__ == "__main__":
     print("🧩 Veil - Privacy-First DNS/DHCP Server")
-    print("This module integrates with Jarvis Prime")
-    print("Do not run standalone")
+
+if __name__ == "__main__":
+    import os
+    from aiohttp import web
+
+    # Load configuration
+    cfg_path = "/config/options.json"
+    ui_port = 8080
+    bind_addr = "0.0.0.0"
+
+    try:
+        import json
+        if os.path.exists(cfg_path):
+            with open(cfg_path, "r") as f:
+                data = json.load(f)
+                ui_port = int(data.get("ui_port", 8080))
+                bind_addr = data.get("ui_bind", "0.0.0.0")
+    except Exception as e:
+        print(f"[WARN] Could not read {cfg_path}: {e}")
+
+    app = web.Application()
+    ui_path = os.path.join(os.path.dirname(__file__), "ui")
+
+    if not os.path.exists(ui_path):
+        print(f"[WARN] UI path {ui_path} not found, serving placeholder.")
+        async def placeholder(_):
+            return web.Response(text="🧩 Veil is running, but no UI files found.")
+        app.router.add_get("/", placeholder)
+    else:
+        app.router.add_static("/", ui_path, show_index=True)
+        print(f"[INFO] Serving UI from {ui_path}")
+
+    print(f"🌐 Web UI available at http://{bind_addr}:{ui_port}")
+    web.run_app(app, host=bind_addr, port=ui_port)
+
+    
