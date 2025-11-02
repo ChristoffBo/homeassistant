@@ -902,6 +902,9 @@
                     </div>
                 </div>
                 
+                <label class="stat-label">Upstream DNS Servers (one per line)</label>
+                <textarea id="upstream-servers" rows="4" style="width: 100%; background: rgba(0, 255, 242, 0.05); border: 1px solid var(--grid-color); color: var(--text-primary); padding: 10px; border-radius: 4px; font-family: 'Share Tech Mono', monospace; font-size: 12px; margin-bottom: 10px;"></textarea>
+                
                 <label class="stat-label">DNS Port</label>
                 <input type="number" id="dns-port" value="53" />
                 
@@ -1264,6 +1267,7 @@
 
         // Populate config UI
         function populateConfigUI() {
+            document.getElementById('upstream-servers').value = (config.upstream_servers || []).join('\n');
             document.getElementById('dns-port').value = config.dns_port || 53;
             document.getElementById('cache-ttl').value = config.cache_ttl || 3600;
             document.getElementById('cache-max-size').value = config.cache_max_size || 10000;
@@ -1303,6 +1307,10 @@
             const updatedConfig = { ...config };
             
             if (section === 'dns') {
+                updatedConfig.upstream_servers = document.getElementById('upstream-servers').value
+                    .split('\n')
+                    .map(s => s.trim())
+                    .filter(s => s);
                 updatedConfig.dns_port = parseInt(document.getElementById('dns-port').value);
                 updatedConfig.cache_ttl = parseInt(document.getElementById('cache-ttl').value);
                 updatedConfig.cache_max_size = parseInt(document.getElementById('cache-max-size').value);
