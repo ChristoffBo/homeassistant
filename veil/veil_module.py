@@ -630,21 +630,21 @@ async def load_blocklists_local():
         return False
 
 # ==================== BLOCKLIST AUTO-UPDATE ====================
-class BlocklistUpdater:                     ← 0 spaces
-    def __init__(self):                     ← 4 spaces
-        self.running = False                ← 8 spaces
+class BlocklistUpdater:
+    def __init__(self):
+        self.running = False
         self.update_task = None
         self.last_update = 0
 
-    async def download_blocklist(self, url: str) -> List[str]:    ← 4 spaces
+    async def download_blocklist(self, url: str) -> List[str]:
         """
         Download and parse a blocklist from multiple formats:
         - hosts-style ("0.0.0.0 domain.com")
         - adblock-style ("||domain.com^")
         - plain domain per line ("domain.com")
         """
-        try:                                                ← 8 spaces
-            session = await get_conn_pool()                 ← 12 spaces
+        try:
+            session = await get_conn_pool()
             log.info(f"[blocklist] Downloading: {url}")
 
             async with session.get(url, timeout=ClientTimeout(total=60)) as resp:
@@ -689,6 +689,29 @@ class BlocklistUpdater:                     ← 0 spaces
         except Exception as e:
             log.error(f"[blocklist] Error downloading {url}: {e}")
             return []
+
+    async def update_blocklists(self):
+        if not CONFIG.get("blocklist_update_enabled"):
+            return
+
+        log.info("[blocklist] Starting update")
+        urls = CONFIG.get("blocklist_urls", [])
+        if not urls:
+            log.debug("[blocklist] No URLs configured")
+            return
+
+        total_added = 0
+        for url in urls:
+            domains = await self.download_blocklist(url)
+            for domain in domains:
+                BLOCKLIST.add_sync(domain)
+                total_added += 1
+
+        STATS["blocklist_updates"] += 1
+        STATS["blocklist_last_update"] = time.time()
+        self.last_update = time.time()
+        log.info(f"[blocklist] Update complete. Added {total_added:,} domains")
+
 
 
         
