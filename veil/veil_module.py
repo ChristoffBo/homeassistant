@@ -1446,7 +1446,16 @@ async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
         if cached:
             STATS["dns_cached"] += 1
             return cached
-        
+        # 🔒 Blocklist enforcement (live matcher)
+        if CONFIG.get("blocking_enabled"):
+            domain_parts = qname.split('.')
+            for i in range(len(domain_parts)):
+                sub = '.'.join(domain_parts[i:])
+                if await BLOCKLIST.contains(sub):
+                    STATS["dns_blocked"] += 1
+                    log.info(f"[dns] Blocked (blocklist): {qname} → NXDOMAIN")
+                    return build_blocked_response(query)
+
         # Query upstream
         STATS["dns_upstream"] += 1
         response_wire = await query_upstream(qname, qtype)
