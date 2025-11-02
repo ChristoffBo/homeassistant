@@ -1375,8 +1375,7 @@ async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
         qname = str(query.question[0].name).lower().strip('.')
         qtype = query.question[0].rdtype
         
-        if not CONFIG.get("zero_log"):
-            log.debug(f"[dns] {addr[0]}: {qname} ({dns.rdatatype.to_text(qtype)})")
+        log.info(f"[dns] Query from {addr[0]}: {qname} ({dns.rdatatype.to_text(qtype)})")
         
         STATS["dns_queries"] += 1
         
@@ -1503,8 +1502,16 @@ class DNSProtocol(asyncio.DatagramProtocol):
         asyncio.create_task(self.handle_query(data, addr))
     
     async def handle_query(self, data, addr):
-        response = await process_dns_query(data, addr)
-        self.transport.sendto(response, addr)
+        try:
+            response = await process_dns_query(data, addr)
+            if response:
+                self.transport.sendto(response, addr)
+            else:
+                log.warning(f"[dns] No response generated for query from {addr[0]}")
+        except Exception as e:
+            log.error(f"[dns] Error handling query from {addr[0]}: {e}")
+            import traceback
+            log.error(traceback.format_exc())
 
 dns_transport = None
 
@@ -2140,11 +2147,54 @@ async def api_config_get(req):
 async def api_config_update(req):
     try:
         data = await req.json()
+        
+        # Parse upstream_servers - extract IPs from DoH URLs if needed
+        if "upstream_servers" in data:
+            servers = []
+            doh_map = {
+                "cloudflare-dns.com": ["1.1.1.1", "1.0.0.1"],
+                "dns.google": ["8.8.8.8", "8.8.4.4"],
+                "dns.quad9.net": ["9.9.9.9", "149.112.112.112"],
+                "doh.opendns.com": ["208.67.222.222", "208.67.220.220"],
+                "dns.adguard-dns.com": ["94.140.14.14", "94.140.15.15"]
+            }
+            
+            for server in data["upstream_servers"]:
+                server = server.strip()
+                if not server:
+                    continue
+                    
+                # Check if it's a DoH URL
+                if server.startswith("http"):
+                    # Extract domain and map to IPs
+                    for domain, ips in doh_map.items():
+                        if domain in server:
+                            servers.extend(ips)
+                            break
+                else:
+                    # It's an IP address
+                    servers.append(server)
+            
+            data["upstream_servers"] = list(set(servers))  # Remove duplicates
+        
         for key, value in data.items():
             if key in CONFIG:
                 CONFIG[key] = value
-        return web.json_response({"status": "updated"})
+        
+        # Save to file
+        try:
+            with open('/config/options.json', 'r') as f:
+                file_config = json.load(f)
+            file_config.update(data)
+            with open('/config/options.json', 'w') as f:
+                json.dump(file_config, f, indent=2)
+            log.info(f"[api] Config saved to /config/options.json")
+        except Exception as e:
+            log.warning(f"[api] Could not save config to file: {e}")
+        
+        return web.json_response({"status": "updated", "config": CONFIG})
     except Exception as e:
+        log.error(f"[api] Config update error: {e}")
         return web.json_response({"error": str(e)}, status=400)
 
 async def api_cache_flush(req):
