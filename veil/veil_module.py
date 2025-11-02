@@ -1353,7 +1353,10 @@ def strip_ecs(response_wire: bytes) -> bytes:
         response = dns.message.from_wire(response_wire)
         if response.edns >= 0:
             if hasattr(response, 'options'):
+                original_len = len(response.options)
                 response.options = [opt for opt in response.options if opt.otype != 8]
+                if len(response.options) < original_len:
+                    STATS["dns_ecs_stripped"] += 1
         return response.to_wire()
     except:
         return response_wire
@@ -2079,19 +2082,44 @@ DHCP_SERVER = DHCPServer()
 
 # ==================== API ENDPOINTS ====================
 async def api_stats(req):
-    uptime = int(time.time() - STATS["start_time"])
+    uptime = int(time.time() - STATS.get("start_time", time.time()))
+    
+    # Map internal stats to UI-expected keys
     return web.json_response({
-        **STATS,
+        # Main stats - mapped for UI compatibility
+        "total_queries": STATS.get("dns_queries", 0),
+        "blocked": STATS.get("dns_blocked", 0),
+        "cache_hits": STATS.get("dns_cached", 0),
+        "upstream_queries": STATS.get("dns_upstream", 0),
+        "padded": STATS.get("dns_padded", 0),
+        "ecs_stripped": STATS.get("dns_ecs_stripped", 0),
+        "case_randomized": STATS.get("dns_0x20", 0),
+        "dnssec_valid": STATS.get("dns_dnssec_validated", 0),
+        
+        # DHCP stats
+        "dhcp_offers": STATS.get("dhcp_offers", 0),
+        "dhcp_acks": STATS.get("dhcp_acks", 0),
+        "active_leases": len(DHCP_SERVER.leases) if DHCP_SERVER else 0,
+        "pool_total": len(DHCP_SERVER.ip_pool) if DHCP_SERVER else 0,
+        
+        # System stats
         "uptime_seconds": uptime,
         "dns_running": dns_transport is not None,
         "dhcp_running": DHCP_SERVER.running if DHCP_SERVER else False,
+        "queries_per_second": STATS.get("dns_queries", 0) / max(uptime, 1),
+        
+        # Storage stats
         "cache_size": DNS_CACHE.size(),
-        "query_history_size": QUERY_HISTORY.size(),
         "blocklist_size": BLOCKLIST.size,
         "whitelist_size": WHITELIST.size,
         "blacklist_size": BLACKLIST.size,
+        
+        # Health & misc
         "upstream_health": UPSTREAM_HEALTH.get_status(),
-        "dhcp_leases": len(DHCP_SERVER.leases) if DHCP_SERVER else 0
+        "leases": [lease.to_dict() for lease in DHCP_SERVER.leases.values()] if DHCP_SERVER else [],
+        
+        # Raw STATS for debugging
+        **STATS
     })
 
 async def api_config_get(req):
