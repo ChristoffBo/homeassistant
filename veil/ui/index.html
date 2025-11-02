@@ -1028,6 +1028,12 @@
                     </div>
                 </div>
 
+                <!-- Blocklist Count Display -->
+                <div style="text-align: center; margin: 20px 0; padding: 20px; background: rgba(0, 255, 242, 0.1); border: 2px solid var(--accent-cyan); border-radius: 8px;">
+                    <div style="font-size: 48px; color: var(--accent-cyan); font-weight: bold; text-shadow: 0 0 30px var(--accent-cyan);" id="blocklist-count-big">0</div>
+                    <div style="font-size: 14px; color: var(--text-secondary); letter-spacing: 2px; margin-top: 5px;">DOMAINS BLOCKED</div>
+                </div>
+
                 <label class="stat-label">Blocklists (one URL per line)</label>
                 <textarea id="blocklists" rows="6" style="width: 100%; background: rgba(0, 255, 242, 0.05); border: 1px solid var(--grid-color); color: var(--text-primary); padding: 10px; border-radius: 4px; font-family: 'Share Tech Mono', monospace; font-size: 12px;"></textarea>
 
@@ -1132,6 +1138,10 @@
                 
                 document.getElementById('blocklist-size').innerHTML = 
                     `${(stats.blocklist_size || 0).toLocaleString()}<span class="stat-unit">domains</span>`;
+                
+                // Update big blocklist counter in Blocking tab
+                document.getElementById('blocklist-count-big').textContent = 
+                    (stats.blocklist_size || 0).toLocaleString();
                 
                 // Update upstream servers
                 updateUpstreamServers(stats.upstream_health || {});
