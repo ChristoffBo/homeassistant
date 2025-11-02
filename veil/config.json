@@ -42,7 +42,15 @@
     "doh_enabled": true,
     "dot_enabled": true,
     "doq_enabled": true,
-    "ui_enabled": true
+    "ui_enabled": true,
+
+    "blocklist_update_enabled": true,
+    "blocklist_update_interval": 1440,
+    "blocklist_urls": [
+      "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts",
+      "https://adaway.org/hosts.txt",
+      "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts&showintro=0&mimetype=plaintext"
+    ]
   },
 
   "schema": {
@@ -51,6 +59,10 @@
     "doh_enabled": "bool",
     "dot_enabled": "bool",
     "doq_enabled": "bool",
-    "ui_enabled": "bool"
+    "ui_enabled": "bool",
+
+    "blocklist_update_enabled": "bool",
+    "blocklist_update_interval": "int",
+    "blocklist_urls": ["str"]
   }
 }
