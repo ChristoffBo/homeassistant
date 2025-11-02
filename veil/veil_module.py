@@ -639,131 +639,101 @@ class BlocklistUpdater:
     async def download_blocklist(self, url: str) -> List[str]:
         try:
             session = await get_conn_pool()
-            if session is None:
-                log.warning(f"[blocklist] No active HTTP session; initializing new pool")
-                session = await get_conn_pool(force_new=True)
-
             log.info(f"[blocklist] Downloading: {url}")
-
+            
             async with session.get(url, timeout=ClientTimeout(total=60)) as resp:
                 if resp.status != 200:
                     log.error(f"[blocklist] Download failed: {url} (status {resp.status})")
                     return []
-
+                
                 content = await resp.text()
                 domains = []
-
+                
                 for line in content.split('\n'):
                     line = line.strip()
+                    
                     if not line or line.startswith('#') or line.startswith('!'):
                         continue
-
+                    
                     if line.startswith('0.0.0.0 ') or line.startswith('127.0.0.1 '):
-                        parts = line.split()
-                        domain = parts[1] if len(parts) > 1 else None
+                        domain = line.split()[1] if len(line.split()) > 1 else None
                     elif line.startswith('||') and line.endswith('^'):
                         domain = line[2:-1]
                     else:
                         domain = line
-
+                    
                     if domain and '.' in domain:
                         domain = domain.lower().strip('.')
                         domain = domain.split(':')[0]
                         domains.append(domain)
-
+                
                 log.info(f"[blocklist] Downloaded {len(domains):,} domains from {url}")
                 return domains
-
+        
         except Exception as e:
             log.error(f"[blocklist] Error downloading {url}: {e}")
             return []
-
+    
     async def update_blocklists(self):
-        # ✅ Always reload latest config from disk so UI changes are applied
-        try:
-            with open("/config/options.json", "r") as f:
-                fresh_cfg = json.load(f)
-            CONFIG.update(fresh_cfg)
-            log.warning(f"[debug] CONFIG keys: {list(CONFIG.keys())}")
-            log.warning(f"[debug] blocklist_urls type={type(CONFIG.get('blocklist_urls'))} value={CONFIG.get('blocklist_urls')}")
-        except Exception as e:
-            log.error(f"[blocklist] Failed to reload config: {e}")
+        if not CONFIG.get("blocklist_update_enabled"):
             return
-
-        # 🔧 Read 'blocklist_update_enabled' from top level OR nested 'ui' section
-        update_enabled = CONFIG.get("blocklist_update_enabled") or CONFIG.get("ui", {}).get("blocklist_update_enabled")
-        if not update_enabled:
-            log.warning("[blocklist] Update disabled in config")
-            return
-
-        # 🔧 Read URLs from top level OR nested 'ui' section, and normalize type
-        urls_raw = CONFIG.get("blocklist_urls") or CONFIG.get("ui", {}).get("blocklist_urls", [])
-        if isinstance(urls_raw, str):
-            urls = [u.strip() for u in urls_raw.split(",") if u.strip()]
-        elif isinstance(urls_raw, dict):
-            urls = list(urls_raw.values())
-        elif isinstance(urls_raw, list):
-            urls = urls_raw
-        else:
-            urls = []
-
-        if not urls:
-            log.warning(f"[blocklist] No URLs configured. Available keys: {list(CONFIG.keys())}")
-            return
-
+        
         log.info("[blocklist] Starting update")
+        urls = CONFIG.get("blocklist_urls", [])
+        
+        if not urls:
+            log.debug("[blocklist] No URLs configured")
+            return
+        
         total_added = 0
-
+        
         for url in urls:
             domains = await self.download_blocklist(url)
             for domain in domains:
-                try:
-                    BLOCKLIST.add_sync(domain)
-                    total_added += 1
-                except Exception:
-                    continue
-
-        STATS["blocklist_updates"] = STATS.get("blocklist_updates", 0) + 1
+                BLOCKLIST.add_sync(domain)
+                total_added += 1
+        
+        STATS["blocklist_updates"] += 1
         STATS["blocklist_last_update"] = time.time()
-        self.last_update = STATS["blocklist_last_update"]
-
+        self.last_update = time.time()
+        
+        # Save to local storage
         await save_blocklists_local()
+        
         log.info(f"[blocklist] Update complete: {total_added:,} domains added, {BLOCKLIST.size:,} total")
-
+    
     async def auto_update_loop(self):
         self.running = True
-        await asyncio.sleep(5)  # wait 5s for CONN_POOL to be ready
-
-        if CONFIG.get("blocklist_update_on_start", True):
+        
+        if CONFIG.get("blocklist_update_on_start"):
             await self.update_blocklists()
-
+        
         while self.running:
             try:
                 interval = CONFIG.get("blocklist_update_interval", 86400)
                 await asyncio.sleep(interval)
-                update_enabled = CONFIG.get("blocklist_update_enabled") or CONFIG.get("ui", {}).get("blocklist_update_enabled")
-                if update_enabled:
+                
+                if CONFIG.get("blocklist_update_enabled"):
                     await self.update_blocklists()
+            
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 log.error(f"[blocklist] Auto-update error: {e}")
                 await asyncio.sleep(60)
-
+    
     def start(self):
-        if not getattr(self, "running", False):
+        if not self.running:
             self.update_task = asyncio.create_task(self.auto_update_loop())
             log.info("[blocklist] Auto-update started")
-
+    
     def stop(self):
         self.running = False
-        if hasattr(self, "update_task") and self.update_task:
+        if self.update_task:
             self.update_task.cancel()
         log.info("[blocklist] Auto-update stopped")
 
-
 BLOCKLIST_UPDATER = BlocklistUpdater()
-
 
 # ==================== CACHE PREWARMING ====================
 # Top 1000 most popular domains for cache prewarming
@@ -2187,17 +2157,7 @@ async def api_config_get(req):
 async def api_config_update(req):
     try:
         data = await req.json()
-
-        # 🧩 Normalize blocklist_urls from UI textarea (handles list or newline text)
-        if "blocklist_urls" in data:
-            urls = data["blocklist_urls"]
-            if isinstance(urls, str):
-                urls = [u.strip() for u in urls.split("\n") if u.strip()]
-            elif isinstance(urls, list):
-                urls = [u.strip() for u in urls if u.strip()]
-            data["blocklist_urls"] = urls
-            log.info(f"[api] Normalized blocklist_urls: {len(urls)} URLs")
-
+        
         # Parse upstream_servers - extract IPs from DoH URLs if needed
         if "upstream_servers" in data:
             servers = []
@@ -2208,25 +2168,29 @@ async def api_config_update(req):
                 "doh.opendns.com": ["208.67.222.222", "208.67.220.220"],
                 "dns.adguard-dns.com": ["94.140.14.14", "94.140.15.15"]
             }
-
+            
             for server in data["upstream_servers"]:
                 server = server.strip()
                 if not server:
                     continue
+                    
+                # Check if it's a DoH URL
                 if server.startswith("http"):
+                    # Extract domain and map to IPs
                     for domain, ips in doh_map.items():
                         if domain in server:
                             servers.extend(ips)
                             break
                 else:
+                    # It's an IP address
                     servers.append(server)
-
-            data["upstream_servers"] = list(set(servers))
-
+            
+            data["upstream_servers"] = list(set(servers))  # Remove duplicates
+        
         for key, value in data.items():
             if key in CONFIG:
                 CONFIG[key] = value
-
+        
         # Save to file
         try:
             with open('/config/options.json', 'r') as f:
@@ -2237,12 +2201,133 @@ async def api_config_update(req):
             log.info(f"[api] Config saved to /config/options.json")
         except Exception as e:
             log.warning(f"[api] Could not save config to file: {e}")
-
+        
         return web.json_response({"status": "updated", "config": CONFIG})
     except Exception as e:
         log.error(f"[api] Config update error: {e}")
         return web.json_response({"error": str(e)}, status=400)
 
+async def api_cache_flush(req):
+    await DNS_CACHE.flush()
+    return web.json_response({"status": "flushed"})
+
+async def api_blocklist_reload(req):
+    try:
+        await BLOCKLIST.clear()
+        
+        for bl in CONFIG["blocklists"]:
+            if Path(bl).exists():
+                with open(bl) as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith('#'):
+                            BLOCKLIST.add_sync(line)
+        
+        await save_blocklists_local()  # Save after reload
+        return web.json_response({"status": "reloaded", "size": BLOCKLIST.size})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+async def api_blocklist_update(req):
+    try:
+        await BLOCKLIST_UPDATER.update_blocklists()
+        return web.json_response({
+            "status": "updated",
+            "size": BLOCKLIST.size,
+            "last_update": STATS["blocklist_last_update"]
+        })
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+async def api_cache_prewarm(req):
+    """Trigger manual cache prewarm"""
+    try:
+        asyncio.create_task(CACHE_PREWARMER.prewarm_cache())
+        return web.json_response({
+            "status": "started",
+            "message": "Cache prewarm started in background"
+        })
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+async def api_query_history(req):
+    """Get query history stats"""
+    try:
+        count = int(req.query.get('count', 50))
+        top_domains = await QUERY_HISTORY.get_top(count)
+        return web.json_response({
+            "total_unique": QUERY_HISTORY.size(),
+            "top_domains": top_domains
+        })
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+async def api_blocklist_upload(req):
+    try:
+        data = await req.post()
+        if 'file' not in data:
+            return web.json_response({"error": "No file provided"}, status=400)
+        
+        file_field = data['file']
+        content = file_field.file.read().decode('utf-8')
+        
+        count = 0
+        for line in content.split('\n'):
+            line = line.strip()
+            if line and not line.startswith('#'):
+                BLOCKLIST.add_sync(line)
+                count += 1
+        
+        await save_blocklists_local()  # Save after upload
+        return web.json_response({"status": "uploaded", "added": count, "total": BLOCKLIST.size})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+async def api_blacklist_add(req):
+    try:
+        data = await req.json()
+        domain = data.get('domain', '').strip()
+        if domain:
+            await BLACKLIST.add(domain)
+            await save_blocklists_local()  # Save after adding
+            return web.json_response({"status": "added", "domain": domain})
+        return web.json_response({"error": "No domain provided"}, status=400)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+async def api_blacklist_remove(req):
+    try:
+        data = await req.json()
+        domain = data.get('domain', '').strip()
+        if domain:
+            await BLACKLIST.remove(domain)
+            await save_blocklists_local()  # Save after removing
+            return web.json_response({"status": "removed", "domain": domain})
+        return web.json_response({"error": "No domain provided"}, status=400)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+async def api_whitelist_add(req):
+    try:
+        data = await req.json()
+        domain = data.get('domain', '').strip()
+        if domain:
+            await WHITELIST.add(domain)
+            return web.json_response({"status": "added", "domain": domain})
+        return web.json_response({"error": "No domain provided"}, status=400)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+async def api_whitelist_remove(req):
+    try:
+        data = await req.json()
+        domain = data.get('domain', '').strip()
+        if domain:
+            await WHITELIST.remove(domain)
+            return web.json_response({"status": "removed", "domain": domain})
+        return web.json_response({"error": "No domain provided"}, status=400)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
 
 async def api_rewrite_add(req):
     try:
@@ -2612,88 +2697,34 @@ if __name__ == "__main__":
     # Create web application
     app = web.Application()
     
-# ========================================
-# ✅ ALL API FUNCTIONS COME FIRST
-# ========================================
+    # Register API routes
+    register_routes(app)
+    
+    # Serve UI
+    ui_path = os.path.join(os.path.dirname(__file__), "ui")
+    if not os.path.exists(ui_path):
+        ui_path = "/app/ui"
+    
+    if not os.path.exists(ui_path):
+        log.warning(f"[veil] UI path {ui_path} not found, serving placeholder")
+        async def placeholder(_):
+            return web.Response(text="🧩 Veil is running, but no UI files found.")
+        app.router.add_get("/", placeholder)
+    else:
+        app.router.add_static("/", ui_path, show_index=True)
+        log.info(f"[veil] Serving UI from {ui_path}")
 
-async def api_config_update(req):
-    ...
-    return web.json_response({"status": "updated", "config": CONFIG})
+    # Setup startup/cleanup hooks
+    app.on_startup.append(start_background_services)
+    app.on_cleanup.append(cleanup_background_services)
 
-async def api_cache_flush(req):
-    await DNS_CACHE.flush()
-    return web.json_response({"status": "flushed"})
-
-async def api_blocklist_reload(req):
-    ...
-async def api_blocklist_update(req):
-    ...
-async def api_cache_prewarm(req):
-    ...
-async def api_query_history(req):
-    ...
-async def api_blocklist_upload(req):
-    ...
-async def api_blacklist_add(req):
-    ...
-async def api_blacklist_remove(req):
-    ...
-async def api_whitelist_add(req):
-    ...
-async def api_whitelist_remove(req):
-    ...
-
-# ========================================
-# ✅ NOW DEFINE register_routes()
-# ========================================
-
-def register_routes(app):
-    app.router.add_post('/api/veil/config', api_config_update)
-    app.router.add_delete('/api/veil/cache', api_cache_flush)
-    app.router.add_post('/api/veil/blocklist/reload', api_blocklist_reload)
-    app.router.add_post('/api/veil/blocklist/update', api_blocklist_update)
-    app.router.add_post('/api/veil/cache/prewarm', api_cache_prewarm)
-    app.router.add_get('/api/veil/query/history', api_query_history)
-    app.router.add_post('/api/veil/blocklist/upload', api_blocklist_upload)
-    app.router.add_post('/api/veil/blacklist/add', api_blacklist_add)
-    app.router.add_delete('/api/veil/blacklist/remove', api_blacklist_remove)
-    app.router.add_post('/api/veil/whitelist/add', api_whitelist_add)
-    app.router.add_delete('/api/veil/whitelist/remove', api_whitelist_remove)
-
-# ========================================
-# ✅ AFTER THAT, CALL register_routes(app)
-# ========================================
-
-register_routes(app)
-
-# ========================================
-# ✅ SERVE UI
-# ========================================
-
-ui_path = os.path.join(os.path.dirname(__file__), "ui")
-if not os.path.exists(ui_path):
-    ui_path = "/app/ui"
-
-if not os.path.exists(ui_path):
-    log.warning(f"[veil] UI path {ui_path} not found, serving placeholder")
-
-    async def placeholder(_):
-        return web.Response(text="🧩 Veil is running, but no UI files found.")
-    app.router.add_get("/", placeholder)
-else:
-    app.router.add_static("/", ui_path, show_index=True)
-    log.info(f"[veil] Serving UI from {ui_path}")
-
-app.on_startup.append(start_background_services)
-app.on_cleanup.append(cleanup_background_services)
-
-log.info(f"🌐 Web UI will be available at http://{bind_addr}:{ui_port}")
-log.info(f"🧩 Veil v2.0.0 - Privacy-First DNS/DHCP")
-
-try:
-    web.run_app(app, host=bind_addr, port=ui_port, access_log=None)
-except Exception as e:
-    log.error(f"[veil] Failed to start: {e}")
-    import traceback
-    traceback.print_exc()
-
+    log.info(f"🌐 Web UI will be available at http://{bind_addr}:{ui_port}")
+    log.info(f"🧩 Veil v2.0.0 - Privacy-First DNS/DHCP")
+    
+    # Run with proper error handling
+    try:
+        web.run_app(app, host=bind_addr, port=ui_port, access_log=None)
+    except Exception as e:
+        log.error(f"[veil] Failed to start: {e}")
+        import traceback
+        traceback.print_exc()
