@@ -44,7 +44,16 @@
   "rebinding_protection": true,
 
   "blocklists": [],
-  "blocklist_urls": [],
+  "blocklist_urls": [
+    "https://raw.githubusercontent.com/StevenBlack/hosts/master/data/StevenBlack/hosts",
+    "https://raw.githubusercontent.com/ookangzheng/dbl-oisd-nl/master/dbl_light.txt",
+    "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/multi.txt",
+    "https://raw.githubusercontent.com/blocklistproject/hosts/main/ads.txt",
+    "https://raw.githubusercontent.com/blocklistproject/hosts/main/malware.txt",
+    "https://raw.githubusercontent.com/badmojr/1Hosts/master/Lite/domains.txt",
+    "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/fake-onlydomains.txt",
+    "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/nsfw-onlydomains.txt"
+  ],
   "blocklist_update_enabled": true,
   "block_response_type": "NXDOMAIN",
   "blocklist_update_interval": 86400,
