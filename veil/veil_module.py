@@ -139,21 +139,17 @@ CONFIG = {
     "safesearch_youtube": True,
     
     # Blocking
-   
-  "blocking_enabled": true,
-  "block_response_type": "NXDOMAIN",
-  "block_custom_ip": "0.0.0.0",
-  "blocklists": [],
-  "blocklist_urls": [],
-  "blocklist_update_enabled": true,
-  "blocklist_update_interval": 86400,
-  "blocklist_update_on_start": true,
-  "blocklist_storage_paths": [
-    "/share/veil/veil_blocklists.json",
-    "/config/veil_blocklists.json"
-  
-  "whitelist": [],
-  "blacklist": []
+    "blocking_enabled": True,
+    "block_response_type": "NXDOMAIN",
+    "block_custom_ip": "0.0.0.0",
+    "blocklists": [],
+    "blocklist_urls": [],
+    "blocklist_update_enabled": True,
+    "blocklist_update_interval": 86400,
+    "blocklist_update_on_start": True,
+    "blocklist_storage_path": "/config/veil_blocklists.json",  # Local storage
+    "whitelist": [],
+    "blacklist": [],
     
     # DNS Rewrites
     "local_records": {},
