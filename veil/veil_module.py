@@ -631,12 +631,47 @@ async def load_blocklists_local():
 
 # ==================== BLOCKLIST AUTO-UPDATE ====================
 class BlocklistUpdater:
+    """
+    Handles downloading, parsing, and saving DNS blocklists.
+    Fully async, supports both manual and auto-update modes.
+    """
+
     def __init__(self, config_path="/config/options.json", storage_path="/config/veil_blocklists.json"):
         self.config_path = config_path
         self.storage_path = storage_path
         self.config = {}
         self.blocked_domains = []
         self.last_update = None
+        self.running = False
+        self.interval = 86400  # default 24h auto-update interval
+
+    async def start(self):
+        """
+        Starts the background blocklist auto-update loop (safe on startup).
+        """
+        if self.running:
+            return
+        self.running = True
+        log.info("[blocklist] Auto-update loop started")
+        asyncio.create_task(self._loop())
+
+    async def _loop(self):
+        """
+        Background loop for periodic updates.
+        """
+        while self.running:
+            try:
+                await self.update_blocklist()
+            except Exception as e:
+                log.error(f"[blocklist] Auto-update loop error: {e}")
+            await asyncio.sleep(self.interval)
+
+    async def stop(self):
+        """
+        Stop the background auto-update loop.
+        """
+        self.running = False
+        log.info("[blocklist] Auto-update loop stopped")
 
     async def update_blocklist(self):
         import ssl, aiohttp, json, asyncio, time
