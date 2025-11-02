@@ -674,66 +674,59 @@ class BlocklistUpdater:
             log.error(f"[blocklist] Error downloading {url}: {e}")
             return []
     
-    async def update_blocklists(self):
-        if not CONFIG.get("blocklist_update_enabled"):
-            return
-        
-        log.info("[blocklist] Starting update")
-        urls = CONFIG.get("blocklist_urls", [])
-        
-        if not urls:
-            log.debug("[blocklist] No URLs configured")
-            return
-        
-        total_added = 0
-        
-        for url in urls:
-            domains = await self.download_blocklist(url)
-            for domain in domains:
-                BLOCKLIST.add_sync(domain)
-                total_added += 1
-        
-        STATS["blocklist_updates"] += 1
-        STATS["blocklist_last_update"] = time.time()
-        self.last_update = time.time()
-        
-        # Save to local storage
-        await save_blocklists_local()
-        
-        log.info(f"[blocklist] Update complete: {total_added:,} domains added, {BLOCKLIST.size:,} total")
-    
-    async def auto_update_loop(self):
-        self.running = True
-        
-        if CONFIG.get("blocklist_update_on_start"):
-            await self.update_blocklists()
-        
-        while self.running:
-            try:
-                interval = CONFIG.get("blocklist_update_interval", 86400)
-                await asyncio.sleep(interval)
-                
-                if CONFIG.get("blocklist_update_enabled"):
-                    await self.update_blocklists()
-            
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                log.error(f"[blocklist] Auto-update error: {e}")
-                await asyncio.sleep(60)
-    
-    def start(self):
-        if not self.running:
-            self.update_task = asyncio.create_task(self.auto_update_loop())
-            log.info("[blocklist] Auto-update started")
-    
-    def stop(self):
-        self.running = False
-        if self.update_task:
-            self.update_task.cancel()
-        log.info("[blocklist] Auto-update stopped")
+    async def download_blocklist(self, url: str) -> list[str]:
+    """
+    Download and parse blocklists supporting multiple formats:
+    hosts, Adblock, and plain domains.
+    """
+    try:
+        import aiohttp
+        from aiohttp import ClientTimeout
 
-BLOCKLIST_UPDATER = BlocklistUpdater()
+        timeout = ClientTimeout(total=90)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            log.info(f"[blocklist] Downloading: {url}")
+            async with session.get(url) as resp:
+                if resp.status != 200:
+                    log.error(f"[blocklist] Download failed: {url} (status {resp.status})")
+                    return []
+
+                text = await resp.text(errors="ignore")
+
+                domains = set()
+                for line in text.splitlines():
+                    line = line.strip()
+                    if not line or line.startswith(("#", "!", ";")):
+                        continue
+
+                    # hosts format
+                    if line.startswith(("0.0.0.0", "127.0.0.1")):
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            d = parts[1].lstrip(".")
+                            if d and "." in d:
+                                domains.add(d)
+                        continue
+
+                    # Adblock / uBlock / Pi-hole style
+                    if line.startswith("||"):
+                        d = line[2:].split("^")[0].replace("*.", "").strip(".")
+                        if d and "." in d:
+                            domains.add(d)
+                        continue
+
+                    # wildcard or plain
+                    d = line.replace("*.", "").strip(".")
+                    if d and " " not in d and "/" not in d and "." in d:
+                        domains.add(d)
+
+                log.info(f"[blocklist] Parsed {len(domains):,} domains from {url}")
+                return list(domains)
+
+    except Exception as e:
+        log.error(f"[blocklist] Error downloading {url}: {e}")
+        return []
+
 
 # ==================== CACHE PREWARMING ====================
 # Top 1000 most popular domains for cache prewarming
