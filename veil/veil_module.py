@@ -39,6 +39,7 @@ NEW IN THIS VERSION:
 
 import asyncio
 import logging
+import sys
 import socket
 import struct
 import time
