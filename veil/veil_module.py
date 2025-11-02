@@ -1440,12 +1440,6 @@ async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
                         return response_wire
                 except Exception as e:
                     log.error(f"[dns] Conditional forward failed: {e}")
-        
-        # Check cache
-        cached = await DNS_CACHE.get(qname, qtype)
-        if cached:
-            STATS["dns_cached"] += 1
-            return cached
         # 🔒 Blocklist enforcement (live matcher)
         if CONFIG.get("blocking_enabled"):
             domain_parts = qname.split('.')
@@ -1455,7 +1449,12 @@ async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
                     STATS["dns_blocked"] += 1
                     log.info(f"[dns] Blocked (blocklist): {qname} → NXDOMAIN")
                     return build_blocked_response(query)
-
+        # Check cache
+        cached = await DNS_CACHE.get(qname, qtype)
+        if cached:
+            STATS["dns_cached"] += 1
+            return cached
+    
         # Query upstream
         STATS["dns_upstream"] += 1
         response_wire = await query_upstream(qname, qtype)
