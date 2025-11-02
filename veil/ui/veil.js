@@ -196,33 +196,43 @@ const VeilUI = {
    * Update stats display
    */
   updateStatsDisplay() {
-    const s = this.stats;
-   
-    // Status
-    const statusEl = document.getElementById('veil-status');
-    if (statusEl) {
-      const isHealthy = s.dns_queries > 0 || this.config.enabled;
-      statusEl.innerHTML = `
-        <span class="status-dot ${isHealthy ? 'status-healthy' : 'status-degraded'}"></span>
-        <span>${isHealthy ? 'Healthy' : 'Inactive'}</span>
-      `;
-    }
-   
-    // Stats
-    document.getElementById('stat-queries').textContent = (s.dns_queries || 0).toLocaleString();
-   
-    const cacheHitRate = s.dns_queries > 0
-      ? Math.round((s.dns_cached / s.dns_queries) * 100)
-      : 0;
-    document.getElementById('stat-cached').textContent = `${cacheHitRate}%`;
-   
-    document.getElementById('stat-blocked').textContent = (s.dns_blocked || 0).toLocaleString();
-    document.getElementById('stat-cache-size').textContent = (s.cache_size || 0).toLocaleString();
-   
-    const privacyFeatures = (s.dns_padded || 0) + (s.dns_0x20 || 0) + (s.dns_dnssec_validated || 0);
-    document.getElementById('stat-privacy').textContent = privacyFeatures.toLocaleString();
-   
-    document.getElementById('stat-dhcp').textContent = (s.dhcp_leases || 0).toLocaleString();
+  const s = this.stats;
+
+  // Status
+  const statusEl = document.getElementById('veil-status');
+  if (statusEl) {
+    const isHealthy = s.dns_queries > 0 || this.config.enabled;
+    statusEl.innerHTML = `
+      <span class="status-dot ${isHealthy ? 'status-healthy' : 'status-degraded'}"></span>
+      <span>${isHealthy ? 'Healthy' : 'Inactive'}</span>
+    `;
+  }
+
+  // Stats
+  document.getElementById('stat-queries').textContent = (s.dns_queries || 0).toLocaleString();
+
+  // ✅ FIX: use nested fallback for cache hits
+  const cacheHits = s.dns_cached || (s.cache && s.cache.hits) || 0;
+  const cacheHitRate = s.dns_queries > 0
+    ? Math.round((cacheHits / s.dns_queries) * 100)
+    : 0;
+  document.getElementById('stat-cached').textContent = `${cacheHitRate}%`;
+
+  document.getElementById('stat-blocked').textContent = (s.dns_blocked || 0).toLocaleString();
+
+  // ✅ FIX: use nested fallback for cache size
+  const cacheSize = s.cache_size || (s.cache && s.cache.size) || 0;
+  document.getElementById('stat-cache-size').textContent = cacheSize.toLocaleString();
+
+  const privacyFeatures =
+    (s.dns_padded || 0) +
+    (s.dns_0x20 || 0) +
+    (s.dns_dnssec_validated || 0);
+  document.getElementById('stat-privacy').textContent = privacyFeatures.toLocaleString();
+
+  document.getElementById('stat-dhcp').textContent = (s.dhcp_leases || 0).toLocaleString();
+}
+
   },
  
   /**
