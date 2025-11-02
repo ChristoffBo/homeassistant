@@ -679,6 +679,15 @@ class BlocklistUpdater:
             return []
 
     async def update_blocklists(self):
+        # ✅ Always reload latest config from disk so UI changes are applied
+        try:
+            with open("/config/options.json", "r") as f:
+                fresh_cfg = json.load(f)
+            CONFIG.update(fresh_cfg)
+        except Exception as e:
+            log.error(f"[blocklist] Failed to reload config: {e}")
+            return
+
         if not CONFIG.get("blocklist_update_enabled", False):
             log.warning("[blocklist] Update disabled in config")
             return
