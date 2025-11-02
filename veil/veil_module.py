@@ -631,112 +631,71 @@ async def load_blocklists_local():
 
 # ==================== BLOCKLIST AUTO-UPDATE ====================
 class BlocklistUpdater:
-    """
-    Handles downloading, parsing, and saving DNS blocklists.
-    Fully async, supports both manual and auto-update modes.
-    """
-
-    def __init__(self, config_path="/config/options.json", storage_path="/config/veil_blocklists.json"):
-        self.config_path = config_path
-        self.storage_path = storage_path
-        self.config = {}
-        self.blocked_domains = []
-        self.last_update = None
+    def __init__(self):
         self.running = False
-        self.interval = 86400  # default 24h auto-update interval
-
-    async def start(self):
-        """
-        Starts the background blocklist auto-update loop (safe on startup).
-        """
-        if self.running:
+        self.update_task = None
+        self.last_update = 0
+    
+    async def download_blocklist(self, url: str) -> List[str]:
+        try:
+            session = await get_conn_pool()
+            log.info(f"[blocklist] Downloading: {url}")
+            
+            async with session.get(url, timeout=ClientTimeout(total=60)) as resp:
+                if resp.status != 200:
+                    log.error(f"[blocklist] Download failed: {url} (status {resp.status})")
+                    return []
+                
+                content = await resp.text()
+                domains = []
+                
+                for line in content.split('\n'):
+                    line = line.strip()
+                    
+                    if not line or line.startswith('#') or line.startswith('!'):
+                        continue
+                    
+                    if line.startswith('0.0.0.0 ') or line.startswith('127.0.0.1 '):
+                        domain = line.split()[1] if len(line.split()) > 1 else None
+                    elif line.startswith('||') and line.endswith('^'):
+                        domain = line[2:-1]
+                    else:
+                        domain = line
+                    
+                    if domain and '.' in domain:
+                        domain = domain.lower().strip('.')
+                        domain = domain.split(':')[0]
+                        domains.append(domain)
+                
+                log.info(f"[blocklist] Downloaded {len(domains):,} domains from {url}")
+                return domains
+        
+        except Exception as e:
+            log.error(f"[blocklist] Error downloading {url}: {e}")
+            return []
+    
+    async def update_blocklists(self):
+        if not CONFIG.get("blocklist_update_enabled"):
             return
-        self.running = True
-        log.info("[blocklist] Auto-update loop started")
-        asyncio.create_task(self._loop())
-
-    async def _loop(self):
-        """
-        Background loop for periodic updates.
-        """
-        while self.running:
-            try:
-                await self.update_blocklist()
-            except Exception as e:
-                log.error(f"[blocklist] Auto-update loop error: {e}")
-            await asyncio.sleep(self.interval)
-
-    async def stop(self):
-        """
-        Stop the background auto-update loop.
-        """
-        self.running = False
-        log.info("[blocklist] Auto-update loop stopped")
-
-    async def update_blocklist(self):
-        import ssl, aiohttp, json, asyncio, time
-
-        # Load config fresh each time
-        try:
-            with open(self.config_path, "r") as f:
-                self.config = json.load(f)
-        except Exception as e:
-            log.error(f"[blocklist] Failed to read config: {e}")
-            return {"status": "error", "message": "Cannot read options.json"}
-
-        urls = self.config.get("blocklist_urls", [])
+        
+        log.info("[blocklist] Starting update")
+        urls = CONFIG.get("blocklist_urls", [])
+        
         if not urls:
-            log.warning("[blocklist] No blocklist URLs configured")
-            return {"status": "skipped", "reason": "no_urls"}
-
-        ssl_ctx = ssl.create_default_context()
-        all_domains = set()
-        start = time.time()
-
+            log.debug("[blocklist] No URLs configured")
+            return
+        
+        total_added = 0
+        
         for url in urls:
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(url, ssl=ssl_ctx, timeout=aiohttp.ClientTimeout(total=90)) as resp:
-                        if resp.status != 200:
-                            log.warning(f"[blocklist] ❌ {url} → HTTP {resp.status}")
-                            continue
-                        text = await resp.text()
-            except Exception as e:
-                log.error(f"[blocklist] ❌ Error downloading {url}: {e}")
-                continue
-
-            # Parse domains
-            count_before = len(all_domains)
-            for line in text.splitlines():
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if " " in line:
-                    parts = line.split()
-                    line = parts[-1]
-                if line and "." in line and not any(c in line for c in "/\\#"):
-                    all_domains.add(line.lower())
-            count_added = len(all_domains) - count_before
-            log.info(f"[blocklist] ✅ {url} → {count_added} new domains")
-
-        self.blocked_domains = sorted(all_domains)
-        self.last_update = int(time.time())
-
-        # Save results
-        try:
-            with open(self.storage_path, "w") as f:
-                json.dump({
-                    "blocklist_count": len(self.blocked_domains),
-                    "last_update": self.last_update,
-                    "blocklists": self.config.get("blocklist_urls", [])
-                }, f, indent=2)
-            log.info(f"[blocklist] Saved {len(self.blocked_domains)} domains to {self.storage_path}")
-        except Exception as e:
-            log.error(f"[blocklist] Failed to save blocklist: {e}")
-
-        duration = round(time.time() - start, 2)
-        return {"status": "updated", "domains": len(self.blocked_domains), "duration": duration}
-
+            domains = await self.download_blocklist(url)
+            for domain in domains:
+                BLOCKLIST.add_sync(domain)
+                total_added += 1
+        
+        STATS["blocklist_updates"] += 1
+        STATS["blocklist_last_update"] = time.time()
+        self.last_update = time.time()
         
         # Save to local storage
         await save_blocklists_local()
