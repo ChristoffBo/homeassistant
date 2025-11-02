@@ -2394,11 +2394,8 @@ async def init_veil():
     UPSTREAM_HEALTH = UpstreamHealth()
     log.info(f"[veil] Upstream health monitor initialized")
     
-    RATE_LIMITER = RateLimiter(
-        CONFIG.get("rate_limit_qps", 20),
-        CONFIG.get("rate_limit_burst", 50)
-    )
-    log.info(f"[veil] Rate limiter initialized ({CONFIG.get('rate_limit_qps', 20)} qps)")
+    RATE_LIMITER = RateLimiter()
+    log.info(f"[veil] Rate limiter initialized")
     
     CACHE_PREWARMER = CachePrewarmer()
     log.info(f"[veil] Cache prewarmer initialized")
@@ -2409,7 +2406,7 @@ async def init_veil():
     CONN_POOL = await get_conn_pool()
     log.info(f"[veil] Connection pool initialized")
     
-    DHCP_SERVER = DHCPServer(CONFIG)
+    DHCP_SERVER = DHCPServer()
     log.info(f"[veil] DHCP server initialized")
     
     # Load blocklists
