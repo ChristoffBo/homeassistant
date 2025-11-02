@@ -6,6 +6,7 @@
   "startup": "services",
   "boot": "auto",
   "arch": ["amd64", "armv7", "armhf", "aarch64"],
+  "host_network": true,
   "map": ["config:rw"],
   "ports": {
     "53/udp": 53,
