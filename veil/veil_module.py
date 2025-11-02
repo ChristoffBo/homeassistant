@@ -2157,7 +2157,7 @@ async def api_config_get(req):
 async def api_config_update(req):
     try:
         data = await req.json()
-       
+        
         # Parse upstream_servers - extract IPs from DoH URLs if needed
         if "upstream_servers" in data:
             servers = []
@@ -2168,32 +2168,29 @@ async def api_config_update(req):
                 "doh.opendns.com": ["208.67.222.222", "208.67.220.220"],
                 "dns.adguard-dns.com": ["94.140.14.14", "94.140.15.15"]
             }
-           
+            
             for server in data["upstream_servers"]:
                 server = server.strip()
                 if not server:
                     continue
-                   
+                    
+                # Check if it's a DoH URL
                 if server.startswith("http"):
+                    # Extract domain and map to IPs
                     for domain, ips in doh_map.items():
                         if domain in server:
                             servers.extend(ips)
                             break
                 else:
+                    # It's an IP address
                     servers.append(server)
-           
-            data["upstream_servers"] = list(set(servers))
-
-        if "blocklist_urls" in data:
-            CONFIG["blocklist_urls"] = [
-                url.strip() for url in data["blocklist_urls"]
-                if url.strip().startswith("http")
-            ]
-
+            
+            data["upstream_servers"] = list(set(servers))  # Remove duplicates
+        
         for key, value in data.items():
             if key in CONFIG:
                 CONFIG[key] = value
-       
+        
         # Save to file
         try:
             with open('/config/options.json', 'r') as f:
@@ -2204,13 +2201,31 @@ async def api_config_update(req):
             log.info(f"[api] Config saved to /config/options.json")
         except Exception as e:
             log.warning(f"[api] Could not save config to file: {e}")
-
-        # ← ADD: Reload URLs into updater
-        BLOCKLIST_UPDATER.blocklist_urls = CONFIG.get("blocklist_urls", [])
-       
+        
         return web.json_response({"status": "updated", "config": CONFIG})
     except Exception as e:
         log.error(f"[api] Config update error: {e}")
+        return web.json_response({"error": str(e)}, status=400)
+
+async def api_cache_flush(req):
+    await DNS_CACHE.flush()
+    return web.json_response({"status": "flushed"})
+
+async def api_blocklist_reload(req):
+    try:
+        await BLOCKLIST.clear()
+        
+        for bl in CONFIG["blocklists"]:
+            if Path(bl).exists():
+                with open(bl) as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith('#'):
+                            BLOCKLIST.add_sync(line)
+        
+        await save_blocklists_local()  # Save after reload
+        return web.json_response({"status": "reloaded", "size": BLOCKLIST.size})
+    except Exception as e:
         return web.json_response({"error": str(e)}, status=400)
 
 async def api_blocklist_update(req):
