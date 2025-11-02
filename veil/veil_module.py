@@ -2428,6 +2428,14 @@ __description__ = "Privacy-First DNS/DHCP - Complete with DNSSEC, DoQ, Rate Limi
 if __name__ == "__main__":
     print("🧩 Veil - Privacy-First DNS/DHCP Server")
 
+async def start_background_services(app):
+    """Start background services on app startup"""
+    await init_veil()
+
+async def cleanup_background_services(app):
+    """Cleanup background services on app shutdown"""
+    await cleanup_veil()
+
 if __name__ == "__main__":
     import os
     from aiohttp import web
@@ -2442,24 +2450,37 @@ if __name__ == "__main__":
         if os.path.exists(cfg_path):
             with open(cfg_path, "r") as f:
                 data = json.load(f)
+                CONFIG.update(data)
                 ui_port = int(data.get("ui_port", 8080))
                 bind_addr = data.get("ui_bind", "0.0.0.0")
+                log.info(f"[veil] Loaded config from {cfg_path}")
     except Exception as e:
-        print(f"[WARN] Could not read {cfg_path}: {e}")
+        log.warning(f"[veil] Could not read {cfg_path}: {e}")
 
+    # Create web application
     app = web.Application()
+    
+    # Register API routes
+    register_routes(app)
+    
+    # Serve UI
     ui_path = os.path.join(os.path.dirname(__file__), "ui")
-
     if not os.path.exists(ui_path):
-        print(f"[WARN] UI path {ui_path} not found, serving placeholder.")
+        ui_path = "/app/ui"
+    
+    if not os.path.exists(ui_path):
+        log.warning(f"[veil] UI path {ui_path} not found, serving placeholder")
         async def placeholder(_):
             return web.Response(text="🧩 Veil is running, but no UI files found.")
         app.router.add_get("/", placeholder)
     else:
         app.router.add_static("/", ui_path, show_index=True)
-        print(f"[INFO] Serving UI from {ui_path}")
+        log.info(f"[veil] Serving UI from {ui_path}")
 
-    print(f"🌐 Web UI available at http://{bind_addr}:{ui_port}")
-    web.run_app(app, host=bind_addr, port=ui_port)
+    # Setup startup/cleanup hooks - THIS IS CRITICAL
+    app.on_startup.append(start_background_services)
+    app.on_cleanup.append(cleanup_background_services)
 
-    
+    log.info(f"🌐 Web UI available at http://{bind_addr}:{ui_port}")
+    log.info(f"🧩 Veil v2.0.0 - Privacy-First DNS/DHCP")
+    web.run_app(app, host=bind_addr, port=ui_port, access_log=None)
