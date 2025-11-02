@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEFAULT_OPTS="/app/default_options.json"
+DEFAULT_OPTS="/app/options.json"
 CONFIG_DIR="/config"
 OPTIONS_FILE="${CONFIG_DIR}/options.json"
 
