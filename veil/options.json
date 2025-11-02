@@ -1,0 +1,73 @@
+{
+  "dns_enabled": true,
+  "dhcp_enabled": false,
+  "doh_enabled": true,
+  "dot_enabled": true,
+  "doq_enabled": true,
+  "ui_enabled": true,
+
+  "dns_port_tcp": 53,
+  "dns_port_udp": 53,
+  "dhcp_port": 67,
+  "dhcp_client_port": 68,
+  "tftp_port": 69,
+  "ntp_port": 123,
+  "dot_port": 853,
+  "doq_port_udp": 853,
+  "doq_port_alt": 784,
+  "doh_port": 443,
+  "http_port": 80,
+  "ui_port": 8080,
+  "admin_port": 9090,
+  "metrics_port": 9180,
+
+  "bind_address": "0.0.0.0",
+  "ui_bind": "0.0.0.0",
+
+  "upstream_servers": [
+    "1.1.1.1",
+    "1.0.0.1",
+    "8.8.8.8",
+    "8.8.4.4"
+  ],
+
+  "dnssec_validate": true,
+  "ecs_strip": true,
+  "padding_enabled": true,
+  "padding_block_size": 468,
+  "case_randomization": true,
+  "qname_minimization": true,
+  "rate_limit_enabled": true,
+  "rate_limit_qps": 20,
+  "rate_limit_burst": 50,
+  "safesearch_enabled": false,
+  "rebinding_protection": true,
+
+  "blocklists": [],
+  "blocklist_urls": [],
+  "blocklist_update_enabled": true,
+  "blocklist_update_interval": 86400,
+  "blocklist_storage_path": "/config/veil_blocklists.json",
+
+  "local_records": {},
+  "dns_rewrites": {},
+  "conditional_forwards": {},
+
+  "cache_enabled": true,
+  "cache_ttl": 3600,
+  "negative_cache_ttl": 300,
+  "cache_max_size": 10000,
+  "cache_prewarm_enabled": true,
+  "cache_prewarm_interval": 3600,
+
+  "logging": {
+    "level": "INFO",
+    "log_path": "/var/log/veil/veil.log"
+  },
+
+  "ui": {
+    "theme": "dark",
+    "auth_enabled": false,
+    "auth_users": []
+  }
+}
