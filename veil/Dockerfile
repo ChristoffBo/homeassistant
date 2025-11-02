@@ -26,10 +26,10 @@ COPY icon.png /app/icon.png
 COPY ui /app/ui
 
 # ----------------------------------------------------
-# Python dependencies (force install with upgraded pip)
+# Python dependencies (PEP 668-compliant)
 # ----------------------------------------------------
-RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    python3 -m pip install --no-cache-dir \
+RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel --break-system-packages && \
+    python3 -m pip install --no-cache-dir --break-system-packages \
         dnspython \
         aiohttp \
         aiodns \
