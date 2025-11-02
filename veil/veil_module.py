@@ -2388,10 +2388,10 @@ async def init_veil():
     STATS["start_time"] = time.time()
     STATS["blocklist_last_update"] = 0
     
-    DNS_CACHE = DNSCache(max_size=CONFIG.get("cache_max_size", 10000))
+    DNS_CACHE = LRUCache(max_size=CONFIG.get("cache_max_size", 10000))
     log.info(f"[veil] DNS Cache initialized (max: {CONFIG.get('cache_max_size', 10000)})")
     
-    UPSTREAM_HEALTH = UpstreamHealthMonitor()
+    UPSTREAM_HEALTH = UpstreamHealth()
     log.info(f"[veil] Upstream health monitor initialized")
     
     RATE_LIMITER = RateLimiter(
