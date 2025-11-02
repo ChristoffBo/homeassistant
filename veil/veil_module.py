@@ -684,6 +684,7 @@ class BlocklistUpdater:
             with open("/config/options.json", "r") as f:
                 fresh_cfg = json.load(f)
             CONFIG.update(fresh_cfg)
+            log.warning(f"[debug] CONFIG keys: {list(CONFIG.keys())}")
         except Exception as e:
             log.error(f"[blocklist] Failed to reload config: {e}")
             return
