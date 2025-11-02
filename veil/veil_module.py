@@ -2499,6 +2499,17 @@ async def init_veil():
     STATS["start_time"] = time.time()
     STATS["blocklist_last_update"] = 0
     
+    # Initialize all DNS stats to 0
+    STATS["dns_queries"] = 0
+    STATS["dns_blocked"] = 0
+    STATS["dns_cached"] = 0
+    STATS["dns_upstream"] = 0
+    STATS["dns_padded"] = 0
+    STATS["dns_ecs_stripped"] = 0
+    STATS["dns_0x20"] = 0
+    STATS["dns_dnssec_validated"] = 0
+    STATS["dns_rate_limited"] = 0
+    
     DNS_CACHE = LRUCache(max_size=CONFIG.get("cache_max_size", 10000))
     log.info(f"[veil] DNS Cache initialized (max: {CONFIG.get('cache_max_size', 10000)})")
     
