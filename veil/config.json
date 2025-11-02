@@ -1,8 +1,8 @@
 {
   "name": "Veil",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "slug": "veil",
-  "description": "Veil — Privacy-First DNS/DHCP server with full port exposure for all protocols.",
+  "description": "Veil — Privacy-First DNS/DHCP server with full encrypted DNS (DoH/DoT/DoQ) and persistent storage under /share/veil.",
   "startup": "services",
   "boot": "auto",
   "arch": ["amd64", "armv7", "armhf", "aarch64"],
@@ -12,7 +12,7 @@
   "homeassistant_api": true,
   "privileged": ["NET_ADMIN"],
   "devices": ["/dev/net/tun"],
-  "map": ["config:rw"],
+  "map": ["config:rw", "share:rw"],
 
   "ingress": true,
   "ingress_port": 8080,
@@ -43,13 +43,12 @@
     "dot_enabled": true,
     "doq_enabled": true,
     "ui_enabled": true,
-
-    "blocklist_update_enabled": true,
-    "blocklist_update_interval": 1440,
-    "blocklist_urls": [
-      "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts",
+    "blocklists": [
+      "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/hosts/ultimate.txt",
       "https://adaway.org/hosts.txt",
-      "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts&showintro=0&mimetype=plaintext"
+      "https://someonewhocares.org/hosts/hosts",
+      "https://blocklistproject.github.io/Lists/adguard.txt",
+      "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts"
     ]
   },
 
@@ -60,9 +59,6 @@
     "dot_enabled": "bool",
     "doq_enabled": "bool",
     "ui_enabled": "bool",
-
-    "blocklist_update_enabled": "bool",
-    "blocklist_update_interval": "int",
-    "blocklist_urls": ["str"]
+    "blocklists": ["str"]
   }
 }
