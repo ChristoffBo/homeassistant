@@ -1,6 +1,6 @@
 {
   "name": "Veil",
-  "version": "1.0.1",
+  "version": "1.0.0",
   "slug": "veil",
   "description": "Veil — Privacy-First DNS/DHCP server.",
   "startup": "services",
