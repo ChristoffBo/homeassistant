@@ -5,7 +5,6 @@
 const VeilUI = {
   stats: {},
   config: {},
-  logs: [],  // For query logs
   updateInterval: null,
  
   /**
@@ -46,20 +45,6 @@ const VeilUI = {
   },
  
   /**
-   * Load query logs from API
-   */
-  async loadLogs() {
-    try {
-      const response = await fetch('/api/veil/logs');
-      this.logs = await response.json();
-      this.renderLogsTab();  // Re-render to update logs
-    } catch (error) {
-      console.error('[Veil] Failed to load logs:', error);
-      toast('Failed to load query logs', 'error');
-    }
-  },
- 
-  /**
    * Start auto-refresh timer
    */
   startAutoRefresh() {
@@ -68,11 +53,6 @@ const VeilUI = {
     this.updateInterval = setInterval(async () => {
       await this.loadStats();
       this.updateStatsDisplay();
-      const activeTab = document.querySelector('.tab-button.active')?.dataset.tab;
-      if (activeTab === 'dashboard') this.renderDashboardTab();
-      if (activeTab === 'clients') this.renderClientsTab();
-      if (activeTab === 'logs') this.loadLogs();
-      if (activeTab === 'dhcp') this.loadDHCPLeases();
     }, 5000);
   },
  
@@ -157,33 +137,30 @@ const VeilUI = {
        
         <!-- Tabs -->
         <div class="veil-tabs">
-          <button class="tab-button active" data-tab="dashboard">Dashboard</button>
-          <button class="tab-button" data-tab="clients">Clients</button>
-          <button class="tab-button" data-tab="blocklists">Blocklists</button>
+          <button class="tab-button active" data-tab="dns">DNS</button>
           <button class="tab-button" data-tab="dhcp">DHCP</button>
+          <button class="tab-button" data-tab="privacy">Privacy</button>
+          <button class="tab-button" data-tab="blocking">Blocking</button>
           <button class="tab-button" data-tab="settings">Settings</button>
-          <button class="tab-button" data-tab="logs">Logs</button>
         </div>
        
         <!-- Tab Content -->
         <div class="veil-tab-content">
-          <div id="tab-dashboard" class="tab-pane active"></div>
-          <div id="tab-clients" class="tab-pane"></div>
-          <div id="tab-blocklists" class="tab-pane"></div>
+          <div id="tab-dns" class="tab-pane active"></div>
           <div id="tab-dhcp" class="tab-pane"></div>
+          <div id="tab-privacy" class="tab-pane"></div>
+          <div id="tab-blocking" class="tab-pane"></div>
           <div id="tab-settings" class="tab-pane"></div>
-          <div id="tab-logs" class="tab-pane"></div>
         </div>
       </div>
     `;
    
     this.attachEventListeners();
-    this.renderDashboardTab();
-    this.renderClientsTab();
-    this.renderBlocklistsTab();
+    this.renderDNSTab();
     this.renderDHCPTab();
+    this.renderPrivacyTab();
+    this.renderBlockingTab();
     this.renderSettingsTab();
-    this.renderLogsTab();
     this.updateStatsDisplay();
   },
  
@@ -536,21 +513,52 @@ const VeilUI = {
   async loadDHCPLeases() {
     try {
       const response = await fetch('/api/veil/dhcp/leases');
-      const leases = await response.json().leases;
+      const data = await response.json();
+      const leases = data.leases || [];
+     
       const container = document.getElementById('dhcp-leases-list');
-      container.innerHTML = leases.map(lease => `
-        <div class="lease-row">
-          <div>${lease.mac}</div>
-          <div>${lease.ip}</div>
-          <div>${lease.hostname || '-'}</div>
-          <div>${lease.expires_in ? lease.expires_in : 'Static'}</div>
-          <button onclick="VeilUI.deleteLease('${lease.mac}')">Delete</button>
+      if (!container) return;
+     
+      if (leases.length === 0) {
+        container.innerHTML = '<p class="empty-state">No active leases</p>';
+        return;
+      }
+     
+      container.innerHTML = `
+        <div class="leases-table">
+          <div class="lease-header">
+            <div>MAC Address</div>
+            <div>IP Address</div>
+            <div>Hostname</div>
+            <div>Expires</div>
+            <div>Actions</div>
+          </div>
+          ${leases.map(lease => `
+            <div class="lease-row">
+              <div class="lease-mac">${lease.mac}</div>
+              <div class="lease-ip">${lease.ip}</div>
+              <div class="lease-hostname">${lease.hostname || '-'}</div>
+              <div class="lease-expires">${this.formatLeaseExpiry(lease.expires_in)}</div>
+              <div class="lease-actions">
+                ${!lease.static ? `<button class="btn-icon" onclick="VeilUI.deleteLease('${lease.mac}')" title="Delete"><i class="icon-trash"></i></button>` : '<span class="badge">Static</span>'}
+              </div>
+            </div>
+          `).join('')}
         </div>
-      `).join('');
+      `;
     } catch (error) {
       console.error('[Veil] Failed to load DHCP leases:', error);
-      toast('Failed to load DHCP leases', 'error');
     }
+  },
+ 
+  /**
+   * Format lease expiry time
+   */
+  formatLeaseExpiry(seconds) {
+    if (seconds <= 0) return 'Expired';
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
+    return `${Math.floor(seconds / 86400)}d`;
   },
  
   /**
@@ -560,78 +568,91 @@ const VeilUI = {
     const container = document.getElementById('tab-privacy');
     container.innerHTML = `
       <div class="veil-section">
-        <h3>Encrypted Transports</h3>
+        <h3>Encrypted DNS</h3>
        
         <div class="setting-row">
           <label>
             <input type="checkbox" id="doh-enabled" ${this.config.doh_enabled ? 'checked' : ''}>
-            Enable DoH
+            DNS-over-HTTPS (DoH)
           </label>
         </div>
        
         <div class="setting-row">
           <label>
             <input type="checkbox" id="dot-enabled" ${this.config.dot_enabled ? 'checked' : ''}>
-            Enable DoT
+            DNS-over-TLS (DoT)
           </label>
         </div>
        
         <div class="setting-row">
           <label>
             <input type="checkbox" id="doq-enabled" ${this.config.doq_enabled ? 'checked' : ''}>
-            Enable DoQ
+            DNS-over-QUIC (DoQ)
           </label>
         </div>
       </div>
      
       <div class="veil-section">
-        <h3>Privacy Options</h3>
+        <h3>Privacy Features</h3>
        
         <div class="setting-row">
           <label>
             <input type="checkbox" id="ecs-strip" ${this.config.ecs_strip ? 'checked' : ''}>
-            Strip ECS
+            Strip EDNS Client Subnet (ECS)
           </label>
+          <p class="help-text">Prevents location tracking via DNS</p>
         </div>
        
         <div class="setting-row">
           <label>
             <input type="checkbox" id="padding-enabled" ${this.config.padding_enabled ? 'checked' : ''}>
-            Enable Padding
+            RFC 7830 Query Padding
           </label>
+          <p class="help-text">Uniform query length to prevent fingerprinting</p>
         </div>
        
         <div class="setting-row">
           <label>Padding Block Size</label>
-          <input type="number" id="padding-block-size" value="${this.config.padding_block_size}" min="128">
+          <input type="number" id="padding-block-size" value="${this.config.padding_block_size}" min="128" max="512">
         </div>
        
         <div class="setting-row">
           <label>
             <input type="checkbox" id="case-randomization" ${this.config.case_randomization ? 'checked' : ''}>
-            Case Randomization (0x20)
+            0x20 Case Randomization
           </label>
+          <p class="help-text">Random letter case for entropy</p>
         </div>
        
         <div class="setting-row">
           <label>
             <input type="checkbox" id="qname-minimization" ${this.config.qname_minimization ? 'checked' : ''}>
-            QNAME Minimization
+            QNAME Minimization (RFC 9156)
           </label>
         </div>
        
         <div class="setting-row">
           <label>
             <input type="checkbox" id="query-jitter" ${this.config.query_jitter ? 'checked' : ''}>
-            Query Jitter
+            Query Timing Jitter
           </label>
+          <p class="help-text">Random delays to prevent timing correlation</p>
         </div>
+      </div>
+     
+      <div class="veil-section">
+        <h3>DNSSEC</h3>
        
         <div class="setting-row">
           <label>
             <input type="checkbox" id="dnssec-validate" ${this.config.dnssec_validate ? 'checked' : ''}>
             DNSSEC Validation
           </label>
+        </div>
+       
+        <div class="stats-row">
+          <div>Validated: ${this.stats.dns_dnssec_validated || 0}</div>
+          <div>Failed: ${this.stats.dns_dnssec_failed || 0}</div>
         </div>
       </div>
      
@@ -646,13 +667,17 @@ const VeilUI = {
         </div>
        
         <div class="setting-row">
-          <label>Queries Per Second</label>
+          <label>Queries Per Second (per client)</label>
           <input type="number" id="rate-limit-qps" value="${this.config.rate_limit_qps}" min="1" max="100">
         </div>
        
         <div class="setting-row">
           <label>Burst Allowance</label>
           <input type="number" id="rate-limit-burst" value="${this.config.rate_limit_burst}" min="1" max="200">
+        </div>
+       
+        <div class="stats-row">
+          <div>Rate Limited: ${this.stats.dns_rate_limited || 0}</div>
         </div>
       </div>
      
@@ -662,36 +687,40 @@ const VeilUI = {
         <div class="setting-row">
           <label>
             <input type="checkbox" id="safesearch-enabled" ${this.config.safesearch_enabled ? 'checked' : ''}>
-            Enable SafeSearch
+            Enable SafeSearch Enforcement
           </label>
         </div>
        
         <div class="setting-row">
           <label>
             <input type="checkbox" id="safesearch-google" ${this.config.safesearch_google ? 'checked' : ''}>
-            Google
+            Google SafeSearch
           </label>
         </div>
        
         <div class="setting-row">
           <label>
             <input type="checkbox" id="safesearch-bing" ${this.config.safesearch_bing ? 'checked' : ''}>
-            Bing
+            Bing SafeSearch
           </label>
         </div>
        
         <div class="setting-row">
           <label>
             <input type="checkbox" id="safesearch-duckduckgo" ${this.config.safesearch_duckduckgo ? 'checked' : ''}>
-            DuckDuckGo
+            DuckDuckGo SafeSearch
           </label>
         </div>
        
         <div class="setting-row">
           <label>
             <input type="checkbox" id="safesearch-youtube" ${this.config.safesearch_youtube ? 'checked' : ''}>
-            YouTube
+            YouTube Restricted Mode
           </label>
+        </div>
+       
+        <div class="stats-row">
+          <div>SafeSearch Rewrites: ${this.stats.dns_safesearch || 0}</div>
         </div>
       </div>
      
@@ -705,6 +734,7 @@ const VeilUI = {
    * Render Blocking Tab
    */
   renderBlockingTab() {
+    const urls = (this.config.blocklist_urls || []).join('\n');
     const container = document.getElementById('tab-blocking');
     container.innerHTML = `
       <div class="veil-section">
@@ -718,16 +748,23 @@ const VeilUI = {
         </div>
        
         <div class="setting-row">
-          <label>Response Type</label>
+          <label>Block Response Type</label>
           <select id="block-response-type">
             <option value="NXDOMAIN" ${this.config.block_response_type === 'NXDOMAIN' ? 'selected' : ''}>NXDOMAIN</option>
-            <option value="CUSTOM_IP" ${this.config.block_response_type === 'CUSTOM_IP' ? 'selected' : ''}>Custom IP</option>
+            <option value="REFUSED" ${this.config.block_response_type === 'REFUSED' ? 'selected' : ''}>REFUSED</option>
+            <option value="0.0.0.0" ${this.config.block_response_type === '0.0.0.0' ? 'selected' : ''}>0.0.0.0</option>
+            <option value="custom_ip" ${this.config.block_response_type === 'custom_ip' ? 'selected' : ''}>Custom IP</option>
           </select>
         </div>
        
         <div class="setting-row">
           <label>Custom Block IP</label>
           <input type="text" id="block-custom-ip" value="${this.config.block_custom_ip}" placeholder="0.0.0.0">
+        </div>
+       
+        <div class="stats-row">
+          <div>Blocklist Size: ${(this.stats.blocklist_size || 0).toLocaleString()} domains</div>
+          <div>Blocked: ${(this.stats.dns_blocked || 0).toLocaleString()}</div>
         </div>
       </div>
      
@@ -737,7 +774,7 @@ const VeilUI = {
         <div class="setting-row">
           <label>
             <input type="checkbox" id="blocklist-update-enabled" ${this.config.blocklist_update_enabled ? 'checked' : ''}>
-            Auto Update
+            Auto-Update Blocklists
           </label>
         </div>
        
@@ -755,7 +792,7 @@ const VeilUI = {
        
         <div class="setting-row">
           <label>Blocklist URLs (one per line)</label>
-          <textarea id="blocklist-urls" rows="5">${(this.config.blocklist_urls || []).join('\n')}</textarea>
+          <textarea id="blocklist-urls" rows="6" placeholder="https://example.com/blocklist.txt">${urls}</textarea>
         </div>
        
         <div class="button-group">

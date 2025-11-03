@@ -1189,7 +1189,7 @@
             const container = document.getElementById('upstream-list');
             container.innerHTML = '';
             
-            for (const [server, data] in Object.entries(health)) {
+            for (const [server, data] of Object.entries(health)) {
                 const item = document.createElement('div');
                 item.className = 'list-item';
                 
