@@ -5,7 +5,7 @@
   "description": "Veil — Privacy-First DNS/DHCP server with full port exposure for all protocols.",
   "startup": "services",
   "boot": "auto",
-  "init": true,
+  "init": false,
   "arch": ["amd64", "armv7", "armhf", "aarch64"],
 
   "host_network": true,
