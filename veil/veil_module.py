@@ -1364,7 +1364,7 @@ class DNSProtocol(asyncio.DatagramProtocol):
     def datagram_received(self, data, addr):
         asyncio.create_task(self.handle_query(data, addr))
     def parse_query(self, data: bytes):
-   """Decode incoming DNS packet and return (qname, qtype)."""
+        """Decode incoming DNS packet and return (qname, qtype)."""
     import dns.message, dns.rdatatype
     try:
         msg = dns.message.from_wire(data)
