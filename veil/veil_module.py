@@ -147,7 +147,7 @@ CONFIG = {
     "blocklist_update_enabled": True,
     "blocklist_update_interval": 86400,
     "blocklist_update_on_start": True,
-    "blocklist_storage_path": "/config/veil_blocklists.json",  # Local storage
+    "blocklist_storage_path": "/share/veil/veil_blocklists.json",  # Local storage
     "whitelist": [],
     "blacklist": [],
     
@@ -570,7 +570,7 @@ BLACKLIST = DomainList("blacklist")
 async def save_blocklists_local():
     """Save blocklists, blacklist, and whitelist to local storage"""
     try:
-        storage_path = Path(CONFIG.get("blocklist_storage_path", "/config/veil_blocklists.json"))
+        storage_path = Path(CONFIG.get("blocklist_storage_path", "/share/veil/veil_blocklists.json"))
         storage_path.parent.mkdir(parents=True, exist_ok=True)
         
         blocklist_domains = await BLOCKLIST.export()
@@ -599,7 +599,7 @@ async def save_blocklists_local():
 async def load_blocklists_local():
     """Load blocklists, blacklist, and whitelist from local storage"""
     try:
-        storage_path = Path(CONFIG.get("blocklist_storage_path", "/config/veil_blocklists.json"))
+        storage_path = Path(CONFIG.get("blocklist_storage_path", "/share/veil/veil_blocklists.json"))
         
         if not storage_path.exists():
             log.info("[storage] No local storage found")
