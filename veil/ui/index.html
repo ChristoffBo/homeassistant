@@ -671,13 +671,16 @@
                         </svg>
                         <div class="gauge-center">
                             <div class="gauge-value" id="query-rate">0</div>
-                            <div class="gauge-label">Q/s</div>
+                            <div class="gauge-label">QPS</div>
                         </div>
                     </div>
                 </div>
+                <div class="chart-container">
+                    <svg id="query-chart" width="100%" height="150"></svg>
+                </div>
             </div>
 
-            <!-- Cache Hit Rate Gauge -->
+            <!-- Cache Hit Gauge -->
             <div class="panel">
                 <div class="panel-header">
                     <span class="panel-title">Cache Hit Rate</span>
@@ -686,9 +689,16 @@
                 <div class="gauge-container">
                     <div class="gauge">
                         <svg width="200" height="200">
+                            <defs>
+                                <linearGradient id="gaugeGradient2" x1="0%" y1="0%" x2="100%" y2="100%">
+                                    <stop offset="0%" style="stop-color:#b388ff;stop-opacity:1" />
+                                    <stop offset="100%" style="stop-color:#00fff2;stop-opacity:1" />
+                                </linearGradient>
+                            </defs>
                             <circle class="gauge-bg" cx="100" cy="100" r="85"/>
                             <circle class="gauge-fill" id="cache-gauge" cx="100" cy="100" r="85"
-                                    stroke-dasharray="534" stroke-dashoffset="534"/>
+                                    stroke-dasharray="534" stroke-dashoffset="534"
+                                    stroke="url(#gaugeGradient2)"/>
                         </svg>
                         <div class="gauge-center">
                             <div class="gauge-value" id="cache-hit-rate">0</div>
@@ -707,9 +717,16 @@
                 <div class="gauge-container">
                     <div class="gauge">
                         <svg width="200" height="200">
+                            <defs>
+                                <linearGradient id="gaugeGradient3" x1="0%" y1="0%" x2="100%" y2="100%">
+                                    <stop offset="0%" style="stop-color:#00ff88;stop-opacity:1" />
+                                    <stop offset="100%" style="stop-color:#b388ff;stop-opacity:1" />
+                                </linearGradient>
+                            </defs>
                             <circle class="gauge-bg" cx="100" cy="100" r="85"/>
                             <circle class="gauge-fill" id="privacy-gauge" cx="100" cy="100" r="85"
-                                    stroke-dasharray="534" stroke-dashoffset="534"/>
+                                    stroke-dasharray="534" stroke-dashoffset="534"
+                                    stroke="url(#gaugeGradient3)"/>
                         </svg>
                         <div class="gauge-center">
                             <div class="gauge-value" id="privacy-ops">0</div>
@@ -729,7 +746,7 @@
                     <div class="gauge">
                         <svg width="200" height="200">
                             <defs>
-                                <linearGradient id="gaugeGradient2" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <linearGradient id="gaugeGradient4" x1="0%" y1="0%" x2="100%" y2="100%">
                                     <stop offset="0%" style="stop-color:#ff4444;stop-opacity:1" />
                                     <stop offset="100%" style="stop-color:#ffeb3b;stop-opacity:1" />
                                 </linearGradient>
@@ -737,22 +754,57 @@
                             <circle class="gauge-bg" cx="100" cy="100" r="85"/>
                             <circle class="gauge-fill" id="blocked-gauge" cx="100" cy="100" r="85"
                                     stroke-dasharray="534" stroke-dashoffset="534"
-                                    stroke="url(#gaugeGradient2)"/>
+                                    stroke="url(#gaugeGradient4)"/>
                         </svg>
                         <div class="gauge-center">
-                            <div class="gauge-value" id="blocked-gauge-value" style="color: #ff4444; text-shadow: 0 0 20px #ff4444;">0</div>
-                            <div class="gauge-label">BLOCKED</div>
+                            <div class="gauge-value" id="blocked-gauge-value">0</div>
+                            <div class="gauge-label">%</div>
                         </div>
                     </div>
                 </div>
             </div>
-        </div>
 
-        <!-- Stats Grid -->
-        <div class="grid-layout">
+            <!-- New Average Response Time Gauge -->
             <div class="panel">
                 <div class="panel-header">
-                    <span class="panel-title">DNS Statistics</span>
+                    <span class="panel-title">Average Response Time</span>
+                    <span class="panel-icon">⏱️</span>
+                </div>
+                <div class="gauge-container">
+                    <div class="gauge">
+                        <svg width="200" height="200">
+                            <defs>
+                                <linearGradient id="gaugeGradient5" x1="0%" y1="0%" x2="100%" y2="100%">
+                                    <stop offset="0%" style="stop-color:#ffeb3b;stop-opacity:1" />
+                                    <stop offset="100%" style="stop-color:#00fff2;stop-opacity:1" />
+                                </linearGradient>
+                            </defs>
+                            <circle class="gauge-bg" cx="100" cy="100" r="85"/>
+                            <circle class="gauge-fill" id="avg-time-gauge" cx="100" cy="100" r="85"
+                                    stroke-dasharray="534" stroke-dashoffset="534"
+                                    stroke="url(#gaugeGradient5)"/>
+                        </svg>
+                        <div class="gauge-center">
+                            <div class="gauge-value" id="avg-time-value">0</div>
+                            <div class="gauge-label">ms</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- New Protocol Usage -->
+            <div class="panel">
+                <div class="panel-header">
+                    <span class="panel-title">Protocol Usage</span>
+                    <span class="panel-icon">📡</span>
+                </div>
+                <div id="protocol-bars" class="stats-grid"></div>
+            </div>
+
+            <!-- Statistics -->
+            <div class="panel">
+                <div class="panel-header">
+                    <span class="panel-title">Statistics</span>
                     <span class="panel-icon">📊</span>
                 </div>
                 <div class="stats-grid">
@@ -761,7 +813,7 @@
                         <div class="stat-value" id="total-queries">0</div>
                     </div>
                     <div class="stat-item">
-                        <div class="stat-label">Blocked</div>
+                        <div class="stat-label">Blocked Queries</div>
                         <div class="stat-value" id="blocked-queries">0</div>
                     </div>
                     <div class="stat-item">
@@ -769,20 +821,21 @@
                         <div class="stat-value" id="cache-hits">0</div>
                     </div>
                     <div class="stat-item">
-                        <div class="stat-label">Upstream</div>
+                        <div class="stat-label">Upstream Queries</div>
                         <div class="stat-value" id="upstream-queries">0</div>
                     </div>
                 </div>
             </div>
 
+            <!-- Privacy Stats -->
             <div class="panel">
                 <div class="panel-header">
                     <span class="panel-title">Privacy Stats</span>
-                    <span class="panel-icon">🛡️</span>
+                    <span class="panel-icon">🔒</span>
                 </div>
                 <div class="stats-grid">
                     <div class="stat-item">
-                        <div class="stat-label">Padded</div>
+                        <div class="stat-label">Padded Queries</div>
                         <div class="stat-value" id="padded-queries">0</div>
                     </div>
                     <div class="stat-item">
@@ -790,7 +843,7 @@
                         <div class="stat-value" id="ecs-stripped">0</div>
                     </div>
                     <div class="stat-item">
-                        <div class="stat-label">0x20 Encoded</div>
+                        <div class="stat-label">Case Randomized</div>
                         <div class="stat-value" id="case-randomized">0</div>
                     </div>
                     <div class="stat-item">
@@ -800,9 +853,10 @@
                 </div>
             </div>
 
+            <!-- DHCP Stats -->
             <div class="panel">
                 <div class="panel-header">
-                    <span class="panel-title">DHCP Statistics</span>
+                    <span class="panel-title">DHCP Stats</span>
                     <span class="panel-icon">🌐</span>
                 </div>
                 <div class="stats-grid">
@@ -811,221 +865,161 @@
                         <div class="stat-value" id="active-leases">0</div>
                     </div>
                     <div class="stat-item">
-                        <div class="stat-label">Offers Sent</div>
+                        <div class="stat-label">DHCP Offers</div>
                         <div class="stat-value" id="dhcp-offers">0</div>
                     </div>
                     <div class="stat-item">
-                        <div class="stat-label">ACKs Sent</div>
+                        <div class="stat-label">DHCP ACKs</div>
                         <div class="stat-value" id="dhcp-acks">0</div>
                     </div>
                     <div class="stat-item">
                         <div class="stat-label">Pool Usage</div>
-                        <div class="stat-value" id="pool-usage">0<span class="stat-unit">%</span></div>
+                        <div class="stat-value" id="pool-usage">0</div><span class="stat-unit">%</span>
                     </div>
                 </div>
             </div>
-        </div>
 
-        <!-- Upstream Servers -->
-        <div class="panel">
-            <div class="panel-header">
-                <span class="panel-title">Upstream Servers</span>
-                <span class="panel-icon">🔗</span>
-            </div>
-            <div class="list-container" id="upstream-list">
-                <!-- Populated by JS -->
-            </div>
-        </div>
-
-        <!-- System Info -->
-        <div class="grid-layout">
+            <!-- Cache Status -->
             <div class="panel">
                 <div class="panel-header">
                     <span class="panel-title">Cache Status</span>
-                    <span class="panel-icon">💽</span>
+                    <span class="panel-icon">💾</span>
                 </div>
-                <div class="stat-item">
-                    <div class="stat-label">Cache Size</div>
-                    <div class="stat-value" id="cache-size">0<span class="stat-unit">/ 10000</span></div>
-                    <div class="progress-bar">
-                        <div class="progress-fill" id="cache-usage-bar" style="width: 0%"></div>
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-label">Cache Size</div>
+                        <div class="stat-value" id="cache-size">0</div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="cache-usage-bar" style="width: 0%;"></div>
+                        </div>
                     </div>
-                </div>
-                <div class="stat-item" style="margin-top: 15px;">
-                    <div class="stat-label">Blocklist Size</div>
-                    <div class="stat-value" id="blocklist-size">0<span class="stat-unit">domains</span></div>
-                </div>
-                <div style="margin-top: 15px; display: flex; gap: 10px;">
-                    <button onclick="flushCache()"><span>Flush Cache</span></button>
-                    <button onclick="reloadBlocklist()"><span>Reload Blocklist</span></button>
+                    <div class="stat-item">
+                        <div class="stat-label">Blocklist Size</div>
+                        <div class="stat-value" id="blocklist-size">0</div>
+                    </div>
                 </div>
             </div>
 
+            <!-- Upstream Servers -->
             <div class="panel">
                 <div class="panel-header">
-                    <span class="panel-title">Query Timeline</span>
-                    <span class="panel-icon">📈</span>
+                    <span class="panel-title">Upstream Servers</span>
+                    <span class="panel-icon">☁️</span>
                 </div>
-                <div class="chart-container">
-                    <svg id="query-chart" width="100%" height="150">
-                        <defs>
-                            <linearGradient id="chartGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                                <stop offset="0%" style="stop-color:#00fff2;stop-opacity:0.5" />
-                                <stop offset="100%" style="stop-color:#00fff2;stop-opacity:0" />
-                            </linearGradient>
-                        </defs>
-                    </svg>
+                <div class="list-container" id="upstream-list"></div>
+            </div>
+
+            <!-- New Top Clients -->
+            <div class="panel">
+                <div class="panel-header">
+                    <span class="panel-title">Top 5 Clients</span>
+                    <span class="panel-icon">👥</span>
+                </div>
+                <div class="list-container" id="top-clients-list"></div>
+            </div>
+
+            <!-- New Top Blocked Domains -->
+            <div class="panel">
+                <div class="panel-header">
+                    <span class="panel-title">Top 5 Blocked Domains</span>
+                    <span class="panel-icon">🚫</span>
+                </div>
+                <div class="list-container" id="top-blocked-list"></div>
+            </div>
+
+            <!-- Active DHCP Leases -->
+            <div class="panel">
+                <div class="panel-header">
+                    <span class="panel-title">Active DHCP Leases</span>
+                    <span class="panel-icon">📱</span>
+                </div>
+                <div class="list-container" id="leases-list">
+                    <!-- Populated by JS -->
                 </div>
             </div>
         </div>
 
-        <!-- Configuration Tabs -->
+        <!-- Config Tabs -->
         <div class="panel">
             <div class="panel-header">
                 <span class="panel-title">Configuration</span>
                 <span class="panel-icon">⚙️</span>
             </div>
-            
             <div class="tabs">
-                <button class="tab active" onclick="switchTab(event, 'dns-config')"><span>DNS</span></button>
-                <button class="tab" onclick="switchTab(event, 'dhcp-config')"><span>DHCP</span></button>
-                <button class="tab" onclick="switchTab(event, 'privacy-config')"><span>Privacy</span></button>
-                <button class="tab" onclick="switchTab(event, 'blocking-config')"><span>Blocking</span></button>
+                <button class="tab active" onclick="switchTab(event, 'dns-config')">DNS</button>
+                <button class="tab" onclick="switchTab(event, 'dhcp-config')">DHCP</button>
+                <button class="tab" onclick="switchTab(event, 'privacy-config')">Privacy</button>
+                <button class="tab" onclick="switchTab(event, 'blocking-config')">Blocking</button>
             </div>
-
-            <!-- DNS Config -->
             <div id="dns-config" class="tab-content active">
                 <div class="toggle-container">
                     <span>DNS Enabled</span>
-                    <div class="toggle-switch active" onclick="toggleSwitch(this)" data-config="enabled">
-                        <div class="toggle-slider"></div>
-                    </div>
+                    <div class="toggle-switch" onclick="toggleSwitch(this)" data-config="dns_enabled"></div>
                 </div>
-                
-                <label class="stat-label">Upstream DNS Servers (one per line)</label>
-                <textarea id="upstream-servers" rows="4" style="width: 100%; background: rgba(0, 255, 242, 0.05); border: 1px solid var(--grid-color); color: var(--text-primary); padding: 10px; border-radius: 4px; font-family: 'Share Tech Mono', monospace; font-size: 12px; margin-bottom: 10px;"></textarea>
-                
+                <label class="stat-label">Upstream Servers (one per line)</label>
+                <textarea id="upstream-servers" rows="6"></textarea>
                 <label class="stat-label">DNS Port</label>
-                <input type="number" id="dns-port" value="53" />
-                
+                <input type="number" id="dns-port" value="53">
                 <label class="stat-label">Cache TTL (seconds)</label>
-                <input type="number" id="cache-ttl" value="3600" />
-                
+                <input type="number" id="cache-ttl" value="3600">
                 <label class="stat-label">Cache Max Size</label>
-                <input type="number" id="cache-max-size" value="10000" />
-                
-                <div class="toggle-container">
-                    <span>Stale Serving</span>
-                    <div class="toggle-switch active" onclick="toggleSwitch(this)" data-config="stale_serving">
-                        <div class="toggle-slider"></div>
-                    </div>
+                <input type="number" id="cache-max-size" value="10000">
+                <div style="margin-top: 15px; display: flex; gap: 10px;">
+                    <button onclick="saveConfig('dns')"><span>Save DNS Config</span></button>
+                    <button onclick="flushCache()"><span>Flush Cache</span></button>
                 </div>
-
-                <button onclick="saveConfig('dns')" style="margin-top: 15px;"><span>Save DNS Config</span></button>
             </div>
 
-            <!-- DHCP Config -->
             <div id="dhcp-config" class="tab-content">
                 <div class="toggle-container">
                     <span>DHCP Enabled</span>
-                    <div class="toggle-switch" onclick="toggleSwitch(this)" data-config="dhcp_enabled">
-                        <div class="toggle-slider"></div>
-                    </div>
+                    <div class="toggle-switch" onclick="toggleSwitch(this)" data-config="dhcp_enabled"></div>
                 </div>
-                
                 <label class="stat-label">Network</label>
-                <input type="text" id="dhcp-network" value="192.168.1.0/24" />
-                
-                <label class="stat-label">Router</label>
-                <input type="text" id="dhcp-router" value="192.168.1.1" />
-                
-                <label class="stat-label">DNS Servers (comma separated)</label>
-                <input type="text" id="dhcp-dns" value="192.168.1.1" />
-                
+                <input type="text" id="dhcp-network" placeholder="192.168.1.0/24">
+                <label class="stat-label">Router IP</label>
+                <input type="text" id="dhcp-router" placeholder="192.168.1.1">
+                <label class="stat-label">DNS Servers</label>
+                <input type="text" id="dhcp-dns" placeholder="8.8.8.8, 8.8.4.4">
                 <label class="stat-label">Lease Time (seconds)</label>
-                <input type="number" id="dhcp-lease-time" value="86400" />
-
-                <div class="toggle-container">
-                    <span>Ping Before Offer</span>
-                    <div class="toggle-switch active" onclick="toggleSwitch(this)" data-config="ping_before_offer">
-                        <div class="toggle-slider"></div>
-                    </div>
+                <input type="number" id="dhcp-lease-time" value="86400">
+                <div style="margin-top: 15px;">
+                    <button onclick="saveConfig('dhcp')"><span>Save DHCP Config</span></button>
                 </div>
-
-                <button onclick="saveConfig('dhcp')" style="margin-top: 15px;"><span>Save DHCP Config</span></button>
             </div>
 
-            <!-- Privacy Config -->
             <div id="privacy-config" class="tab-content">
                 <div class="toggle-container">
-                    <span>RFC 7830 Padding</span>
-                    <div class="toggle-switch active" onclick="toggleSwitch(this)" data-config="padding_enabled">
-                        <div class="toggle-slider"></div>
-                    </div>
-                </div>
-
-                <div class="toggle-container">
-                    <span>0x20 Case Randomization</span>
-                    <div class="toggle-switch active" onclick="toggleSwitch(this)" data-config="case_randomization">
-                        <div class="toggle-slider"></div>
-                    </div>
-                </div>
-
-                <div class="toggle-container">
                     <span>ECS Stripping</span>
-                    <div class="toggle-switch active" onclick="toggleSwitch(this)" data-config="ecs_stripping">
-                        <div class="toggle-slider"></div>
-                    </div>
+                    <div class="toggle-switch active" onclick="toggleSwitch(this)" data-config="ecs_stripping"></div>
                 </div>
-
                 <div class="toggle-container">
-                    <span>DNSSEC Validation</span>
-                    <div class="toggle-switch active" onclick="toggleSwitch(this)" data-config="dnssec_enabled">
-                        <div class="toggle-slider"></div>
-                    </div>
+                    <span>DNSSEC Enabled</span>
+                    <div class="toggle-switch" onclick="toggleSwitch(this)" data-config="dnssec_enabled"></div>
                 </div>
-
+                <div class="toggle-container">
+                    <span>QNAME Minimization</span>
+                    <div class="toggle-switch" onclick="toggleSwitch(this)" data-config="qname_minimization"></div>
+                </div>
+                <div class="toggle-container">
+                    <span>Query Padding</span>
+                    <div class="toggle-switch" onclick="toggleSwitch(this)" data-config="padding_enabled"></div>
+                </div>
                 <div class="toggle-container">
                     <span>Query Jitter</span>
-                    <div class="toggle-switch active" onclick="toggleSwitch(this)" data-config="jitter_enabled">
-                        <div class="toggle-slider"></div>
-                    </div>
+                    <div class="toggle-switch" onclick="toggleSwitch(this)" data-config="jitter_enabled"></div>
                 </div>
-
                 <label class="stat-label">Jitter Range (ms)</label>
-                <input type="text" id="jitter-range" value="10-100" />
-
-                <div class="toggle-container">
-                    <span>DoH Enabled</span>
-                    <div class="toggle-switch active" onclick="toggleSwitch(this)" data-config="doh_enabled">
-                        <div class="toggle-slider"></div>
-                    </div>
+                <input type="text" id="jitter-range" value="10-100">
+                <div style="margin-top: 15px;">
+                    <button onclick="saveConfig('privacy')"><span>Save Privacy Config</span></button>
                 </div>
-
-                <div class="toggle-container">
-                    <span>DoT Enabled</span>
-                    <div class="toggle-switch active" onclick="toggleSwitch(this)" data-config="dot_enabled">
-                        <div class="toggle-slider"></div>
-                    </div>
-                </div>
-
-                <div class="toggle-container">
-                    <span>DoQ Enabled</span>
-                    <div class="toggle-switch active" onclick="toggleSwitch(this)" data-config="doq_enabled">
-                        <div class="toggle-slider"></div>
-                    </div>
-                </div>
-
-                <button onclick="saveConfig('privacy')" style="margin-top: 15px;"><span>Save Privacy Config</span></button>
             </div>
 
-            <!-- Blocking Config -->
             <div id="blocking-config" class="tab-content">
                 <div class="toggle-container">
                     <span>Blocking Enabled</span>
-                    <div class="toggle-switch active" onclick="toggleSwitch(this)" data-config="blocking_enabled">
-                        <div class="toggle-slider"></div>
-                    </div>
+                    <div class="toggle-switch active" onclick="toggleSwitch(this)" data-config="blocking_enabled"></div>
                 </div>
 
                 <!-- Blocklist Count Display -->
@@ -1044,16 +1038,6 @@
             </div>
         </div>
 
-        <!-- Active DHCP Leases -->
-        <div class="panel">
-            <div class="panel-header">
-                <span class="panel-title">Active DHCP Leases</span>
-                <span class="panel-icon">📱</span>
-            </div>
-            <div class="list-container" id="leases-list">
-                <!-- Populated by JS -->
-            </div>
-        </div>
     </div>
 
     <script>
@@ -1164,9 +1148,71 @@
                     queryHistory.shift();
                 }
                 
+                // New Updates
+                updateGauge('avg-time-gauge', stats.avg_response_time * 1000, 500); // Max 500ms
+                document.getElementById('avg-time-value').textContent = Math.round(stats.avg_response_time * 1000);
+                updateProtocolBars();
+                updateTopClients(stats.top_clients || []);
+                updateTopBlocked(stats.top_blocked || []);
+                updateCategoryCounters(stats.block_categories || {});
+                
             } catch (error) {
                 console.error('Failed to update stats:', error);
             }
+        }
+
+        // Update protocol bars
+        function updateProtocolBars() {
+            const protocols = stats.protocol_usage || {};
+            const total = Object.values(protocols).reduce((a, b) => a + b, 0) || 1;
+            const container = document.getElementById('protocol-bars');
+            if (container) {
+                container.innerHTML = '';
+                for (const [proto, count] of Object.entries(protocols)) {
+                    const percent = Math.round((count / total * 100));
+                    const div = document.createElement('div');
+                    div.innerHTML = `
+                        <div class="stat-label">${proto.toUpperCase()}</div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" style="width: ${percent}%;"></div>
+                        </div>
+                        <div class="stat-value">${percent}%</div>
+                    `;
+                    container.appendChild(div);
+                }
+            }
+        }
+
+        // Update top clients
+        function updateTopClients(top) {
+            const container = document.getElementById('top-clients-list');
+            if (container) {
+                container.innerHTML = top.map(([ip, count]) => `
+                    <div class="list-item">
+                        <span class="list-item-label">${ip}</span>
+                        <span class="list-item-value">${count.toLocaleString()}</span>
+                    </div>
+                `).join('');
+            }
+        }
+
+        // Update top blocked
+        function updateTopBlocked(top) {
+            const container = document.getElementById('top-blocked-list');
+            if (container) {
+                container.innerHTML = top.map(([domain, count]) => `
+                    <div class="list-item">
+                        <span class="list-item-label">${domain}</span>
+                        <span class="list-item-value">${count.toLocaleString()}</span>
+                    </div>
+                `).join('');
+            }
+        }
+
+        // Update category counters
+        function updateCategoryCounters(cats) {
+            // Assume panel for categories, add if needed
+            // Similar to stats-grid
         }
 
         // Update gauge
