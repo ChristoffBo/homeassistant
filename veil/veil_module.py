@@ -1226,7 +1226,6 @@ async def query_upstream(qname: str, qtype: int) -> Optional[bytes]:
 async def query_udp(wire_query: bytes, server: str) -> Optional[bytes]:
     loop = asyncio.get_event_loop()
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    self.sock.bind(("0.0.0.0",CONFIG[dns_port"]))
     sock.settimeout(CONFIG["upstream_timeout"])
     
     try:
