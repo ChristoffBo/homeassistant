@@ -15,7 +15,7 @@
   "devices": ["/dev/net/tun"],
   "map": ["share:rw", "data:rw"],
 
-  "ingress": true,
+  "ingress": false,
   "ingress_port": 8080,
   "panel_icon": "mdi:shield-lock",
   "panel_title": "Veil",
