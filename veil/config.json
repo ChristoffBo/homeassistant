@@ -8,8 +8,8 @@
   "arch": ["amd64", "armv7", "armhf", "aarch64"],
 
   "host_network": true,
-  "full_access": true,
-  "homeassistant_api": true,
+  "full_access": false,
+  "homeassistant_api": false,
   "privileged": ["NET_ADMIN"],
   "devices": ["/dev/net/tun"],
   "map": ["share:rw", "data:rw"],
