@@ -7,14 +7,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/venv/bin:$PATH"
 
 # ----------------------------------------------------
-# System dependencies (additive & comprehensive)
+# System dependencies (comprehensive, additive)
 # ----------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-venv python3-pip python3-dev \
     ca-certificates curl wget gnupg dnsutils iproute2 iputils-ping \
     build-essential libssl-dev libffi-dev libc-ares-dev \
     libnss3 libgnutls30 libidn2-0 tzdata \
-    openssl \
+    openssl libpcre3 libpcre3-dev \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -30,7 +30,7 @@ COPY icon.png /app/icon.png
 COPY ui /app/ui
 
 # ----------------------------------------------------
-# Python dependencies (inside venv)
+# Python dependencies (inside isolated venv)
 # ----------------------------------------------------
 RUN python3 -m venv /venv && \
     /venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel && \
@@ -42,7 +42,15 @@ RUN python3 -m venv /venv && \
         aioquic \
         orjson \
         uvloop \
-        aiologger
+        aiologger \
+        certifi \
+        pyOpenSSL \
+        service-identity \
+        pylsqpack \
+        cffi \
+        idna \
+        h2 \
+        hpack
 
 # ----------------------------------------------------
 # Permissions and runtime setup
