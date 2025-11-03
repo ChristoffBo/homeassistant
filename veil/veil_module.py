@@ -836,6 +836,7 @@ class CachePrewarmer:
             response_a = await query_upstream(domain, dns.rdatatype.A)
             
             if response_a:
+                # Cache will be populated by query_upstream
                 log.debug(f"[prewarm] Cached A: {domain}")
             
             # Query AAAA record
@@ -1363,43 +1364,46 @@ class DNSProtocol(asyncio.DatagramProtocol):
     
     def datagram_received(self, data, addr):
         asyncio.create_task(self.handle_query(data, addr))
+    
     def parse_query(self, data: bytes):
         """Decode incoming DNS packet and return (qname, qtype)."""
-    import dns.message, dns.rdatatype
-    try:
-        msg = dns.message.from_wire(data)
-        q = msg.question[0]
-        qname = str(q.name).rstrip(".")
-        qtype = dns.rdatatype.to_text(q.rdtype)
-        return qname, qtype
-    except Exception as e:
-        log.error(f"[dns] Failed to parse query: {e}")
-        return "", ""
-
+        try:
+            msg = dns.message.from_wire(data)
+            q = msg.question[0]
+            qname = str(q.name).rstrip(".")
+            qtype = dns.rdatatype.to_text(q.rdtype)
+            return qname, qtype
+        except Exception as e:
+            log.error(f"[dns] Failed to parse query: {e}")
+            return "", ""
+    
     async def handle_query(self, data: bytes, addr):
-        # ✅ Safe additive DNS handler fix
         try:
             qname, qtype = self.parse_query(data)
 
             # 1️⃣ Blocklist check (only if qname is valid)
-            if qname and qname in self.blocklist:
+            if qname and await BLOCKLIST.contains(qname):
                 log.info(f"[dns] Blocked (blocklist): {qname}")
-                reply = self.make_response(data, rcode=dns.rcode.REFUSED)
+                query = dns.message.from_wire(data)
+                reply = dns.message.make_response(query)
+                reply.set_rcode(dns.rcode.REFUSED)
                 self.transport.sendto(reply.to_wire(), addr)
                 return
 
             # 2️⃣ Cache check
-            if qname and (cached := DNS_CACHE.get((qname, qtype))):
-                log.info(f"[dns] Cache hit: {qname}")
-                self.transport.sendto(cached.to_wire(), addr)
-                return
+            if qname:
+                cached = await DNS_CACHE.get(qname, dns.rdatatype.from_text(qtype))
+                if cached:
+                    log.info(f"[dns] Cache hit: {qname}")
+                    self.transport.sendto(cached, addr)
+                    return
 
             # 3️⃣ Upstream resolve with error handling
             try:
-                response = await query_upstream(qname, qtype)
+                response = await query_upstream(qname, dns.rdatatype.from_text(qtype))
                 if response:
-                    DNS_CACHE[(qname, qtype)] = response
-                    self.transport.sendto(response.to_wire(), addr)
+                    await DNS_CACHE.set(qname, dns.rdatatype.from_text(qtype), response, CONFIG["cache_ttl"])
+                    self.transport.sendto(response, addr)
                     log.info(f"[dns] Response sent: {qname}")
                     return
                 else:
@@ -1407,7 +1411,9 @@ class DNSProtocol(asyncio.DatagramProtocol):
 
             except Exception as e:
                 log.error(f"[dns] Upstream failure for {qname}: {e}")
-                reply = self.make_response(data, rcode=dns.rcode.SERVFAIL)
+                query = dns.message.from_wire(data)
+                reply = dns.message.make_response(query)
+                reply.set_rcode(dns.rcode.SERVFAIL)
                 self.transport.sendto(reply.to_wire(), addr)
 
         except Exception as e:
