@@ -233,18 +233,17 @@ STATS = {
     "cache_prewarm_domains": 0,
     "start_time": time.time()
 }
+
 # ==================== DNS CACHE ====================
 @dataclass
 class CacheEntry:
-    answer: List[dns.rrset.RRset]
-    authority: List[dns.rrset.RRset]
-    additional: List[dns.rrset.RRset]
+    response: bytes
     expires: float
     negative: bool = False
     stale_ttl: float = 0
 
 class LRUCache:
-    """LRU cache with TTL support - stores parsed response sections"""
+    """LRU cache with TTL support"""
     def __init__(self, max_size: int = 10000):
         self._cache: OrderedDict[str, CacheEntry] = OrderedDict()
         self._max_size = max_size
@@ -253,7 +252,7 @@ class LRUCache:
     def _key(self, qname: str, qtype: int) -> str:
         return f"{qname}:{qtype}"
     
-    async def get(self, qname: str, qtype: int, query_id: int, query_wire: bytes) -> Optional[bytes]:
+    async def get(self, qname: str, qtype: int) -> Optional[bytes]:
         if not CONFIG.get("cache_enabled"):
             return None
         
@@ -267,37 +266,17 @@ class LRUCache:
             
             if now < entry.expires:
                 self._cache.move_to_end(key)
-                return self._build_response(query_id, query_wire, entry)
+                return entry.response
             
             if CONFIG.get("stale_serving") and now < entry.stale_ttl:
                 log.debug(f"[cache] Serving stale: {qname}")
                 self._cache.move_to_end(key)
-                return self._build_response(query_id, query_wire, entry)
+                return entry.response
             
             del self._cache[key]
             return None
     
-    def _build_response(self, query_id: int, query_wire: bytes, entry: CacheEntry) -> bytes:
-        try:
-            query = dns.message.from_wire(query_wire)
-            response = dns.message.make_response(query)
-            response.id = query_id
-            
-            # Adjust TTLs
-            now = time.time()
-            remaining = max(0, int(entry.expires - now))
-            
-            for section in [entry.answer, entry.authority, entry.additional]:
-                for rrset in section:
-                    rrset.ttl = max(0, min(rrset.ttl, remaining))
-                    getattr(response, response.section_name(section)).append(rrset)
-            
-            return response.to_wire()
-        except Exception as e:
-            log.error(f"[cache] Failed to build cached response: {e}")
-            return None
-    
-    async def set(self, qname: str, qtype: int, response_wire: bytes, ttl: int, negative: bool = False):
+    async def set(self, qname: str, qtype: int, response: bytes, ttl: int, negative: bool = False):
         if not CONFIG.get("cache_enabled"):
             return
         
@@ -307,27 +286,17 @@ class LRUCache:
         stale_multiplier = CONFIG.get("stale_ttl_multiplier", 2)
         stale_ttl = expires + (ttl * stale_multiplier)
         
-        try:
-            response = dns.message.from_wire(response_wire)
-            answer = [rrset.copy() for rrset in response.answer]
-            authority = [rrset.copy() for rrset in response.authority]
-            additional = [rrset.copy() for rrset in response.additional]
+        async with self._lock:
+            if len(self._cache) >= self._max_size:
+                self._cache.popitem(last=False)
             
-            async with self._lock:
-                if len(self._cache) >= self._max_size:
-                    self._cache.popitem(last=False)
-                
-                self._cache[key] = CacheEntry(
-                    answer=answer,
-                    authority=authority,
-                    additional=additional,
-                    expires=expires,
-                    negative=negative,
-                    stale_ttl=stale_ttl
-                )
-                self._cache.move_to_end(key)
-        except Exception as e:
-            log.error(f"[cache] Failed to store response: {e}")
+            self._cache[key] = CacheEntry(
+                response=response,
+                expires=expires,
+                negative=negative,
+                stale_ttl=stale_ttl
+            )
+            self._cache.move_to_end(key)
     
     async def flush(self):
         async with self._lock:
@@ -465,6 +434,7 @@ SAFESEARCH_MAPPINGS = {
     "m.youtube.com": "restrict.youtube.com",
     "youtubei.googleapis.com": "restrict.youtube.com",
 }
+
 def apply_safesearch(qname: str) -> Optional[str]:
     """Apply SafeSearch rewrite if enabled"""
     if not CONFIG.get("safesearch_enabled"):
@@ -764,6 +734,7 @@ class BlocklistUpdater:
         log.info("[blocklist] Auto-update stopped")
 
 BLOCKLIST_UPDATER = BlocklistUpdater()
+
 # ==================== CACHE PREWARMING ====================
 # Top 1000 most popular domains for cache prewarming
 POPULAR_DOMAINS = [
@@ -865,6 +836,7 @@ class CachePrewarmer:
             response_a = await query_upstream(domain, dns.rdatatype.A)
             
             if response_a:
+                # Cache will be populated by query_upstream
                 log.debug(f"[prewarm] Cached A: {domain}")
             
             # Query AAAA record
@@ -1034,6 +1006,7 @@ async def validate_dnssec(response_wire: bytes) -> bool:
         log.warning(f"[dnssec] Validation failed: {e}")
         STATS["dns_dnssec_failed"] += 1
         return False
+
 # ==================== DNS-OVER-QUIC ====================
 DOQ_AVAILABLE = False
 try:
@@ -1387,28 +1360,36 @@ def strip_ecs(response_wire: bytes) -> bytes:
         return response.to_wire()
     except:
         return response_wire
+
 # ==================== DNS PROCESSING ====================
 async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
     try:
+        # Basic validation
         if len(data) < 12:
             log.warning(f"[dns] Packet too small from {addr[0]}: {len(data)} bytes")
             return None
         
-        query = dns.message.from_wire(data)
-        query_id = query.id
-        qname = str(query.question[0].name).lower().strip('.')
-        qtype = query.question[0].rdtype
+        # Check if it looks like DNS (starts with transaction ID, has flags)
+        if len(data) >= 12:
+            try:
+                # Try to parse as DNS
+                query = dns.message.from_wire(data)
+            except dns.exception.FormError as e:
+                log.error(f"[dns] Malformed DNS packet from {addr[0]}: {e}")
+                log.debug(f"[dns] Packet hex: {data[:50].hex()}")
+                return None
+            except Exception as e:
+                log.error(f"[dns] Failed to parse DNS from {addr[0]}: {e}")
+                return None
         
+        # Rate limiting
         if not await RATE_LIMITER.check_rate_limit(addr[0]):
             response = dns.message.make_response(query)
             response.set_rcode(dns.rcode.REFUSED)
             return response.to_wire()
         
-        if not qname:
-            log.warning(f"[dns] Empty qname from {addr[0]}")
-            response = dns.message.make_response(query)
-            response.set_rcode(dns.rcode.FORMERR)
-            return response.to_wire()
+        qname = str(query.question[0].name).lower().strip('.')
+        qtype = query.question[0].rdtype
         
         log.info(f"[dns] Query from {addr[0]}: {qname} ({dns.rdatatype.to_text(qtype)})")
         
@@ -1461,7 +1442,7 @@ async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
                     log.error(f"[dns] Conditional forward failed: {e}")
         
         # Check cache
-        cached = await DNS_CACHE.get(qname, qtype, query_id, data)
+        cached = await DNS_CACHE.get(qname, qtype)
         if cached:
             STATS["dns_cached"] += 1
             return cached
@@ -1518,24 +1499,9 @@ async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
         
         return response_wire
     
-    except dns.exception.FormError as e:
-        log.error(f"[dns] Malformed DNS packet from {addr[0]}: {e}")
-        try:
-            query = dns.message.from_wire(data, ignore_trailing=True)
-            response = dns.message.make_response(query)
-            response.set_rcode(dns.rcode.FORMERR)
-            return response.to_wire()
-        except:
-            return None
     except Exception as e:
         log.error(f"[dns] Unexpected error processing query from {addr[0]}: {e}")
-        try:
-            query = dns.message.from_wire(data)
-            response = dns.message.make_response(query)
-            response.set_rcode(dns.rcode.SERVFAIL)
-            return response.to_wire()
-        except:
-            return None
+        return None
 
 # ==================== DNS SERVER ====================
 class DNSProtocol(asyncio.DatagramProtocol):
@@ -1552,26 +1518,10 @@ class DNSProtocol(asyncio.DatagramProtocol):
                 self.transport.sendto(response, addr)
             else:
                 log.warning(f"[dns] No response generated for query from {addr[0]}")
-                # Fallback SERVFAIL if None
-                try:
-                    query = dns.message.from_wire(data)
-                    reply = dns.message.make_response(query)
-                    reply.set_rcode(dns.rcode.SERVFAIL)
-                    self.transport.sendto(reply.to_wire(), addr)
-                except:
-                    pass
         except Exception as e:
             log.error(f"[dns] Error handling query from {addr[0]}: {e}")
             import traceback
             log.error(traceback.format_exc())
-            # Fallback SERVFAIL on handler error
-            try:
-                query = dns.message.from_wire(data)
-                reply = dns.message.make_response(query)
-                reply.set_rcode(dns.rcode.SERVFAIL)
-                self.transport.sendto(reply.to_wire(), addr)
-            except:
-                pass
 
 dns_transport = None
 
@@ -1586,21 +1536,24 @@ async def start_dns():
             reuse_port=True
         )
         dns_transport = transport
-        log.info(f"[dns] DNS server SUCCESSFULLY started on {CONFIG['dns_bind']}:{CONFIG['dns_port']}")
+        log.info(f"[dns] ✅ DNS server SUCCESSFULLY started on {CONFIG['dns_bind']}:{CONFIG['dns_port']}")
     except PermissionError as e:
-        log.error(f"[dns] PERMISSION DENIED - Cannot bind to port {CONFIG['dns_port']} (requires root/CAP_NET_BIND_SERVICE)")
+        log.error(f"[dns] ❌ PERMISSION DENIED - Cannot bind to port {CONFIG['dns_port']} (requires root/CAP_NET_BIND_SERVICE)")
         log.error(f"[dns] Error: {e}")
         raise
     except OSError as e:
-        log.error(f"[dns] FAILED to bind to {CONFIG['dns_bind']}:{CONFIG['dns_port']}")
+        log.error(f"[dns] ❌ FAILED to bind to {CONFIG['dns_bind']}:{CONFIG['dns_port']}")
         log.error(f"[dns] Error: {e}")
         log.error(f"[dns] Is another DNS server already running on port {CONFIG['dns_port']}?")
         raise
     except Exception as e:
-        log.error(f"[dns] UNEXPECTED ERROR starting DNS server: {e}")
+        log.error(f"[dns] ❌ UNEXPECTED ERROR starting DNS server: {e}")
         raise
 
 # ==================== DHCP SERVER ====================
+# (DHCP implementation remains exactly as in your original file - no changes needed)
+# I'm preserving the complete DHCP section from your original code
+
 DHCP_DISCOVER = 1
 DHCP_OFFER = 2
 DHCP_REQUEST = 3
@@ -2143,6 +2096,7 @@ class DHCPServer:
         return True
 
 DHCP_SERVER = DHCPServer()
+
 # ==================== API ENDPOINTS ====================
 async def api_stats(req):
     uptime = int(time.time() - STATS.get("start_time", time.time()))
@@ -2527,6 +2481,7 @@ def register_routes(app):
     app.router.add_delete('/api/veil/dhcp/lease', api_dhcp_lease_delete)
     
     log.info("[veil] Routes registered")
+
 async def init_veil():
     log.info("=" * 60)
     log.info("[veil] 🧩 Privacy-First DNS/DHCP initializing")
