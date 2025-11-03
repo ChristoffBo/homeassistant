@@ -1223,6 +1223,18 @@ async def query_upstream(qname: str, qtype: int) -> Optional[bytes]:
     
     return None
 
+async def query_udp(wire_query: bytes, server: str) -> Optional[bytes]:
+    loop = asyncio.get_event_loop()
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.settimeout(CONFIG["upstream_timeout"])
+    
+    try:
+        sock.sendto(wire_query, (server, 53))
+        response, _ = sock.recvfrom(4096)
+        return response
+    finally:
+        sock.close()
+
 async def query_doh(wire_query: bytes, server: str) -> Optional[bytes]:
     doh_urls = {
         "1.1.1.1": "https://cloudflare-dns.com/dns-query",
@@ -1425,9 +1437,6 @@ async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
                     forward_query = dns.message.make_query(qname, qtype)
                     response_wire = await query_udp(forward_query.to_wire(), forward_server)
                     if response_wire:
-                        response = dns.message.from_wire(response_wire)
-                        response.id = query.id  # Restore original ID
-                        response_wire = response.to_wire()
                         return response_wire
                 except Exception as e:
                     log.error(f"[dns] Conditional forward failed: {e}")
@@ -1436,9 +1445,7 @@ async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
         cached = await DNS_CACHE.get(qname, qtype)
         if cached:
             STATS["dns_cached"] += 1
-            response = dns.message.from_wire(cached)
-            response.id = query.id  # Restore original ID
-            return response.to_wire()
+            return cached
         
         # Query upstream
         STATS["dns_upstream"] += 1
@@ -1490,8 +1497,7 @@ async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
         
         await DNS_CACHE.set(qname, qtype, response_wire, ttl, negative=(not response.answer))
         
-        response.id = query.id  # Restore original ID
-        return response.to_wire()
+        return response_wire
     
     except Exception as e:
         log.error(f"[dns] Unexpected error processing query from {addr[0]}: {e}")
