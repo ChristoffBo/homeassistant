@@ -12,8 +12,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-venv python3-pip ca-certificates curl gnupg dnsutils iproute2 iputils-ping \
     build-essential libssl-dev \
-    # Added development and C-extension support libs
+    # Added dev and HTTPS support
     python3-dev libffi-dev libc-ares-dev \
+    openssl wget \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
