@@ -6,7 +6,7 @@ const VeilUI = {
   stats: {},
   config: {},
   updateInterval: null,
-  logs: [],  // Store logs locally for export
+  logs: [],
  
   /**
    * Initialize Veil UI
@@ -68,11 +68,6 @@ const VeilUI = {
     this.updateInterval = setInterval(async () => {
       await this.loadStats();
       this.updateStatsDisplay();
-      // Refresh logs if logs tab is active
-      const activeTab = document.querySelector('.tab-button.active').dataset.tab;
-      if (activeTab === 'logs') {
-        await this.loadLogs();
-      }
     }, 5000);
   },
  
@@ -153,23 +148,6 @@ const VeilUI = {
               <div class="stat-label">DHCP Leases</div>
             </div>
           </div>
-         
-          <!-- New Stat Cards for Metrics -->
-          <div class="stat-card">
-            <div class="stat-icon">⏱️</div>
-            <div class="stat-content">
-              <div class="stat-value" id="stat-avg-time">0ms</div>
-              <div class="stat-label">Avg Response Time</div>
-            </div>
-          </div>
-          
-          <div class="stat-card">
-            <div class="stat-icon">📈</div>
-            <div class="stat-content">
-              <div class="stat-value" id="stat-protocol">UDP</div>
-              <div class="stat-label">Top Protocol</div>
-            </div>
-          </div>
         </div>
        
         <!-- Tabs -->
@@ -179,8 +157,6 @@ const VeilUI = {
           <button class="tab-button" data-tab="privacy">Privacy</button>
           <button class="tab-button" data-tab="blocking">Blocking</button>
           <button class="tab-button" data-tab="settings">Settings</button>
-          <button class="tab-button" data-tab="logs">Logs</button> <!-- New Logs Tab -->
-          <button class="tab-button" data-tab="health">Health</button> <!-- New Health Tab -->
         </div>
        
         <!-- Tab Content -->
@@ -190,8 +166,6 @@ const VeilUI = {
           <div id="tab-privacy" class="tab-pane"></div>
           <div id="tab-blocking" class="tab-pane"></div>
           <div id="tab-settings" class="tab-pane"></div>
-          <div id="tab-logs" class="tab-pane"></div>
-          <div id="tab-health" class="tab-pane"></div>
         </div>
       </div>
     `;
@@ -202,8 +176,6 @@ const VeilUI = {
     this.renderPrivacyTab();
     this.renderBlockingTab();
     this.renderSettingsTab();
-    this.renderLogsTab();
-    this.renderHealthTab();
     this.updateStatsDisplay();
   },
  
@@ -239,287 +211,45 @@ const VeilUI = {
    * Update stats display
    */
   updateStatsDisplay() {
-    const s = this.stats;
+  const s = this.stats;
 
-    // Status
-    const statusEl = document.getElementById('veil-status');
-    if (statusEl) {
-      const isHealthy = s.dns_queries > 0 || this.config.enabled;
-      statusEl.innerHTML = `
-        <span class="status-dot ${isHealthy ? 'status-healthy' : 'status-degraded'}"></span>
-        <span>${isHealthy ? 'Healthy' : 'Inactive'}</span>
-      `;
-    }
+  // Status
+  const statusEl = document.getElementById('veil-status');
+  if (statusEl) {
+    const isHealthy = s.dns_queries > 0 || this.config.enabled;
+    statusEl.innerHTML = `
+      <span class="status-dot ${isHealthy ? 'status-healthy' : 'status-degraded'}"></span>
+      <span>${isHealthy ? 'Healthy' : 'Inactive'}</span>
+    `;
+  }
 
-    // Stats
-    document.getElementById('stat-queries').textContent = (s.dns_queries || 0).toLocaleString();
+  // Stats
+  document.getElementById('stat-queries').textContent = (s.dns_queries || 0).toLocaleString();
 
-    // ✅ FIX: use nested fallback for cache hits
-    const cacheHits = s.dns_cached || (s.cache && s.cache.hits) || 0;
-    const cacheHitRate = s.dns_queries > 0
-      ? Math.round((cacheHits / s.dns_queries) * 100)
-      : 0;
-    document.getElementById('stat-cached').textContent = `${cacheHitRate}%`;
+  // ✅ FIX: use nested fallback for cache hits
+  const cacheHits = s.dns_cached || (s.cache && s.cache.hits) || 0;
+  const cacheHitRate = s.dns_queries > 0
+    ? Math.round((cacheHits / s.dns_queries) * 100)
+    : 0;
+  document.getElementById('stat-cached').textContent = `${cacheHitRate}%`;
 
-    document.getElementById('stat-blocked').textContent = (s.dns_blocked || 0).toLocaleString();
+  document.getElementById('stat-blocked').textContent = (s.dns_blocked || 0).toLocaleString();
 
-    // ✅ FIX: use nested fallback for cache size
-    const cacheSize = s.cache_size || (s.cache && s.cache.size) || 0;
-    document.getElementById('stat-cache-size').textContent = cacheSize.toLocaleString();
+  // ✅ FIX: use nested fallback for cache size
+  const cacheSize = s.cache_size || (s.cache && s.cache.size) || 0;
+  document.getElementById('stat-cache-size').textContent = cacheSize.toLocaleString();
 
-    const privacyFeatures =
-      (s.dns_padded || 0) +
-      (s.dns_0x20 || 0) +
-      (s.dns_dnssec_validated || 0);
-    document.getElementById('stat-privacy').textContent = privacyFeatures.toLocaleString();
+  const privacyFeatures =
+    (s.dns_padded || 0) +
+    (s.dns_0x20 || 0) +
+    (s.dns_dnssec_validated || 0);
+  document.getElementById('stat-privacy').textContent = privacyFeatures.toLocaleString();
 
-    document.getElementById('stat-dhcp').textContent = (s.dhcp_leases || 0).toLocaleString();
+  document.getElementById('stat-dhcp').textContent = (s.dhcp_leases || 0).toLocaleString();
+}
 
-    // New Metrics
-    document.getElementById('stat-avg-time').textContent = `${Math.round(s.avg_response_time * 1000 || 0)}ms`;
-
-    const protocols = s.protocol_usage || {};
-    const totalProtocol = Object.values(protocols).reduce((a, b) => a + b, 0) || 1;
-    const topProtocol = Object.entries(protocols).reduce((a, b) => b[1] > a[1] ? b : a, ['UDP', 0])[0].toUpperCase();
-    document.getElementById('stat-protocol').textContent = topProtocol;
-
-    // Update Top Clients and Blocked Domains if in dashboard view
-    this.updateTopDisplays();
-
-    // Update Category Counters
-    this.updateCategoryCounters();
-
-    // Update Protocol Bars if health tab active
-    this.updateProtocolBars();
   },
-
-  /**
-   * Update top clients and blocked domains displays
-   */
-  updateTopDisplays() {
-    const s = this.stats;
-
-    // Top Clients
-    const topClients = s.top_clients || [];
-    const topClientsContainer = document.getElementById('top-clients');
-    if (topClientsContainer) {
-      topClientsContainer.innerHTML = topClients.map(([ip, count]) => `
-        <div class="record-row">
-          <div>${ip}</div>
-          <div>${count.toLocaleString()}</div>
-        </div>
-      `).join('');
-    }
-
-    // Top Blocked Domains
-    const topBlocked = s.top_blocked || [];
-    const topBlockedContainer = document.getElementById('top-blocked');
-    if (topBlockedContainer) {
-      topBlockedContainer.innerHTML = topBlocked.map(([domain, count]) => `
-        <div class="record-row">
-          <div>${domain}</div>
-          <div>${count.toLocaleString()}</div>
-        </div>
-      `).join('');
-    }
-  },
-
-  /**
-   * Update category counters
-   */
-  updateCategoryCounters() {
-    const s = this.stats;
-    const categories = s.block_categories || {};
-    const categoryContainer = document.getElementById('category-counters');
-    if (categoryContainer) {
-      categoryContainer.innerHTML = Object.entries(categories).map(([cat, count]) => `
-        <div class="stat-card">
-          <div class="stat-value">${count.toLocaleString()}</div>
-          <div class="stat-label">${cat.charAt(0).toUpperCase() + cat.slice(1)}</div>
-        </div>
-      `).join('');
-    }
-  },
-
-  /**
-   * Update protocol bars
-   */
-  updateProtocolBars() {
-    const s = this.stats;
-    const protocols = s.protocol_usage || {};
-    const total = Object.values(protocols).reduce((a, b) => a + b, 0) || 1;
-    const container = document.getElementById('protocol-bars');
-    if (container) {
-      container.innerHTML = Object.entries(protocols).map(([proto, count]) => `
-        <div class="progress-bar">
-          <div class="progress-fill" style="width: ${(count / total * 100)}%;"></div>
-        </div>
-        <div>${proto.toUpperCase()}: ${Math.round((count / total * 100))}%</div>
-      `).join('');
-    }
-  },
-
-  /**
-   * Update logs display
-   */
-  updateLogsDisplay() {
-    const table = document.getElementById('query-log-table');
-    if (table) {
-      table.innerHTML = this.logs.map(log => `
-        <div class="record-row">
-          <div>${new Date(log.timestamp * 1000).toLocaleString()}</div>
-          <div>${log.client_ip}</div>
-          <div>${log.domain}</div>
-          <div>${log.result}</div>
-          <div>${Math.round(log.latency)}ms</div>
-        </div>
-      `).join('');
-    }
-  },
-
-  /**
-   * Export logs
-   */
-  exportLogs(type) {
-    let content, filename, mime;
-    if (type === 'json') {
-      content = JSON.stringify(this.logs, null, 2);
-      filename = 'veil_logs.json';
-      mime = 'application/json';
-    } else if (type === 'csv') {
-      content = 'timestamp,client_ip,domain,result,latency\n' + this.logs.map(l => `${new Date(l.timestamp * 1000).toLocaleString()},${l.client_ip},${l.domain},${l.result},${l.latency}`).join('\n');
-      filename = 'veil_logs.csv';
-      mime = 'text/csv';
-    } else {
-      return;
-    }
-    const blob = new Blob([content], {type: mime});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-  },
-
-  /**
-   * Backup configuration
-   */
-  backupConfig() {
-    const content = JSON.stringify(this.config, null, 2);
-    const blob = new Blob([content], {type: 'application/json'});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'veil_config.json';
-    a.click();
-    URL.revokeObjectURL(url);
-  },
-
-  /**
-   * Restore configuration
-   */
-  restoreConfig(file) {
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      try {
-        const data = JSON.parse(e.target.result);
-        await this.updateConfig(data);
-        toast('Configuration restored', 'success');
-        location.reload();
-      } catch (err) {
-        toast('Invalid configuration file', 'error');
-      }
-    };
-    reader.readAsText(file);
-  },
-
-  /**
-   * Show add upstream dialog
-   */
-  showAddUpstreamDialog() {
-    // Simple prompt for simplicity; can be replaced with modal
-    const server = prompt('Enter upstream server (e.g., https://dns.example.com)');
-    const type = prompt('Enter type (udp, doh, dot, doq)');
-    if (server && type) {
-      this.addUpstream(server, type);
-    }
-  },
-
-  /**
-   * Add upstream
-   */
-  async addUpstream(server, type) {
-    try {
-      const response = await fetch('/api/veil/upstream/add', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ server, type })
-      });
-      if (response.ok) {
-        toast('Upstream added', 'success');
-        await this.loadConfig();
-        this.renderUpstreamList();
-      }
-    } catch (error) {
-      toast('Failed to add upstream', 'error');
-    }
-  },
-
-  /**
-   * Remove upstream
-   */
-  async removeUpstream(server) {
-    if (confirm(`Remove upstream ${server}?`)) {
-      try {
-        const response = await fetch('/api/veil/upstream/remove', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ server })
-        });
-        if (response.ok) {
-          toast('Upstream removed', 'success');
-          await this.loadConfig();
-          this.renderUpstreamList();
-        }
-      } catch (error) {
-        toast('Failed to remove upstream', 'error');
-      }
-    }
-  },
-
-  /**
-   * Show add conditional forward dialog
-   */
-  showAddConditionalDialog() {
-    const domain = prompt('Enter domain (e.g., example.com)');
-    const upstream = prompt('Enter upstream server');
-    const type = prompt('Enter type (udp, doh, dot, doq)');
-    if (domain && upstream && type) {
-      this.addConditional(domain, upstream, type);
-    }
-  },
-
-  /**
-   * Add conditional forward
-   */
-  async addConditional(domain, upstream, type) {
-    try {
-      const response = await fetch('/api/veil/conditional/add', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ domain, upstream, type })
-      });
-      if (response.ok) {
-        toast('Conditional forward added', 'success');
-        await this.loadConfig();
-        this.renderConditionalList();
-      }
-    } catch (error) {
-      toast('Failed to add conditional forward', 'error');
-    }
-  },
-
+ 
   /**
    * Render DNS Tab
    */
@@ -585,10 +315,6 @@ const VeilUI = {
        
         <div class="upstream-list" id="upstream-list"></div>
        
-        <div class="button-group">
-          <button class="btn-primary" onclick="VeilUI.showAddUpstreamDialog()">Add Upstream</button>
-        </div>
-       
         <div class="setting-row">
           <label>
             <input type="checkbox" id="upstream-parallel" ${this.config.upstream_parallel ? 'checked' : ''}>
@@ -600,13 +326,6 @@ const VeilUI = {
           <label>
             <input type="checkbox" id="upstream-rotation" ${this.config.upstream_rotation ? 'checked' : ''}>
             Rotate Upstream Servers
-          </label>
-        </div>
-       
-        <div class="setting-row">
-          <label>
-            <input type="checkbox" id="dynamic-weighting" ${this.config.dynamic_upstream_weighting ? 'checked' : ''}>
-            Dynamic Weighting (prefer fastest)
           </label>
         </div>
        
@@ -624,14 +343,6 @@ const VeilUI = {
         </div>
       </div>
      
-      <div class="veil-section">
-        <h3>Conditional Forwards</h3>
-        <div id="conditional-list"></div>
-        <div class="button-group">
-          <button class="btn-primary" onclick="VeilUI.showAddConditionalDialog()">Add Conditional</button>
-        </div>
-      </div>
-     
       <div class="button-group">
         <button class="btn-primary" onclick="VeilUI.saveDNSSettings()">Save DNS Settings</button>
       </div>
@@ -639,7 +350,6 @@ const VeilUI = {
    
     this.renderUpstreamList();
     this.renderLocalRecords();
-    this.renderConditionalList();
   },
  
   /**
@@ -652,9 +362,7 @@ const VeilUI = {
     const servers = this.config.upstream_servers || [];
     const health = this.stats.upstream_health || {};
    
-    container.innerHTML = servers.map(srv => {
-      const server = srv.server;
-      const type = srv.type.toUpperCase();
+    container.innerHTML = servers.map(server => {
       const status = health[server];
       const isHealthy = !status || status.healthy;
       const latency = status ? status.latency : 0;
@@ -662,55 +370,13 @@ const VeilUI = {
       return `
         <div class="upstream-server">
           <span class="status-dot ${isHealthy ? 'status-healthy' : 'status-error'}"></span>
-          <span>${type}</span>
           <span class="server-ip">${server}</span>
           ${latency > 0 ? `<span class="server-latency">${Math.round(latency * 1000)}ms</span>` : ''}
-          <button class="btn-icon" onclick="VeilUI.removeUpstream('${server}')">Remove</button>
         </div>
       `;
     }).join('');
   },
  
-  /**
-   * Render conditional forwards list
-   */
-  renderConditionalList() {
-    const container = document.getElementById('conditional-list');
-    if (!container) return;
-   
-    const forwards = this.config.conditional_forwards || [];
-   
-    container.innerHTML = forwards.map(fwd => `
-      <div class="record-row">
-        <div>${fwd.domain}</div>
-        <div>${fwd.upstream.type.toUpperCase()} - ${fwd.upstream.server}</div>
-        <button class="btn-icon" onclick="VeilUI.removeConditional('${fwd.domain}')">Remove</button>
-      </div>
-    `).join('');
-  },
-
-  /**
-   * Remove conditional forward
-   */
-  async removeConditional(domain) {
-    if (confirm(`Remove conditional for ${domain}?`)) {
-      try {
-        const response = await fetch('/api/veil/conditional/remove', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ domain })
-        });
-        if (response.ok) {
-          toast('Conditional removed', 'success');
-          await this.loadConfig();
-          this.renderConditionalList();
-        }
-      } catch (error) {
-        toast('Failed to remove conditional', 'error');
-      }
-    }
-  },
-
   /**
    * Render local records
    */
@@ -848,94 +514,14 @@ const VeilUI = {
         <button class="btn-secondary" onclick="VeilUI.loadDHCPLeases()">Refresh Leases</button>
       </div>
      
-      <div class="veil-section">
-        <h3>Static Leases</h3>
-        <div id="dhcp-static-list"></div>
-        <button class="btn-primary" onclick="VeilUI.showAddStaticLeaseDialog()">Add Static Lease</button>
-      </div>
-     
       <div class="button-group">
         <button class="btn-primary" onclick="VeilUI.saveDHCPSettings()">Save DHCP Settings</button>
       </div>
     `;
    
     this.loadDHCPLeases();
-    this.renderStaticLeases();
   },
-
-  /**
-   * Render static leases
-   */
-  renderStaticLeases() {
-    const container = document.getElementById('dhcp-static-list');
-    if (!container) return;
-   
-    const leases = this.config.dhcp_static_leases || {};
-   
-    container.innerHTML = Object.entries(leases).map(([mac, lease]) => `
-      <div class="record-row">
-        <div>${mac}</div>
-        <div>${lease.ip}</div>
-        <div>${lease.hostname || ''}</div>
-        <button class="btn-icon" onclick="VeilUI.removeStaticLease('${mac}')">Remove</button>
-      </div>
-    `).join('');
-  },
-
-  /**
-   * Show add static lease dialog
-   */
-  showAddStaticLeaseDialog() {
-    const mac = prompt('Enter MAC address');
-    const ip = prompt('Enter IP address');
-    const hostname = prompt('Enter hostname (optional)');
-    if (mac && ip) {
-      this.addStaticLease(mac, ip, hostname);
-    }
-  },
-
-  /**
-   * Add static lease
-   */
-  async addStaticLease(mac, ip, hostname) {
-    try {
-      const response = await fetch('/api/veil/dhcp/static', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mac, ip, hostname })
-      });
-      if (response.ok) {
-        toast('Static lease added', 'success');
-        await this.loadConfig();
-        this.renderStaticLeases();
-      }
-    } catch (error) {
-      toast('Failed to add static lease', 'error');
-    }
-  },
-
-  /**
-   * Remove static lease
-   */
-  async removeStaticLease(mac) {
-    if (confirm(`Remove static lease for ${mac}?`)) {
-      try {
-        const response = await fetch('/api/veil/dhcp/static/remove', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ mac })
-        });
-        if (response.ok) {
-          toast('Static lease removed', 'success');
-          await this.loadConfig();
-          this.renderStaticLeases();
-        }
-      } catch (error) {
-        toast('Failed to remove static lease', 'error');
-      }
-    }
-  },
-
+ 
   /**
    * Load and display DHCP leases
    */
@@ -945,12 +531,12 @@ const VeilUI = {
       const leases = await response.json().leases;
       const container = document.getElementById('dhcp-leases-list');
       container.innerHTML = leases.map(lease => `
-        <div class="record-row">
+        <div class="lease-row">
           <div>${lease.mac}</div>
           <div>${lease.ip}</div>
-          <div>${lease.hostname || ''}</div>
-          <div>${new Date(lease.expiry * 1000).toLocaleString()}</div>
-          <button class="btn-icon" onclick="VeilUI.deleteLease('${lease.mac}')">Delete</button>
+          <div>${lease.hostname || '-'}</div>
+          <div>${lease.expires_in ? lease.expires_in : 'Static'}</div>
+          <button onclick="VeilUI.deleteLease('${lease.mac}')">Delete</button>
         </div>
       `).join('');
     } catch (error) {
@@ -1053,12 +639,12 @@ const VeilUI = {
        
         <div class="setting-row">
           <label>Queries Per Second</label>
-          <input type="number" id="rate-limit-qps" value="${this.config.rate_limit_qps}" min="1">
+          <input type="number" id="rate-limit-qps" value="${this.config.rate_limit_qps}" min="1" max="100">
         </div>
        
         <div class="setting-row">
           <label>Burst Allowance</label>
-          <input type="number" id="rate-limit-burst" value="${this.config.rate_limit_burst}" min="1">
+          <input type="number" id="rate-limit-burst" value="${this.config.rate_limit_burst}" min="1" max="200">
         </div>
       </div>
      
@@ -1098,20 +684,6 @@ const VeilUI = {
             <input type="checkbox" id="safesearch-youtube" ${this.config.safesearch_youtube ? 'checked' : ''}>
             YouTube
           </label>
-        </div>
-      </div>
-     
-      <div class="veil-section">
-        <h3>SafeSearch Schedule</h3>
-       
-        <div class="setting-row">
-          <label>Start Time (HH:MM)</label>
-          <input type="text" id="safesearch-start" value="${this.config.safesearch_schedule?.start || ''}" placeholder="08:00">
-        </div>
-       
-        <div class="setting-row">
-          <label>End Time (HH:MM)</label>
-          <input type="text" id="safesearch-end" value="${this.config.safesearch_schedule?.end || ''}" placeholder="20:00">
         </div>
       </div>
      
@@ -1155,11 +727,6 @@ const VeilUI = {
         <h3>Blocklists</h3>
        
         <div class="setting-row">
-          <label>Blocklist URLs (one per line)</label>
-          <textarea id="blocklist-urls" rows="5">${(this.config.blocklist_urls || []).join('\n')}</textarea>
-        </div>
-       
-        <div class="setting-row">
           <label>
             <input type="checkbox" id="blocklist-update-enabled" ${this.config.blocklist_update_enabled ? 'checked' : ''}>
             Auto Update
@@ -1176,6 +743,11 @@ const VeilUI = {
             <input type="checkbox" id="blocklist-update-on-start" ${this.config.blocklist_update_on_start ? 'checked' : ''}>
             Update on Start
           </label>
+        </div>
+       
+        <div class="setting-row">
+          <label>Blocklist URLs (one per line)</label>
+          <textarea id="blocklist-urls" rows="5">${(this.config.blocklist_urls || []).join('\n')}</textarea>
         </div>
        
         <div class="button-group">
@@ -1327,51 +899,6 @@ const VeilUI = {
             Zero Query Logging
           </label>
         </div>
-       
-        <div class="setting-row">
-          <label>Log Retention (days)</label>
-          <input type="number" id="log-retention-days" value="${this.config.log_retention_days || 7}" min="1">
-        </div>
-      </div>
-     
-      <div class="veil-section">
-        <h3>Notifications</h3>
-       
-        <div class="setting-row">
-          <label>
-            <input type="checkbox" id="notification-enabled" ${this.config.notification_enabled ? 'checked' : ''}>
-            Enable Notifications
-          </label>
-        </div>
-       
-        <div class="setting-row">
-          <label>Notification URL</label>
-          <input type="text" id="notification-url" value="${this.config.notification_url || ''}" placeholder="https://ntfy.sh/topic">
-        </div>
-       
-        <div class="setting-row">
-          <label>Notification Token</label>
-          <input type="text" id="notification-token" value="${this.config.notification_token || ''}" placeholder="Token (optional)">
-        </div>
-      </div>
-     
-      <div class="veil-section">
-        <h3>System</h3>
-       
-        <div class="setting-row">
-          <label>Self-Check Interval (seconds)</label>
-          <input type="number" id="self-check-interval" value="${this.config.system_self_check_interval || 300}" min="60">
-        </div>
-      </div>
-     
-      <div class="veil-section">
-        <h3>Backup / Restore</h3>
-       
-        <div class="button-group">
-          <button class="btn-secondary" onclick="VeilUI.backupConfig()">Backup Config</button>
-          <input type="file" id="restore-file" accept=".json" style="display:none;" onchange="VeilUI.restoreConfig(this.files[0])">
-          <button class="btn-secondary" onclick="document.getElementById('restore-file').click()">Restore Config</button>
-        </div>
       </div>
      
       <div class="button-group">
@@ -1380,77 +907,6 @@ const VeilUI = {
     `;
   },
  
-  /**
-   * Render Logs Tab
-   */
-  renderLogsTab() {
-    const container = document.getElementById('tab-logs');
-    container.innerHTML = `
-      <div class="veil-section">
-        <h3>Query Logs</h3>
-        <div id="query-log-table" class="records-table"></div>
-        <div class="button-group">
-          <button class="btn-secondary" onclick="VeilUI.loadLogs()">Refresh Logs</button>
-          <button class="btn-secondary" onclick="VeilUI.exportLogs('json')">Export JSON</button>
-          <button class="btn-secondary" onclick="VeilUI.exportLogs('csv')">Export CSV</button>
-        </div>
-      </div>
-      
-      <div class="veil-section">
-        <h3>Top 5 Clients</h3>
-        <div id="top-clients" class="records-table"></div>
-      </div>
-      
-      <div class="veil-section">
-        <h3>Top 5 Blocked Domains</h3>
-        <div id="top-blocked" class="records-table"></div>
-      </div>
-      
-      <div class="veil-section">
-        <h3>Category Counters</h3>
-        <div id="category-counters" class="stats-grid"></div>
-      </div>
-    `;
-    this.loadLogs();
-  },
-
-  /**
-   * Render Health Tab
-   */
-  renderHealthTab() {
-    const container = document.getElementById('tab-health');
-    container.innerHTML = `
-      <div class="veil-section">
-        <h3>Protocol Usage</h3>
-        <div id="protocol-bars"></div>
-      </div>
-      
-      <div class="veil-section">
-        <h3>Upstream Health</h3>
-        <div id="upstream-health-list"></div>
-      </div>
-    `;
-    this.renderUpstreamHealthList();
-  },
-
-  /**
-   * Render upstream health list
-   */
-  renderUpstreamHealthList() {
-    const container = document.getElementById('upstream-health-list');
-    if (!container) return;
-   
-    const health = this.stats.upstream_health || {};
-   
-    container.innerHTML = Object.entries(health).map(([server, status]) => `
-      <div class="record-row">
-        <div>${server}</div>
-        <div>${status.healthy ? 'Healthy' : 'Degraded'}</div>
-        <div>${Math.round(status.latency * 1000)}ms</div>
-      </div>
-    `).join('');
-  },
-
   /**
    * Save DNS settings
    */
@@ -1465,7 +921,6 @@ const VeilUI = {
       stale_serving: document.getElementById('stale-serving').checked,
       upstream_parallel: document.getElementById('upstream-parallel').checked,
       upstream_rotation: document.getElementById('upstream-rotation').checked,
-      dynamic_upstream_weighting: document.getElementById('dynamic-weighting').checked,
       upstream_timeout: parseFloat(document.getElementById('upstream-timeout').value)
     };
    
@@ -1518,11 +973,7 @@ const VeilUI = {
       safesearch_google: document.getElementById('safesearch-google').checked,
       safesearch_bing: document.getElementById('safesearch-bing').checked,
       safesearch_duckduckgo: document.getElementById('safesearch-duckduckgo').checked,
-      safesearch_youtube: document.getElementById('safesearch-youtube').checked,
-      safesearch_schedule: {
-        start: document.getElementById('safesearch-start').value,
-        end: document.getElementById('safesearch-end').value
-      }
+      safesearch_youtube: document.getElementById('safesearch-youtube').checked
     };
    
     await this.updateConfig(config);
@@ -1544,7 +995,7 @@ const VeilUI = {
       blocklist_update_enabled: document.getElementById('blocklist-update-enabled').checked,
       blocklist_update_interval: parseInt(document.getElementById('blocklist-update-interval').value),
       blocklist_update_on_start: document.getElementById('blocklist-update-on-start').checked,
-      blocklist_urls: urls
+      blocklist_urls: urls  // ← FIXED: Now saves URLs
     };
    
     await this.updateConfig(config);
@@ -1560,12 +1011,7 @@ const VeilUI = {
       cache_prewarm_interval: parseInt(document.getElementById('cache-prewarm-interval').value),
       cache_prewarm_concurrent: parseInt(document.getElementById('cache-prewarm-concurrent').value),
       rebinding_protection: document.getElementById('rebinding-protection').checked,
-      zero_log: document.getElementById('zero-log').checked,
-      log_retention_days: parseInt(document.getElementById('log-retention-days').value),
-      notification_enabled: document.getElementById('notification-enabled').checked,
-      notification_url: document.getElementById('notification-url').value,
-      notification_token: document.getElementById('notification-token').value,
-      system_self_check_interval: parseInt(document.getElementById('self-check-interval').value)
+      zero_log: document.getElementById('zero-log').checked
     };
    
     await this.updateConfig(config);
@@ -1585,14 +1031,7 @@ const VeilUI = {
       if (response.ok) {
         toast('Configuration updated', 'success');
         await this.loadConfig();
-        // Re-render relevant tabs
-        this.renderDNSTab();
-        this.renderDHCPTab();
-        this.renderPrivacyTab();
-        this.renderBlockingTab();
-        this.renderSettingsTab();
-        this.renderLogsTab();
-        this.renderHealthTab();
+        this.renderBlockingTab(); // Re-render to show saved URLs
       } else {
         throw new Error('Failed to update configuration');
       }
