@@ -147,7 +147,7 @@ CONFIG = {
     "blocklist_update_enabled": True,
     "blocklist_update_interval": 86400,
     "blocklist_update_on_start": True,
-    "blocklist_storage_path": "/share/veil/veil_blocklists.json",  # Local storage
+    "blocklist_storage_path": "/config/veil_blocklists.json",  # Local storage
     "whitelist": [],
     "blacklist": [],
     
@@ -570,7 +570,7 @@ BLACKLIST = DomainList("blacklist")
 async def save_blocklists_local():
     """Save blocklists, blacklist, and whitelist to local storage"""
     try:
-        storage_path = Path(CONFIG.get("blocklist_storage_path", "/share/veil/veil_blocklists.json"))
+        storage_path = Path(CONFIG.get("blocklist_storage_path", "/config/veil_blocklists.json"))
         storage_path.parent.mkdir(parents=True, exist_ok=True)
         
         blocklist_domains = await BLOCKLIST.export()
@@ -599,7 +599,7 @@ async def save_blocklists_local():
 async def load_blocklists_local():
     """Load blocklists, blacklist, and whitelist from local storage"""
     try:
-        storage_path = Path(CONFIG.get("blocklist_storage_path", "/share/veil/veil_blocklists.json"))
+        storage_path = Path(CONFIG.get("blocklist_storage_path", "/config/veil_blocklists.json"))
         
         if not storage_path.exists():
             log.info("[storage] No local storage found")
@@ -1308,11 +1308,11 @@ def build_blocked_response(query: dns.message.Message) -> bytes:
         qtype = query.question[0].rdtype
         
         if qtype == dns.rdatatype.A:
-            rrset = dns.rrset.from_text(qname, 300, dns.rdataclass.IN, dns.rdatatype.A, ip)
-            response.answer.append(rrset)
+            rrset = response.answer.add(qname, 300, dns.rdataclass.IN, dns.rdatatype.A)
+            rrset.add(dns.rdtypes.IN.A.A(dns.rdataclass.IN, dns.rdatatype.A, ip))
         elif qtype == dns.rdatatype.AAAA:
-            rrset = dns.rrset.from_text(qname, 300, dns.rdataclass.IN, dns.rdatatype.AAAA, "::")
-            response.answer.append(rrset)
+            rrset = response.answer.add(qname, 300, dns.rdataclass.IN, dns.rdatatype.AAAA)
+            rrset.add(dns.rdtypes.IN.AAAA.AAAA(dns.rdataclass.IN, dns.rdatatype.AAAA, "::"))
     
     return response.to_wire()
 
@@ -1325,23 +1325,23 @@ def build_rewrite_response(query: dns.message.Message, rewrite: dict) -> bytes:
     ttl = rewrite.get("ttl", 300)
     
     if record_type == "A" and value:
-        rrset = dns.rrset.from_text(qname, ttl, dns.rdataclass.IN, dns.rdatatype.A, value)
-        response.answer.append(rrset)
+        rrset = response.answer.add(qname, ttl, dns.rdataclass.IN, dns.rdatatype.A)
+        rrset.add(dns.rdtypes.IN.A.A(dns.rdataclass.IN, dns.rdatatype.A, value))
     elif record_type == "AAAA" and value:
-        rrset = dns.rrset.from_text(qname, ttl, dns.rdataclass.IN, dns.rdatatype.AAAA, value)
-        response.answer.append(rrset)
+        rrset = response.answer.add(qname, ttl, dns.rdataclass.IN, dns.rdatatype.AAAA)
+        rrset.add(dns.rdtypes.IN.AAAA.AAAA(dns.rdataclass.IN, dns.rdatatype.AAAA, value))
     elif record_type == "CNAME" and value:
-        rrset = dns.rrset.from_text(qname, ttl, dns.rdataclass.IN, dns.rdatatype.CNAME, value)
-        response.answer.append(rrset)
+        rrset = response.answer.add(qname, ttl, dns.rdataclass.IN, dns.rdatatype.CNAME)
+        rrset.add(dns.rdtypes.ANY.CNAME.CNAME(dns.rdataclass.IN, dns.rdatatype.CNAME, dns.name.from_text(value)))
     elif record_type == "TXT" and value:
-        rrset = dns.rrset.from_text(qname, ttl, dns.rdataclass.IN, dns.rdatatype.TXT, value)
-        response.answer.append(rrset)
+        rrset = response.answer.add(qname, ttl, dns.rdataclass.IN, dns.rdatatype.TXT)
+        rrset.add(dns.rdtypes.ANY.TXT.TXT(dns.rdataclass.IN, dns.rdatatype.TXT, [value.encode()]))
     elif record_type == "MX" and value:
         parts = value.split(None, 1)
         priority = int(parts[0]) if len(parts) > 1 else 10
         exchange = parts[1] if len(parts) > 1 else parts[0]
-        rrset = dns.rrset.from_text(qname, ttl, dns.rdataclass.IN, dns.rdatatype.MX, f"{priority} {exchange}")
-        response.answer.append(rrset)
+        rrset = response.answer.add(qname, ttl, dns.rdataclass.IN, dns.rdatatype.MX)
+        rrset.add(dns.rdtypes.ANY.MX.MX(dns.rdataclass.IN, dns.rdatatype.MX, priority, dns.name.from_text(exchange)))
     
     return response.to_wire()
 
@@ -1352,10 +1352,156 @@ def strip_ecs(response_wire: bytes) -> bytes:
     try:
         response = dns.message.from_wire(response_wire)
         if response.edns >= 0:
-            response.options = [opt for opt in response.options if opt.otype != 8]
+            if hasattr(response, 'options'):
+                original_len = len(response.options)
+                response.options = [opt for opt in response.options if opt.otype != 8]
+                if len(response.options) < original_len:
+                    STATS["dns_ecs_stripped"] += 1
         return response.to_wire()
     except:
         return response_wire
+
+# ==================== DNS PROCESSING ====================
+async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
+    try:
+        # Basic validation
+        if len(data) < 12:
+            log.warning(f"[dns] Packet too small from {addr[0]}: {len(data)} bytes")
+            return None
+        
+        # Check if it looks like DNS (starts with transaction ID, has flags)
+        if len(data) >= 12:
+            try:
+                # Try to parse as DNS
+                query = dns.message.from_wire(data)
+            except dns.exception.FormError as e:
+                log.error(f"[dns] Malformed DNS packet from {addr[0]}: {e}")
+                log.debug(f"[dns] Packet hex: {data[:50].hex()}")
+                return None
+            except Exception as e:
+                log.error(f"[dns] Failed to parse DNS from {addr[0]}: {e}")
+                return None
+        
+        # Rate limiting
+        if not await RATE_LIMITER.check_rate_limit(addr[0]):
+            response = dns.message.make_response(query)
+            response.set_rcode(dns.rcode.REFUSED)
+            return response.to_wire()
+        
+        qname = str(query.question[0].name).lower().strip('.')
+        qtype = query.question[0].rdtype
+        
+        log.info(f"[dns] Query from {addr[0]}: {qname} ({dns.rdatatype.to_text(qtype)})")
+        
+        STATS["dns_queries"] += 1
+        
+        # Record query in history for prewarming
+        await QUERY_HISTORY.record(qname)
+        
+        # SafeSearch enforcement
+        safesearch_domain = apply_safesearch(qname)
+        if safesearch_domain:
+            qname = safesearch_domain
+        
+        # Check whitelist first
+        if await WHITELIST.contains(qname):
+            pass
+        else:
+            if await BLACKLIST.contains(qname):
+                STATS["dns_blocked"] += 1
+                log.info(f"[dns] Blocked (blacklist): {qname}")
+                return build_blocked_response(query)
+            
+            if CONFIG.get("blocking_enabled") and await BLOCKLIST.contains(qname):
+                STATS["dns_blocked"] += 1
+                log.info(f"[dns] Blocked (blocklist): {qname}")
+                return build_blocked_response(query)
+        
+        # Check DNS rewrites
+        dns_rewrites = CONFIG.get("dns_rewrites", {})
+        if qname in dns_rewrites:
+            rewrite = dns_rewrites[qname]
+            return build_rewrite_response(query, rewrite)
+        
+        # Check local records
+        local_records = CONFIG.get("local_records", {})
+        if qname in local_records:
+            record = local_records[qname]
+            return build_rewrite_response(query, record)
+        
+        # Check conditional forwards
+        for domain, forward_server in CONFIG.get("conditional_forwards", {}).items():
+            if qname.endswith(domain) or qname == domain.strip('.'):
+                try:
+                    log.debug(f"[dns] Conditional forward: {qname} -> {forward_server}")
+                    forward_query = dns.message.make_query(qname, qtype)
+                    response_wire = await query_udp(forward_query.to_wire(), forward_server)
+                    if response_wire:
+                        return response_wire
+                except Exception as e:
+                    log.error(f"[dns] Conditional forward failed: {e}")
+        
+        # Check cache
+        cached = await DNS_CACHE.get(qname, qtype)
+        if cached:
+            STATS["dns_cached"] += 1
+            return cached
+        
+        # Query upstream
+        STATS["dns_upstream"] += 1
+        response_wire = await query_upstream(qname, qtype)
+        
+        if not response_wire:
+            response = dns.message.make_response(query)
+            response.set_rcode(dns.rcode.SERVFAIL)
+            return response.to_wire()
+        
+        # Strip ECS
+        response_wire = strip_ecs(response_wire)
+        
+        # DNSSEC validation
+        if not await validate_dnssec(response_wire):
+            log.warning(f"[dnssec] Validation failed for {qname}")
+            response = dns.message.make_response(query)
+            response.set_rcode(dns.rcode.SERVFAIL)
+            return response.to_wire()
+        
+        response = dns.message.from_wire(response_wire)
+        
+        # Rebinding protection
+        if CONFIG.get("rebinding_protection"):
+            rebinding_exempt = False
+            for exempt_domain in CONFIG.get("rebinding_whitelist", []):
+                if qname.endswith(exempt_domain) or qname == exempt_domain.strip('.'):
+                    rebinding_exempt = True
+                    break
+            
+            if not rebinding_exempt:
+                for rrset in response.answer:
+                    if rrset.rdtype == dns.rdatatype.A:
+                        for rr in rrset:
+                            try:
+                                ip = ipaddress.IPv4Address(rr.address)
+                                if ip.is_private:
+                                    log.warning(f"[dns] Rebinding blocked: {qname} -> {ip}")
+                                    return build_blocked_response(query)
+                            except:
+                                pass
+        
+        # Cache response
+        ttl = CONFIG.get("cache_ttl", 3600)
+        if response.answer:
+            ttl = min((rrset.ttl for rrset in response.answer), default=ttl)
+        else:
+            ttl = CONFIG.get("negative_cache_ttl", 300)
+        
+        await DNS_CACHE.set(qname, qtype, response_wire, ttl, negative=(not response.answer))
+        
+        return response_wire
+    
+    except Exception as e:
+        log.error(f"[dns] Unexpected error processing query from {addr[0]}: {e}")
+        return None
 
 # ==================== DNS SERVER ====================
 class DNSProtocol(asyncio.DatagramProtocol):
@@ -1365,59 +1511,17 @@ class DNSProtocol(asyncio.DatagramProtocol):
     def datagram_received(self, data, addr):
         asyncio.create_task(self.handle_query(data, addr))
     
-    def parse_query(self, data: bytes):
-        """Decode incoming DNS packet and return (qname, qtype)."""
+    async def handle_query(self, data, addr):
         try:
-            msg = dns.message.from_wire(data)
-            q = msg.question[0]
-            qname = str(q.name).rstrip(".")
-            qtype = dns.rdatatype.to_text(q.rdtype)
-            return qname, qtype
+            response = await process_dns_query(data, addr)
+            if response:
+                self.transport.sendto(response, addr)
+            else:
+                log.warning(f"[dns] No response generated for query from {addr[0]}")
         except Exception as e:
-            log.error(f"[dns] Failed to parse query: {e}")
-            return "", ""
-    
-    async def handle_query(self, data: bytes, addr):
-        try:
-            qname, qtype = self.parse_query(data)
-
-            # 1️⃣ Blocklist check (only if qname is valid)
-            if qname and await BLOCKLIST.contains(qname):
-                log.info(f"[dns] Blocked (blocklist): {qname}")
-                query = dns.message.from_wire(data)
-                reply = dns.message.make_response(query)
-                reply.set_rcode(dns.rcode.REFUSED)
-                self.transport.sendto(reply.to_wire(), addr)
-                return
-
-            # 2️⃣ Cache check
-            if qname:
-                cached = await DNS_CACHE.get(qname, dns.rdatatype.from_text(qtype))
-                if cached:
-                    log.info(f"[dns] Cache hit: {qname}")
-                    self.transport.sendto(cached, addr)
-                    return
-
-            # 3️⃣ Upstream resolve with error handling
-            try:
-                response = await query_upstream(qname, dns.rdatatype.from_text(qtype))
-                if response:
-                    await DNS_CACHE.set(qname, dns.rdatatype.from_text(qtype), response, CONFIG["cache_ttl"])
-                    self.transport.sendto(response, addr)
-                    log.info(f"[dns] Response sent: {qname}")
-                    return
-                else:
-                    raise ConnectionError("Empty response from upstream")
-
-            except Exception as e:
-                log.error(f"[dns] Upstream failure for {qname}: {e}")
-                query = dns.message.from_wire(data)
-                reply = dns.message.make_response(query)
-                reply.set_rcode(dns.rcode.SERVFAIL)
-                self.transport.sendto(reply.to_wire(), addr)
-
-        except Exception as e:
-            log.exception(f"[dns] Fatal error in handler: {e}")
+            log.error(f"[dns] Error handling query from {addr[0]}: {e}")
+            import traceback
+            log.error(traceback.format_exc())
 
 dns_transport = None
 
