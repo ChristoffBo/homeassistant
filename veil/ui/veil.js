@@ -5,8 +5,8 @@
 const VeilUI = {
   stats: {},
   config: {},
+  logs: [],  // For query logs
   updateInterval: null,
-  logs: [],
  
   /**
    * Initialize Veil UI
@@ -52,7 +52,7 @@ const VeilUI = {
     try {
       const response = await fetch('/api/veil/logs');
       this.logs = await response.json();
-      this.updateLogsDisplay();
+      this.renderLogsTab();  // Re-render to update logs
     } catch (error) {
       console.error('[Veil] Failed to load logs:', error);
       toast('Failed to load query logs', 'error');
@@ -68,6 +68,11 @@ const VeilUI = {
     this.updateInterval = setInterval(async () => {
       await this.loadStats();
       this.updateStatsDisplay();
+      const activeTab = document.querySelector('.tab-button.active')?.dataset.tab;
+      if (activeTab === 'dashboard') this.renderDashboardTab();
+      if (activeTab === 'clients') this.renderClientsTab();
+      if (activeTab === 'logs') this.loadLogs();
+      if (activeTab === 'dhcp') this.loadDHCPLeases();
     }, 5000);
   },
  
@@ -152,30 +157,33 @@ const VeilUI = {
        
         <!-- Tabs -->
         <div class="veil-tabs">
-          <button class="tab-button active" data-tab="dns">DNS</button>
+          <button class="tab-button active" data-tab="dashboard">Dashboard</button>
+          <button class="tab-button" data-tab="clients">Clients</button>
+          <button class="tab-button" data-tab="blocklists">Blocklists</button>
           <button class="tab-button" data-tab="dhcp">DHCP</button>
-          <button class="tab-button" data-tab="privacy">Privacy</button>
-          <button class="tab-button" data-tab="blocking">Blocking</button>
           <button class="tab-button" data-tab="settings">Settings</button>
+          <button class="tab-button" data-tab="logs">Logs</button>
         </div>
        
         <!-- Tab Content -->
         <div class="veil-tab-content">
-          <div id="tab-dns" class="tab-pane active"></div>
+          <div id="tab-dashboard" class="tab-pane active"></div>
+          <div id="tab-clients" class="tab-pane"></div>
+          <div id="tab-blocklists" class="tab-pane"></div>
           <div id="tab-dhcp" class="tab-pane"></div>
-          <div id="tab-privacy" class="tab-pane"></div>
-          <div id="tab-blocking" class="tab-pane"></div>
           <div id="tab-settings" class="tab-pane"></div>
+          <div id="tab-logs" class="tab-pane"></div>
         </div>
       </div>
     `;
    
     this.attachEventListeners();
-    this.renderDNSTab();
+    this.renderDashboardTab();
+    this.renderClientsTab();
+    this.renderBlocklistsTab();
     this.renderDHCPTab();
-    this.renderPrivacyTab();
-    this.renderBlockingTab();
     this.renderSettingsTab();
+    this.renderLogsTab();
     this.updateStatsDisplay();
   },
  
