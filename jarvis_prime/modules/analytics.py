@@ -1199,6 +1199,19 @@ class AnalyticsDB:
         conn.close()
 
 
+async def safe_get(session, url, timeout):
+    """Robust HTTP/HTTPS request with full error shielding."""
+    try:
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=timeout)) as r:
+            return r
+    except (aiohttp.ClientError,
+            asyncio.TimeoutError,
+            ConnectionResetError,
+            ConnectionRefusedError,
+            OSError,
+            socket.error) as e:
+        raise RuntimeError(f"unreachable: {e}")
+
 # ============================================================================
 # HEALTH MONITOR CLASS
 # ============================================================================
@@ -1224,20 +1237,17 @@ class HealthMonitor:
                 if service.check_type == 'http':
                     async with aiohttp.ClientSession() as session:
                         try:
-                            async with session.get(
-                                service.endpoint,
-                                timeout=aiohttp.ClientTimeout(total=service.timeout)
-                            ) as response:
-                                response_time = time.time() - start_time
-                                if response.status == service.expected_status:
-                                    return ServiceMetric(
-                                        service_name=service.service_name,
-                                        timestamp=int(time.time()),
-                                        status='up',
-                                        response_time=response_time
-                                    )
-                                else:
-                                    error_msg = f"Unexpected status {response.status} (expected {service.expected_status})"
+                            response = await safe_get(session, service.endpoint, service.timeout)
+                            response_time = time.time() - start_time
+                            if response.status == service.expected_status:
+                                return ServiceMetric(
+                                    service_name=service.service_name,
+                                    timestamp=int(time.time()),
+                                    status='up',
+                                    response_time=response_time
+                                )
+                            else:
+                                error_msg = f"Unexpected status {response.status} (expected {service.expected_status})"
                         except asyncio.TimeoutError:
                             error_msg = f"HTTP timeout after {service.timeout}s"
                         except aiohttp.ClientError as e:
