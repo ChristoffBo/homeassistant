@@ -1181,34 +1181,33 @@ async def query_upstream_parallel(qname: str, qtype: int) -> Optional[Tuple[byte
         jitter = random.randint(jitter_range[0], jitter_range[1]) / 1000.0
         await asyncio.sleep(jitter)
     
-    tasks = []
-    task_servers = []
+    task_to_server = {}
     for server in servers:
         if CONFIG.get("doq_enabled") and DOQ_AVAILABLE:
-            tasks.append(query_doq(wire_query, server))
+            task = asyncio.create_task(query_doq(wire_query, server))
         elif CONFIG.get("doh_enabled") and server in ["1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4"]:
-            tasks.append(query_doh(wire_query, server))
+            task = asyncio.create_task(query_doh(wire_query, server))
         elif CONFIG.get("dot_enabled"):
-            tasks.append(query_dot(wire_query, server))
+            task = asyncio.create_task(query_dot(wire_query, server))
         else:
-            tasks.append(query_udp(wire_query, server))
-        task_servers.append(server)
+            task = asyncio.create_task(query_udp(wire_query, server))
+        task_to_server[task] = server
+    
+    tasks = list(task_to_server.keys())
     
     STATS["dns_parallel"] += 1
     
-    for coro in asyncio.as_completed(tasks):
+    for completed_task in asyncio.as_completed(tasks):
         try:
-            result = await coro
+            result = await completed_task
             if result:
-                index = tasks.index(coro)
-                server = task_servers[index]
+                server = task_to_server[completed_task]
                 start = time.time()
                 await UPSTREAM_HEALTH.record_success(server, time.time() - start)
                 return result, server
         except Exception as e:
             log.debug(f"[upstream] Parallel query failed: {e}")
-            index = tasks.index(coro)
-            server = task_servers[index]
+            server = task_to_server[completed_task]
             await UPSTREAM_HEALTH.record_failure(server)
             continue
     
@@ -2709,7 +2708,7 @@ async def cleanup_veil():
     if CONN_POOL:
         await CONN_POOL.close()
 
-__version__ = "2.0.1"  # Updated version
+__version__ = "2.0.2"  # Updated version
 __description__ = "Privacy-First DNS/DHCP - Complete with DNSSEC, DoQ, Rate Limiting, SafeSearch"
 
 if __name__ == "__main__":
