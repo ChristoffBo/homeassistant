@@ -2491,17 +2491,6 @@ async def init_veil():
     STATS["start_time"] = time.time()
     STATS["blocklist_last_update"] = 0
     
-    # Initialize all DNS stats to 0
-    STATS["dns_queries"] = 0
-    STATS["dns_blocked"] = 0
-    STATS["dns_cached"] = 0
-    STATS["dns_upstream"] = 0
-    STATS["dns_padded"] = 0
-    STATS["dns_ecs_stripped"] = 0
-    STATS["dns_0x20"] = 0
-    STATS["dns_dnssec_validated"] = 0
-    STATS["dns_rate_limited"] = 0
-    
     DNS_CACHE = LRUCache(max_size=CONFIG.get("cache_max_size", 10000))
     log.info(f"[veil] DNS Cache initialized (max: {CONFIG.get('cache_max_size', 10000)})")
     
@@ -2621,29 +2610,6 @@ async def cleanup_veil():
 
 __version__ = "2.0.0"
 __description__ = "Privacy-First DNS/DHCP - Complete with DNSSEC, DoQ, Rate Limiting, SafeSearch"
-
-if __name__ == "__main__":
-    print("🧩 Veil - Privacy-First DNS/DHCP Server")
-
-async def start_background_services(app):
-    """Start background services on app startup"""
-    try:
-        log.info("[veil] Starting background services...")
-        await init_veil()
-        log.info("[veil] Background services started successfully")
-    except Exception as e:
-        log.error(f"[veil] CRITICAL: Failed to start background services: {e}")
-        import traceback
-        log.error(traceback.format_exc())
-
-async def cleanup_background_services(app):
-    """Cleanup background services on app shutdown"""
-    try:
-        log.info("[veil] Cleaning up background services...")
-        await cleanup_veil()
-        log.info("[veil] Cleanup complete")
-    except Exception as e:
-        log.error(f"[veil] Error during cleanup: {e}")
 
 if __name__ == "__main__":
     import os
