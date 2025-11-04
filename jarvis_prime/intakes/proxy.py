@@ -67,6 +67,11 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data.encode("utf-8") if isinstance(data, str) else data)
 
+    def _check_tls_handshake(self, raw):
+        if len(raw) < 1:
+            return False
+        return raw[0] == 0x16  # TLS handshake record
+
     def do_GET(self):
         if self.path == "/health":
             return self._send(200, "ok")
@@ -80,6 +85,11 @@ class H(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
             raw = self.rfile.read(length) if length > 0 else b""
             ctype = (self.headers.get("Content-Type") or "").lower()
+
+            # REJECT TLS EARLY
+            if self._check_tls_handshake(raw):
+                self._send(400, "Bad Request: TLS not allowed on HTTP port", "text/plain")
+                return
 
             title = self.headers.get("X-Title") or ""
             body = ""
