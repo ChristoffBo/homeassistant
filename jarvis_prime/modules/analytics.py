@@ -1212,44 +1212,45 @@ class HealthMonitor:
         self.monitoring_tasks: Dict[str, asyncio.Task] = {}
         self.flap_trackers: Dict[str, FlapTracker] = {}
     
-    async def check_service(self, service: HealthCheck) -> ServiceMetric:
-        """Perform a single health check with retry logic"""
+      async def check_service(self, service: HealthCheck) -> ServiceMetric:
+        """Perform a single health check with retry logic and robust aiohttp handling"""
         start_time = time.time()
-        
+
         for attempt in range(service.retries):
             try:
+                # -----------------------------
+                # HTTP / HTTPS service check
+                # -----------------------------
                 if service.check_type == 'http':
                     async with aiohttp.ClientSession() as session:
-                        async with session.get(
-                            service.endpoint,
-                            timeout=aiohttp.ClientTimeout(total=service.timeout)
-                        ) as response:
-                            response_time = time.time() - start_time
-                            
-                            if response.status == service.expected_status:
-                                return ServiceMetric(
-                                    service_name=service.service_name,
-                                    timestamp=int(time.time()),
-                                    status='up',
-                                    response_time=response_time
-                                )
-                            else:
-                                error_msg = f"Status {response.status} (expected {service.expected_status})"
-                                if attempt < service.retries - 1:
-                                    await asyncio.sleep(1)
-                                    continue
-                                return ServiceMetric(
-                                    service_name=service.service_name,
-                                    timestamp=int(time.time()),
-                                    status='down',
-                                    response_time=response_time,
-                                    error_message=error_msg
-                                )
-                
+                        try:
+                            async with session.get(
+                                service.endpoint,
+                                timeout=aiohttp.ClientTimeout(total=service.timeout)
+                            ) as response:
+                                response_time = time.time() - start_time
+                                if response.status == service.expected_status:
+                                    return ServiceMetric(
+                                        service_name=service.service_name,
+                                        timestamp=int(time.time()),
+                                        status='up',
+                                        response_time=response_time
+                                    )
+                                else:
+                                    error_msg = f"Unexpected status {response.status} (expected {service.expected_status})"
+                        except asyncio.TimeoutError:
+                            error_msg = f"HTTP timeout after {service.timeout}s"
+                        except aiohttp.ClientError as e:
+                            error_msg = f"HTTP error: {str(e)}"
+
+                # -----------------------------
+                # TCP port check
+                # -----------------------------
                 elif service.check_type == 'tcp':
                     try:
+                        host, port = service.endpoint.split(':')
                         reader, writer = await asyncio.wait_for(
-                            asyncio.open_connection(service.endpoint.split(':')[0], int(service.endpoint.split(':')[1])),
+                            asyncio.open_connection(host, int(port)),
                             timeout=service.timeout
                         )
                         writer.close()
@@ -1262,18 +1263,11 @@ class HealthMonitor:
                             response_time=response_time
                         )
                     except Exception as e:
-                        if attempt < service.retries - 1:
-                            await asyncio.sleep(1)
-                            continue
-                        response_time = time.time() - start_time
-                        return ServiceMetric(
-                            service_name=service.service_name,
-                            timestamp=int(time.time()),
-                            status='down',
-                            response_time=response_time,
-                            error_message=str(e)
-                        )
-                
+                        error_msg = f"TCP connection failed: {str(e)}"
+
+                # -----------------------------
+                # Ping check
+                # -----------------------------
                 elif service.check_type == 'ping':
                     try:
                         proc = await asyncio.create_subprocess_exec(
@@ -1283,7 +1277,7 @@ class HealthMonitor:
                         )
                         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=service.timeout + 1)
                         response_time = time.time() - start_time
-                        
+
                         if proc.returncode == 0:
                             return ServiceMetric(
                                 service_name=service.service_name,
@@ -1292,48 +1286,39 @@ class HealthMonitor:
                                 response_time=response_time
                             )
                         else:
-                            if attempt < service.retries - 1:
-                                await asyncio.sleep(1)
-                                continue
-                            return ServiceMetric(
-                                service_name=service.service_name,
-                                timestamp=int(time.time()),
-                                status='down',
-                                response_time=response_time,
-                                error_message='Ping failed'
-                            )
+                            error_msg = f"Ping failed ({stderr.decode().strip() or 'no reply'})"
+                    except asyncio.TimeoutError:
+                        error_msg = f"Ping timeout after {service.timeout}s"
                     except Exception as e:
-                        if attempt < service.retries - 1:
-                            await asyncio.sleep(1)
-                            continue
-                        response_time = time.time() - start_time
-                        return ServiceMetric(
-                            service_name=service.service_name,
-                            timestamp=int(time.time()),
-                            status='down',
-                            response_time=response_time,
-                            error_message=str(e)
-                        )
-            
-            except Exception as e:
+                        error_msg = f"Ping error: {str(e)}"
+
+                # -----------------------------
+                # Retry or final failure
+                # -----------------------------
                 if attempt < service.retries - 1:
                     await asyncio.sleep(1)
                     continue
-                response_time = time.time() - start_time
+
                 return ServiceMetric(
                     service_name=service.service_name,
                     timestamp=int(time.time()),
                     status='down',
-                    response_time=response_time,
-                    error_message=str(e)
+                    response_time=time.time() - start_time,
+                    error_message=error_msg
                 )
-        
-        return ServiceMetric(
-            service_name=service.service_name,
-            timestamp=int(time.time()),
-            status='down',
-            response_time=time.time() - start_time,
-            error_message='All retries failed'
+
+            except Exception as e:
+                if attempt < service.retries - 1:
+                    await asyncio.sleep(1)
+                    continue
+                return ServiceMetric(
+                    service_name=service.service_name,
+                    timestamp=int(time.time()),
+                    status='down',
+                    response_time=time.time() - start_time,
+                    error_message=f"General error: {str(e)}"
+                )
+
         )
     
     def should_suppress_notification(self, service_name: str, status: str) -> bool:
