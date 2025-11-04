@@ -121,7 +121,7 @@ CONFIG = {
     "query_jitter": False,
     "query_jitter_ms": [10, 100],
     "zero_log": False,
-    "padding_enabled": True,
+    "padding_enabled": False,
     "padding_block_size": 468,
     "case_randomization": True,
     "qname_minimization": True,
