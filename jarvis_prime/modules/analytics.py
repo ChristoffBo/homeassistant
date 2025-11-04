@@ -1211,8 +1211,8 @@ class HealthMonitor:
         self.notify = notification_callback
         self.monitoring_tasks: Dict[str, asyncio.Task] = {}
         self.flap_trackers: Dict[str, FlapTracker] = {}
-    
-      async def check_service(self, service: HealthCheck) -> ServiceMetric:
+
+    async def check_service(self, service: HealthCheck) -> ServiceMetric:
         """Perform a single health check with retry logic and robust aiohttp handling"""
         start_time = time.time()
 
@@ -1319,7 +1319,7 @@ class HealthMonitor:
                     error_message=f"General error: {str(e)}"
                 )
 
-        )
+        
     
     def should_suppress_notification(self, service_name: str, status: str) -> bool:
         """Check if notification should be suppressed due to flapping"""
