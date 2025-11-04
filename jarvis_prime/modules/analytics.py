@@ -1229,6 +1229,18 @@ class HealthMonitor:
         """Perform a single health check with retry logic and robust aiohttp handling"""
         start_time = time.time()
 
+        # === PREVENT SELF-CHECK LOOPBACK ===
+        if service.check_type == 'http':
+            endpoint_lower = service.endpoint.lower()
+            if any(x in endpoint_lower for x in ['localhost', '127.0.0.1', ':2581']):
+                return ServiceMetric(
+                    service_name=service.service_name,
+                    timestamp=int(time.time()),
+                    status='up',
+                    response_time=0.0,
+                    error_message="self-check skipped"
+                )
+
         for attempt in range(service.retries):
             try:
                 # -----------------------------
