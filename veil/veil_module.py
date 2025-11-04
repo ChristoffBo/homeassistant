@@ -1045,11 +1045,15 @@ CONN_POOL = None
 
 async def get_conn_pool():
     global CONN_POOL
-    if not CONN_POOL:
-        CONN_POOL = ClientSession(
-            connector=TCPConnector(limit=100, limit_per_host=10),
-            timeout=ClientTimeout(total=CONFIG["upstream_timeout"])
-        )
+    if CONN_POOL is None:
+        if not hasattr(get_conn_pool, "_lock"):
+            get_conn_pool._lock = asyncio.Lock()
+        async with get_conn_pool._lock:
+            if CONN_POOL is None:
+                CONN_POOL = ClientSession(
+                    connector=TCPConnector(limit=100, limit_per_host=10),
+                    timeout=ClientTimeout(total=CONFIG.get("upstream_timeout", 2.0))
+                )
     return CONN_POOL
 
 def apply_0x20_encoding(qname: str) -> str:
@@ -1759,7 +1763,7 @@ class DHCPServer:
         response[20:24] = socket.inet_aton(CONFIG["dhcp_gateway"])
         response[24:28] = socket.inet_aton(packet["giaddr"])
         
-        mac_bytes = bytes.fromhex(packet["chaddr"].replace(':', ' '))
+        mac_bytes = bytes.fromhex(packet["chaddr"].replace(':', ''))
         response[28:28 + len(mac_bytes)] = mac_bytes
         
         response[236:240] = b'\x63\x82\x53\x63'
@@ -2512,9 +2516,6 @@ async def init_veil():
     
     BLOCKLIST_UPDATER = BlocklistUpdater()
     log.info(f"[veil] Blocklist updater initialized")
-    
-    CONN_POOL = await get_conn_pool()
-    log.info(f"[veil] Connection pool initialized")
     
     DHCP_SERVER = DHCPServer()
     log.info(f"[veil] DHCP server initialized")
