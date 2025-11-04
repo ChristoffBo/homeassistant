@@ -71,6 +71,7 @@ import dns.rdtypes.ANY.TXT
 import dns.rdtypes.ANY.MX
 import dns.dnssec
 import dns.resolver
+import dns.edns
 
 # Setup logging
 logging.basicConfig(
@@ -209,6 +210,7 @@ STATS = {
     "dns_upstream": 0,
     "dns_parallel": 0,
     "dns_padded": 0,
+    "dns_ecs_stripped": 0,
     "dns_0x20": 0,
     "dns_qname_min": 0,
     "dns_rate_limited": 0,
@@ -542,14 +544,14 @@ class DomainList:
         """Export all domains for local storage"""
         domains = []
         
-        async def traverse(node, path):
+        def traverse(node, path):
             if node.is_blocked:
                 domains.append('.'.join(reversed(path)))
             for label, child in node.children.items():
-                await traverse(child, path + [label])
+                traverse(child, path + [label])
         
         async with self._lock:
-            await traverse(self._root, [])
+            traverse(self._root, [])
         
         return domains
     
@@ -689,7 +691,7 @@ class BlocklistUpdater:
         
         for url in urls:
             domains = await self.download_blocklist(url)
-            for domain in domains:
+            for domain in set(domains):  # Avoid duplicates
                 BLOCKLIST.add_sync(domain)
                 total_added += 1
         
@@ -831,20 +833,29 @@ class CachePrewarmer:
         """Prewarm a single domain (A and AAAA records)"""
         try:
             # Query A record
-            query_a = dns.message.make_query(domain, dns.rdatatype.A, use_edns=True)
-            wire_a = query_a.to_wire()
             response_a = await query_upstream(domain, dns.rdatatype.A)
             
             if response_a:
-                # Cache will be populated by query_upstream
+                response = dns.message.from_wire(response_a)
+                ttl = CONFIG.get("cache_ttl", 3600)
+                if response.answer:
+                    ttl = min((rrset.ttl for rrset in response.answer), default=ttl)
+                else:
+                    ttl = CONFIG.get("negative_cache_ttl", 300)
+                await DNS_CACHE.set(domain, dns.rdatatype.A, response_a, ttl, negative=(not response.answer))
                 log.debug(f"[prewarm] Cached A: {domain}")
             
             # Query AAAA record
-            query_aaaa = dns.message.make_query(domain, dns.rdatatype.AAAA, use_edns=True)
-            wire_aaaa = query_aaaa.to_wire()
             response_aaaa = await query_upstream(domain, dns.rdatatype.AAAA)
             
             if response_aaaa:
+                response = dns.message.from_wire(response_aaaa)
+                ttl = CONFIG.get("cache_ttl", 3600)
+                if response.answer:
+                    ttl = min((rrset.ttl for rrset in response.answer), default=ttl)
+                else:
+                    ttl = CONFIG.get("negative_cache_ttl", 300)
+                await DNS_CACHE.set(domain, dns.rdatatype.AAAA, response_aaaa, ttl, negative=(not response.answer))
                 log.debug(f"[prewarm] Cached AAAA: {domain}")
             
             return response_a is not None or response_aaaa is not None
@@ -990,20 +1001,24 @@ async def validate_dnssec(response_wire: bytes) -> bool:
             # No DNSSEC records, pass through
             return True
         
-        # Perform validation
-        # Note: Full DNSSEC validation requires trust anchors and recursive validation
-        # This is a simplified check
+        # Load trust anchors
+        anchors = dns.resolver.Zone()
+        with open(CONFIG.get("dnssec_trust_anchors", "/etc/bind/bind.keys")) as f:
+            anchors.from_text(f.read())
         
-        for rrset in response.answer + response.authority:
-            if rrset.rdtype == dns.rdatatype.RRSIG:
-                STATS["dns_dnssec_validated"] += 1
-                log.debug(f"[dnssec] Validated: {rrset.name}")
-                return True
+        # Validate
+        dns.dnssec.validate(response.answer[0], response.answer, {anchors.name: anchors})  # Simplified; full recursive for authority
         
+        STATS["dns_dnssec_validated"] += 1
+        log.debug(f"[dnssec] Validated: {response.question[0].name}")
         return True
     
-    except Exception as e:
+    except dns.dnssec.ValidationFailure as e:
         log.warning(f"[dnssec] Validation failed: {e}")
+        STATS["dns_dnssec_failed"] += 1
+        return False
+    except Exception as e:
+        log.warning(f"[dnssec] Validation error: {e}")
         STATS["dns_dnssec_failed"] += 1
         return False
 
@@ -1012,7 +1027,7 @@ DOQ_AVAILABLE = False
 try:
     from aioquic.asyncio import connect
     from aioquic.quic.configuration import QuicConfiguration
-    from aioquic.asyncio.protocol import QuicConnectionProtocol
+    from aioquic.quic.events import StreamDataReceived
     DOQ_AVAILABLE = True
 except ImportError:
     log.warning("[doq] aioquic not installed, DoQ disabled")
@@ -1047,14 +1062,16 @@ async def query_doq(wire_query: bytes, server: str) -> Optional[bytes]:
             start = time.time()
             
             while time.time() - start < timeout:
-                for event in protocol._quic.next_events():
-                    if hasattr(event, 'data'):
+                event = protocol._quic.next_event()
+                while event is not None:
+                    if isinstance(event, StreamDataReceived) and event.stream_id == stream_id:
                         response_data += event.data
-                        
-                        if len(response_data) >= 2:
-                            expected_len = struct.unpack('!H', response_data[:2])[0]
-                            if len(response_data) >= expected_len + 2:
-                                return response_data[2:expected_len+2]
+                        if event.end_stream:
+                            if len(response_data) >= 2:
+                                expected_len = struct.unpack('!H', response_data[:2])[0]
+                                if len(response_data) >= expected_len + 2:
+                                    return response_data[2:2 + expected_len]
+                    event = protocol._quic.next_event()
                 
                 await asyncio.sleep(0.01)
         
@@ -1096,28 +1113,49 @@ def pad_query(wire_data: bytes) -> bytes:
     STATS["dns_padded"] += 1
     block_size = CONFIG.get("padding_block_size", 468)
     
-    current_len = len(wire_data)
-    if current_len >= block_size:
-        return wire_data
-    
-    padding_needed = block_size - (current_len % block_size)
-    if padding_needed == block_size:
-        padding_needed = 0
-    
     try:
         msg = dns.message.from_wire(wire_data)
-        if not msg.edns:
+        if msg.edns < 0:
             msg.use_edns(edns=True, payload=4096)
         
-        padded = msg.to_wire()
+        current_wire = msg.to_wire()
+        current_len = len(current_wire)
+        if current_len >= block_size:
+            return current_wire
         
-        if len(padded) < block_size:
-            padding = b'\x00' * (block_size - len(padded))
-            padded += padding
+        padding_needed = block_size - (current_len % block_size)
+        if padding_needed == block_size:
+            padding_needed = 0
         
-        return padded
-    except:
+        if padding_needed > 0:
+            padding_opt = dns.edns.GenericOption(12, b'\x00' * padding_needed)
+            new_options = list(msg.options) + [padding_opt]
+            msg.use_edns(edns=msg.edns, ednsflags=msg.ednsflags, payload=msg.payload, options=new_options)
+        
+        return msg.to_wire()
+    except Exception as e:
+        log.debug(f"[padding] Error: {e}")
         return wire_data
+
+async def query_upstream_minimized(qname: str, qtype: int) -> Optional[bytes]:
+    """Implement QNAME minimization"""
+    if not CONFIG.get("qname_minimization"):
+        return await query_upstream(qname, qtype)
+    
+    STATS["dns_qname_min"] += 1
+    labels = qname.split('.')
+    for i in range(1, len(labels)):
+        minimized_qname = '.'.join(labels[-i:])
+        query = dns.message.make_query(minimized_qname, dns.rdatatype.NS)
+        response_wire = await query_upstream(minimized_qname, dns.rdatatype.NS)
+        if response_wire:
+            response = dns.message.from_wire(response_wire)
+            if response.rcode() == dns.rcode.NOERROR and response.answer:
+                # Found authoritative, now query full
+                return await query_upstream(qname, qtype)
+    
+    # Fallback
+    return await query_upstream(qname, qtype)
 
 async def query_upstream_parallel(qname: str, qtype: int) -> Optional[Tuple[bytes, str]]:
     servers = CONFIG["upstream_servers"].copy()
@@ -1144,6 +1182,7 @@ async def query_upstream_parallel(qname: str, qtype: int) -> Optional[Tuple[byte
         await asyncio.sleep(jitter)
     
     tasks = []
+    task_servers = []
     for server in servers:
         if CONFIG.get("doq_enabled") and DOQ_AVAILABLE:
             tasks.append(query_doq(wire_query, server))
@@ -1153,6 +1192,7 @@ async def query_upstream_parallel(qname: str, qtype: int) -> Optional[Tuple[byte
             tasks.append(query_dot(wire_query, server))
         else:
             tasks.append(query_udp(wire_query, server))
+        task_servers.append(server)
     
     STATS["dns_parallel"] += 1
     
@@ -1160,17 +1200,24 @@ async def query_upstream_parallel(qname: str, qtype: int) -> Optional[Tuple[byte
         try:
             result = await coro
             if result:
-                response_wire, server = result if isinstance(result, tuple) else (result, servers[0])
+                index = tasks.index(coro)
+                server = task_servers[index]
                 start = time.time()
                 await UPSTREAM_HEALTH.record_success(server, time.time() - start)
-                return response_wire, server
+                return result, server
         except Exception as e:
             log.debug(f"[upstream] Parallel query failed: {e}")
+            index = tasks.index(coro)
+            server = task_servers[index]
+            await UPSTREAM_HEALTH.record_failure(server)
             continue
     
     return None
 
 async def query_upstream(qname: str, qtype: int) -> Optional[bytes]:
+    if CONFIG.get("qname_minimization"):
+        return await query_upstream_minimized(qname, qtype)
+    
     if CONFIG.get("upstream_parallel") and len(CONFIG["upstream_servers"]) > 1:
         result = await query_upstream_parallel(qname, qtype)
         return result[0] if result else None
@@ -1308,11 +1355,13 @@ def build_blocked_response(query: dns.message.Message) -> bytes:
         qtype = query.question[0].rdtype
         
         if qtype == dns.rdatatype.A:
-            rrset = response.answer.add(qname, 300, dns.rdataclass.IN, dns.rdatatype.A)
-            rrset.add(dns.rdtypes.IN.A.A(dns.rdataclass.IN, dns.rdatatype.A, ip))
+            rrset = dns.rrset.RRset(qname, dns.rdataclass.IN, dns.rdatatype.A)
+            rrset.add(dns.rdtypes.IN.A.A(dns.rdataclass.IN, dns.rdatatype.A, ip), ttl=300)
+            response.answer.append(rrset)
         elif qtype == dns.rdatatype.AAAA:
-            rrset = response.answer.add(qname, 300, dns.rdataclass.IN, dns.rdatatype.AAAA)
-            rrset.add(dns.rdtypes.IN.AAAA.AAAA(dns.rdataclass.IN, dns.rdatatype.AAAA, "::"))
+            rrset = dns.rrset.RRset(qname, dns.rdataclass.IN, dns.rdatatype.AAAA)
+            rrset.add(dns.rdtypes.IN.AAAA.AAAA(dns.rdataclass.IN, dns.rdatatype.AAAA, "::"), ttl=300)
+            response.answer.append(rrset)
     
     return response.to_wire()
 
@@ -1325,23 +1374,28 @@ def build_rewrite_response(query: dns.message.Message, rewrite: dict) -> bytes:
     ttl = rewrite.get("ttl", 300)
     
     if record_type == "A" and value:
-        rrset = response.answer.add(qname, ttl, dns.rdataclass.IN, dns.rdatatype.A)
-        rrset.add(dns.rdtypes.IN.A.A(dns.rdataclass.IN, dns.rdatatype.A, value))
+        rrset = dns.rrset.RRset(qname, dns.rdataclass.IN, dns.rdatatype.A)
+        rrset.add(dns.rdtypes.IN.A.A(dns.rdataclass.IN, dns.rdatatype.A, value), ttl=ttl)
+        response.answer.append(rrset)
     elif record_type == "AAAA" and value:
-        rrset = response.answer.add(qname, ttl, dns.rdataclass.IN, dns.rdatatype.AAAA)
-        rrset.add(dns.rdtypes.IN.AAAA.AAAA(dns.rdataclass.IN, dns.rdatatype.AAAA, value))
+        rrset = dns.rrset.RRset(qname, dns.rdataclass.IN, dns.rdatatype.AAAA)
+        rrset.add(dns.rdtypes.IN.AAAA.AAAA(dns.rdataclass.IN, dns.rdatatype.AAAA, value), ttl=ttl)
+        response.answer.append(rrset)
     elif record_type == "CNAME" and value:
-        rrset = response.answer.add(qname, ttl, dns.rdataclass.IN, dns.rdatatype.CNAME)
-        rrset.add(dns.rdtypes.ANY.CNAME.CNAME(dns.rdataclass.IN, dns.rdatatype.CNAME, dns.name.from_text(value)))
+        rrset = dns.rrset.RRset(qname, dns.rdataclass.IN, dns.rdatatype.CNAME)
+        rrset.add(dns.rdtypes.ANY.CNAME.CNAME(dns.rdataclass.IN, dns.rdatatype.CNAME, dns.name.from_text(value)), ttl=ttl)
+        response.answer.append(rrset)
     elif record_type == "TXT" and value:
-        rrset = response.answer.add(qname, ttl, dns.rdataclass.IN, dns.rdatatype.TXT)
-        rrset.add(dns.rdtypes.ANY.TXT.TXT(dns.rdataclass.IN, dns.rdatatype.TXT, [value.encode()]))
+        rrset = dns.rrset.RRset(qname, dns.rdataclass.IN, dns.rdatatype.TXT)
+        rrset.add(dns.rdtypes.ANY.TXT.TXT(dns.rdataclass.IN, dns.rdatatype.TXT, [value.encode()]), ttl=ttl)
+        response.answer.append(rrset)
     elif record_type == "MX" and value:
         parts = value.split(None, 1)
         priority = int(parts[0]) if len(parts) > 1 else 10
         exchange = parts[1] if len(parts) > 1 else parts[0]
-        rrset = response.answer.add(qname, ttl, dns.rdataclass.IN, dns.rdatatype.MX)
-        rrset.add(dns.rdtypes.ANY.MX.MX(dns.rdataclass.IN, dns.rdatatype.MX, priority, dns.name.from_text(exchange)))
+        rrset = dns.rrset.RRset(qname, dns.rdataclass.IN, dns.rdatatype.MX)
+        rrset.add(dns.rdtypes.ANY.MX.MX(dns.rdataclass.IN, dns.rdatatype.MX, priority, dns.name.from_text(exchange)), ttl=ttl)
+        response.answer.append(rrset)
     
     return response.to_wire()
 
@@ -1352,11 +1406,11 @@ def strip_ecs(response_wire: bytes) -> bytes:
     try:
         response = dns.message.from_wire(response_wire)
         if response.edns >= 0:
-            if hasattr(response, 'options'):
-                original_len = len(response.options)
-                response.options = [opt for opt in response.options if opt.otype != 8]
-                if len(response.options) < original_len:
-                    STATS["dns_ecs_stripped"] += 1
+            original_options = list(response.options)
+            new_options = [opt for opt in original_options if opt.otype != 8]
+            if len(new_options) < len(original_options):
+                STATS["dns_ecs_stripped"] += 1
+                response.use_edns(edns=response.edns, ednsflags=response.ednsflags, payload=response.payload, options=new_options)
         return response.to_wire()
     except:
         return response_wire
@@ -1391,17 +1445,13 @@ async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
         qname = str(query.question[0].name).lower().strip('.')
         qtype = query.question[0].rdtype
         
-        log.info(f"[dns] Query from {addr[0]}: {qname} ({dns.rdatatype.to_text(qtype)})")
+        if not CONFIG.get("zero_log"):
+            log.info(f"[dns] Query from {addr[0]}: {qname} ({dns.rdatatype.to_text(qtype)})")
         
         STATS["dns_queries"] += 1
         
         # Record query in history for prewarming
         await QUERY_HISTORY.record(qname)
-        
-        # SafeSearch enforcement
-        safesearch_domain = apply_safesearch(qname)
-        if safesearch_domain:
-            qname = safesearch_domain
         
         # Check whitelist first
         if await WHITELIST.contains(qname):
@@ -1416,6 +1466,19 @@ async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
                 STATS["dns_blocked"] += 1
                 log.info(f"[dns] Blocked (blocklist): {qname}")
                 return build_blocked_response(query)
+        
+        # SafeSearch enforcement (after checks)
+        safesearch_domain = apply_safesearch(qname)
+        if safesearch_domain:
+            # Rewrite to safe domain and query that
+            safe_query = dns.message.make_query(safesearch_domain, qtype)
+            response_wire = await query_upstream(safesearch_domain, qtype)
+            if response_wire:
+                return response_wire
+            else:
+                response = dns.message.make_response(query)
+                response.set_rcode(dns.rcode.SERVFAIL)
+                return response.to_wire()
         
         # Check DNS rewrites
         dns_rewrites = CONFIG.get("dns_rewrites", {})
@@ -1487,6 +1550,15 @@ async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
                                     return build_blocked_response(query)
                             except:
                                 pass
+                    elif rrset.rdtype == dns.rdatatype.AAAA:
+                        for rr in rrset:
+                            try:
+                                ip = ipaddress.IPv6Address(rr.address)
+                                if ip.is_private:
+                                    log.warning(f"[dns] Rebinding blocked: {qname} -> {ip}")
+                                    return build_blocked_response(query)
+                            except:
+                                pass
         
         # Cache response
         ttl = CONFIG.get("cache_ttl", 3600)
@@ -1551,9 +1623,6 @@ async def start_dns():
         raise
 
 # ==================== DHCP SERVER ====================
-# (DHCP implementation remains exactly as in your original file - no changes needed)
-# I'm preserving the complete DHCP section from your original code
-
 DHCP_DISCOVER = 1
 DHCP_OFFER = 2
 DHCP_REQUEST = 3
@@ -1836,7 +1905,7 @@ class DHCPServer:
             pos += 2 + len(wins_bytes)
         
         vendor_opts = CONFIG.get("dhcp_vendor_options", {})
-        if vendor_opts and isinstance(vendor_opts, dict):
+        if isinstance(vendor_opts, dict):
             vendor_data = b''
             for opt_code, opt_value in vendor_opts.items():
                 if isinstance(opt_value, str):
@@ -1985,7 +2054,8 @@ class DHCPServer:
             
             if CONFIG.get("dhcp_relay_support") and packet["giaddr"] != "0.0.0.0":
                 log.debug(f"[dhcp] Relay agent: {packet['giaddr']}")
-            
+                # Add relay handling if needed, e.g., forward to another server
+                # For now, process as normal
             if DHCP_OPT_MESSAGE_TYPE not in packet["options"]:
                 return
             
@@ -2076,6 +2146,11 @@ class DHCPServer:
         return False
     
     def add_static_lease(self, mac: str, ip: str, hostname: str = "") -> bool:
+        try:
+            ipaddress.IPv4Address(ip)  # Validate IP
+        except ValueError:
+            return False
+        
         if ip not in self.ip_pool:
             return False
         
@@ -2313,6 +2388,7 @@ async def api_whitelist_add(req):
         domain = data.get('domain', '').strip()
         if domain:
             await WHITELIST.add(domain)
+            await save_blocklists_local()  # Save after adding
             return web.json_response({"status": "added", "domain": domain})
         return web.json_response({"error": "No domain provided"}, status=400)
     except Exception as e:
@@ -2324,6 +2400,7 @@ async def api_whitelist_remove(req):
         domain = data.get('domain', '').strip()
         if domain:
             await WHITELIST.remove(domain)
+            await save_blocklists_local()  # Save after removing
             return web.json_response({"status": "removed", "domain": domain})
         return web.json_response({"error": "No domain provided"}, status=400)
     except Exception as e:
@@ -2424,7 +2501,7 @@ async def api_dhcp_static_add(req):
         if DHCP_SERVER.add_static_lease(mac, ip, hostname):
             return web.json_response({"status": "added"})
         else:
-            return web.json_response({"error": "IP not in pool"}, status=400)
+            return web.json_response({"error": "Invalid IP or not in pool"}, status=400)
     
     except Exception as e:
         return web.json_response({"error": str(e)}, status=400)
@@ -2632,7 +2709,7 @@ async def cleanup_veil():
     if CONN_POOL:
         await CONN_POOL.close()
 
-__version__ = "2.0.0"
+__version__ = "2.0.1"  # Updated version
 __description__ = "Privacy-First DNS/DHCP - Complete with DNSSEC, DoQ, Rate Limiting, SafeSearch"
 
 if __name__ == "__main__":
@@ -2719,7 +2796,7 @@ if __name__ == "__main__":
     app.on_cleanup.append(cleanup_background_services)
 
     log.info(f"🌐 Web UI will be available at http://{bind_addr}:{ui_port}")
-    log.info(f"🧩 Veil v2.0.0 - Privacy-First DNS/DHCP")
+    log.info(f"🧩 Veil v{__version__} - Privacy-First DNS/DHCP")
     
     # Run with proper error handling
     try:
