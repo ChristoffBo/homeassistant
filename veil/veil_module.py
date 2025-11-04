@@ -493,7 +493,7 @@ class DomainList:
     
     def add_sync(self, domain: str):
         domain = domain.lower().strip('.')
-        parts = domain.split('.')[::-1]
+        parts = domain.split('[::-1]')
         
         node = self._root
         for part in parts:
@@ -507,7 +507,7 @@ class DomainList:
     
     async def contains(self, domain: str) -> bool:
         domain = domain.lower().strip('.')
-        parts = domain.split('.')[::-1]
+        parts = domain.split('[::-1]')
         
         async with self._lock:
             node = self._root
@@ -522,7 +522,7 @@ class DomainList:
     
     async def remove(self, domain: str):
         domain = domain.lower().strip('.')
-        parts = domain.split('.')[::-1]
+        parts = domain.split('[::-1]')
         
         async with self._lock:
             node = self._root
@@ -1045,36 +1045,41 @@ async def query_doq(wire_query: bytes, server: str) -> Optional[bytes]:
             alpn_protocols=["doq"],
         )
         
-        async with connect(
+        protocol = await connect(
             server,
             853,
             configuration=configuration,
-        ) as protocol:
-            stream_id = protocol._quic.get_next_available_stream_id()
-            
-            # Send DNS query
-            msg_len = struct.pack('!H', len(wire_query))
-            protocol._quic.send_stream_data(stream_id, msg_len + wire_query, end_stream=True)
-            
-            # Wait for response
-            response_data = b''
-            timeout = CONFIG.get("upstream_timeout", 2.0)
-            start = time.time()
-            
-            while time.time() - start < timeout:
-                event = protocol._quic.next_event()
-                while event is not None:
-                    if isinstance(event, StreamDataReceived) and event.stream_id == stream_id:
-                        response_data += event.data
-                        if event.end_stream:
-                            if len(response_data) >= 2:
-                                expected_len = struct.unpack('!H', response_data[:2])[0]
-                                if len(response_data) >= expected_len + 2:
-                                    return response_data[2:2 + expected_len]
-                    event = protocol._quic.next_event()
-                
-                await asyncio.sleep(0.01)
+            create_protocol=QuicConnectionProtocol
+        )
         
+        stream_id = protocol._quic.get_next_available_stream_id()
+        
+        # Send DNS query
+        msg_len = struct.pack('!H', len(wire_query))
+        protocol._quic.send_stream_data(stream_id, msg_len + wire_query, end_stream=True)
+        
+        # Wait for response
+        response_data = b''
+        timeout = CONFIG.get("upstream_timeout", 2.0)
+        start = time.time()
+        
+        while time.time() - start < timeout:
+            event = protocol._quic.next_event()
+            while event is not None:
+                if isinstance(event, StreamDataReceived) and event.stream_id == stream_id:
+                    response_data += event.data
+                    if event.end_stream:
+                        if len(response_data) >= 2:
+                            expected_len = struct.unpack('!H', response_data[:2])[0]
+                            if len(response_data) >= expected_len + 2:
+                                protocol.close()
+                                return response_data[2:2 + expected_len
+]
+                event = protocol._quic.next_event()
+            
+            await asyncio.sleep(0.01)
+        
+        protocol.close()
         return None
     
     except Exception as e:
@@ -1157,6 +1162,17 @@ async def query_upstream_minimized(qname: str, qtype: int) -> Optional[bytes]:
     # Fallback
     return await query_upstream(qname, qtype)
 
+async def wrapped_query(server: str, query_func) -> Tuple[str, Optional[bytes]]:
+    start = time.time()
+    try:
+        result = await query_func
+        latency = time.time() - start
+        await UPSTREAM_HEALTH.record_success(server, latency)
+        return server, result
+    except Exception as e:
+        await UPSTREAM_HEALTH.record_failure(server)
+        return server, None
+
 async def query_upstream_parallel(qname: str, qtype: int) -> Optional[Tuple[bytes, str]]:
     servers = CONFIG["upstream_servers"].copy()
     healthy = UPSTREAM_HEALTH.get_healthy()
@@ -1181,35 +1197,26 @@ async def query_upstream_parallel(qname: str, qtype: int) -> Optional[Tuple[byte
         jitter = random.randint(jitter_range[0], jitter_range[1]) / 1000.0
         await asyncio.sleep(jitter)
     
-    task_to_server = {}
+    query_funcs = []
     for server in servers:
         if CONFIG.get("doq_enabled") and DOQ_AVAILABLE:
-            task = asyncio.create_task(query_doq(wire_query, server))
+            func = query_doq(wire_query, server)
         elif CONFIG.get("doh_enabled") and server in ["1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4"]:
-            task = asyncio.create_task(query_doh(wire_query, server))
+            func = query_doh(wire_query, server)
         elif CONFIG.get("dot_enabled"):
-            task = asyncio.create_task(query_dot(wire_query, server))
+            func = query_dot(wire_query, server)
         else:
-            task = asyncio.create_task(query_udp(wire_query, server))
-        task_to_server[task] = server
+            func = query_udp(wire_query, server)
+        query_funcs.append(func)
     
-    tasks = list(task_to_server.keys())
+    wrapped_tasks = [asyncio.create_task(wrapped_query(server, query_funcs[i])) for i, server in enumerate(servers)]
     
     STATS["dns_parallel"] += 1
     
-    for completed_task in asyncio.as_completed(tasks):
-        try:
-            result = await completed_task
-            if result:
-                server = task_to_server[completed_task]
-                start = time.time()
-                await UPSTREAM_HEALTH.record_success(server, time.time() - start)
-                return result, server
-        except Exception as e:
-            log.debug(f"[upstream] Parallel query failed: {e}")
-            server = task_to_server[completed_task]
-            await UPSTREAM_HEALTH.record_failure(server)
-            continue
+    for completed_task in asyncio.as_completed(wrapped_tasks):
+        server, result = await completed_task
+        if result is not None:
+            return result, server
     
     return None
 
