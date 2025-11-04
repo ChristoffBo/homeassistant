@@ -1,6 +1,5 @@
 aiohttp==3.10.5
 requests==2.32.3
-aiohttp==3.9.5
 requests==2.32.3
 aiosmtpd==1.4.4.post2
 websockets==12.0
