@@ -118,7 +118,7 @@ CONFIG = {
     "ecs_strip": True,
     "dnssec_validate": True,  # FULL validation
     "dnssec_trust_anchors": "/etc/bind/bind.keys",  # System trust anchors
-    "query_jitter": True,
+    "query_jitter": False,
     "query_jitter_ms": [10, 100],
     "zero_log": False,
     "padding_enabled": True,
