@@ -118,10 +118,10 @@ CONFIG = {
     "ecs_strip": True,
     "dnssec_validate": True,  # FULL validation
     "dnssec_trust_anchors": "/etc/bind/bind.keys",  # System trust anchors
-    "query_jitter": False,
+    "query_jitter": True,
     "query_jitter_ms": [10, 100],
     "zero_log": False,
-    "padding_enabled": False,
+    "padding_enabled": True,
     "padding_block_size": 468,
     "case_randomization": True,
     "qname_minimization": True,
@@ -493,7 +493,7 @@ class DomainList:
     
     def add_sync(self, domain: str):
         domain = domain.lower().strip('.')
-        parts = domain.split('[::-1]')
+        parts = domain.split('.')[::-1]
         
         node = self._root
         for part in parts:
@@ -1073,8 +1073,7 @@ async def query_doq(wire_query: bytes, server: str) -> Optional[bytes]:
                             expected_len = struct.unpack('!H', response_data[:2])[0]
                             if len(response_data) >= expected_len + 2:
                                 protocol.close()
-                                return response_data[2:2 + expected_len
-]
+                                return response_data[2:2 + expected_len]
                 event = protocol._quic.next_event()
             
             await asyncio.sleep(0.01)
