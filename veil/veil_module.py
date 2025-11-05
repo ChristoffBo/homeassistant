@@ -936,6 +936,7 @@ async def validate_dnssec(response_wire: bytes, transport: str, query_id: int) -
         STATS["dns_dnssec_failed"] += 1
         return False
 # ==================== DNS-OVER-QUIC ====================
+# ==================== DNS-over-QUIC (DoQ) ====================
 DOQ_AVAILABLE = False
 try:
     from aioquic.asyncio import connect
@@ -944,67 +945,83 @@ try:
     DOQ_AVAILABLE = True
 except ImportError:
     log.warning("[doq] aioquic not installed, DoQ disabled")
+
+
 async def query_doq(wire_query: bytes, server: str) -> Optional[bytes]:
-    """Query via DNS-over-QUIC (RFC 9250)"""
+    """Query via DNS-over-QUIC (RFC 9250, fully normalized and timeout-safe)"""
     if not DOQ_AVAILABLE or not CONFIG.get("doq_enabled"):
         return None
-   
+
     try:
         STATS["dns_doq_queries"] += 1
-       
-        configuration = QuicConfiguration(
-            is_client=True,
-            alpn_protocols=["doq"],
+
+        configuration = QuicConfiguration(is_client=True, alpn_protocols=["doq"])
+        protocol = await connect(
+            server, 853, configuration=configuration, create_protocol=QuicConnectionProtocol
         )
-       
-        protocol = await connect(server, 853, configuration=configuration, create_protocol=QuicConnectionProtocol)
-       
-        log.debug(f"[doq] Negotiated ALPN: {protocol._quic.negotiated_alpn}")
-        if protocol._quic.negotiated_alpn != "doq":
+
+        negotiated = getattr(protocol._quic, "negotiated_alpn", None)
+        log.debug(f"[doq] Negotiated ALPN: {negotiated}")
+        if negotiated != "doq":
             log.debug(f"[doq] Server {server} does not support DoQ, falling back")
             protocol.close()
             return None
-       
+
+        # --- RFC 9250: Message ID MUST be 0 ---
+        try:
+            query = dns.message.from_wire(wire_query)
+            query.id = 0
+            wire_query = query.to_wire()
+        except Exception as e:
+            log.warning(f"[doq] Failed to normalize query ID: {e}")
+
         stream_id = protocol._quic.get_next_available_stream_id()
-       
-        # Send DNS query
-        msg_len = struct.pack('!H', len(wire_query))
+
+        # Send DNS query with 2-byte length prefix
+        msg_len = struct.pack("!H", len(wire_query))
         protocol._quic.send_stream_data(stream_id, msg_len + wire_query, end_stream=True)
-       
-        # Wait for full response
-        response_data = b''
+
+        # Wait for complete response
+        response_data = b""
         expected_len = None
         timeout = CONFIG.get("upstream_timeout", 2.0)
         start = time.time()
-       
+
         while True:
             if time.time() - start > timeout:
-                protocol.close()
                 log.debug(f"[doq] Timeout waiting for response from {server}")
+                protocol.close()
                 return None
-           
+
             event = protocol._quic.next_event()
             if isinstance(event, StreamDataReceived) and event.stream_id == stream_id:
                 response_data += event.data
                 if expected_len is None and len(response_data) >= 2:
-                    expected_len = struct.unpack('!H', response_data[:2])[0]
+                    expected_len = struct.unpack("!H", response_data[:2])[0]
                 if expected_len and len(response_data) - 2 >= expected_len:
                     break
+
             await asyncio.sleep(0.01)
-       
-        if len(response_data) - 2 == expected_len:
-            response = dns.message.from_wire(response_data[2:2 + expected_len])
-            response.id = 0  # Normalize for internal comparison (RFC 9250)
+
+        # --- Parse and normalize response ID ---
+        if expected_len and len(response_data) - 2 >= expected_len:
+            raw = response_data[2 : 2 + expected_len]
+            response = dns.message.from_wire(raw)
+            response.id = 0  # RFC 9250 normalization
+            response_wire = response.to_wire()
             protocol.close()
-            return response.to_wire()
-        else:
-            protocol.close()
-            log.debug(f"[doq] Incomplete response from {server}: expected {expected_len}, got {len(response_data) - 2}")
-            return None
-       
+            return response_wire
+
+        log.debug(
+            f"[doq] Incomplete response from {server}: expected {expected_len}, got {len(response_data) - 2}"
+        )
+        protocol.close()
+        return None
+
     except Exception as e:
         log.debug(f"[doq] Error: {e}")
         return None
+
 # ==================== DNS PRIVACY FUNCTIONS ====================
 CONN_POOL = None
 async def get_conn_pool():
