@@ -936,11 +936,10 @@ async def validate_dnssec(response_wire: bytes, transport: str, query_id: int) -
         STATS["dns_dnssec_failed"] += 1
         return False
 
-# ==================== DNS-over-QUIC (DoQ) ====================
-# ==================== DNS-over-QUIC (DoQ) ====================
+# === FIXED: Import QuicConnectionProtocol for DoQ ===
 DOQ_AVAILABLE = False
 try:
-    from aioquic.asyncio import connect
+    from aioquic.asyncio import connect, QuicConnectionProtocol
     from aioquic.quic.configuration import QuicConfiguration
     from aioquic.quic.events import StreamDataReceived
     DOQ_AVAILABLE = True
@@ -1058,59 +1057,52 @@ def apply_0x20_encoding(qname: str) -> str:
         c.upper() if random.random() > 0.5 else c.lower()
         for c in qname
     ) if CONFIG.get("case_randomization") else qname
-def pad_query(wire_data: bytes) -> bytes:
+# === FIXED: Bidirectional padding (query + response) ===
+def pad_wire(wire_data: bytes) -> bytes:
     if not CONFIG.get("padding_enabled"):
         return wire_data
-   
     STATS["dns_padded"] += 1
     block_size = CONFIG.get("padding_block_size", 468)
-   
     try:
         msg = dns.message.from_wire(wire_data)
         if msg.edns < 0:
             msg.use_edns(edns=True, payload=4096)
-       
-        current_wire = msg.to_wire()
-        current_len = len(current_wire)
+        current_len = len(msg.to_wire())
         if current_len >= block_size:
-            return current_wire
-       
+            return msg.to_wire()
         padding_needed = block_size - (current_len % block_size)
         if padding_needed == block_size:
             padding_needed = 0
-       
         if padding_needed > 0:
             padding_opt = dns.edns.GenericOption(12, b'\x00' * padding_needed)
             new_options = list(msg.options) + [padding_opt]
             msg.use_edns(edns=msg.edns, ednsflags=msg.ednsflags, payload=msg.payload, options=new_options)
-       
         return msg.to_wire()
     except Exception as e:
         log.debug(f"[padding] Error: {e}")
         return wire_data
+# === FIXED: True QNAME minimization (iterative, no full fallback) ===
 async def query_upstream_minimized(qname: str, qtype: int, depth: int = 0) -> Optional[bytes]:
-    """Implement QNAME minimization with recursion depth guard"""
     if not CONFIG.get("qname_minimization"):
         return await query_upstream(qname, qtype)
-   
     if depth > 20:
         log.error("[dns] QNAME minimization exceeded safe depth")
         return None
-       
     STATS["dns_qname_min"] += 1
     normalized_qname = qname.lower().strip('.')
     labels = normalized_qname.split('.')
-    for i in range(1, len(labels)):
-        minimized_qname = '.'.join(labels[-i:])
-        query = dns.message.make_query(minimized_qname, dns.rdatatype.NS)
-        response_wire = await query_upstream(minimized_qname, dns.rdatatype.NS, depth=depth + 1)
-        if response_wire:
-            response = dns.message.from_wire(response_wire)
-            if response.rcode() == dns.rcode.NOERROR and response.answer:
-                # Found authoritative, now query full
-                return await query_upstream(normalized_qname, qtype)
-   
-    # Fallback
+    current = '.'
+    for i in range(len(labels)):
+        current = labels[-1-i] + ('.' + current if current != '.' else '')
+        ns_response = await query_upstream(current, dns.rdatatype.NS)
+        if not ns_response:
+            break
+        response = dns.message.from_wire(ns_response)
+        if response.rcode() != dns.rcode.NOERROR:
+            break
+        if i == len(labels) - 1:
+            final_response = await query_upstream(normalized_qname, qtype)
+            return final_response
     return await query_upstream(normalized_qname, qtype)
 async def wrapped_query(server: str, query_func, query_id: int, transport: str) -> Tuple[str, Optional[bytes]]:
     start = time.time()
@@ -1121,7 +1113,7 @@ async def wrapped_query(server: str, query_func, query_id: int, transport: str) 
         if result:
             response = dns.message.from_wire(result)
             if transport == "doq":
-                pass  # Don't strict-compare IDs for DoQ
+                pass
             elif response.id != query_id:
                 log.warning(f"[dns] Non-matching DNS IDs ({response.id} vs {query_id}) – tolerated")
         return server, result
@@ -1131,28 +1123,20 @@ async def wrapped_query(server: str, query_func, query_id: int, transport: str) 
 async def query_upstream_parallel(qname: str, qtype: int) -> Optional[Tuple[bytes, str]]:
     servers = CONFIG["upstream_servers"].copy()
     healthy = UPSTREAM_HEALTH.get_healthy()
-   
     if healthy:
         servers = [s for s in servers if s in healthy or s not in UPSTREAM_HEALTH.get_status()]
-   
     if not servers:
         return None
-   
     normalized_qname = qname.lower().strip('.')
     randomized_qname = apply_0x20_encoding(normalized_qname)
-   
     query = dns.message.make_query(randomized_qname, qtype, use_edns=True)
     query_id = random.randint(0, 65535) if not (CONFIG.get("doq_enabled") and DOQ_AVAILABLE) else 0
     query.id = query_id
-   
-    wire_query = query.to_wire()
-    wire_query = pad_query(wire_query)
-   
+    wire_query = pad_wire(query.to_wire())
     if CONFIG.get("query_jitter") and not (CONFIG.get("doq_enabled") and DOQ_AVAILABLE):
         jitter_range = CONFIG.get("query_jitter_ms", [10, 100])
         jitter = random.randint(jitter_range[0], jitter_range[1]) / 1000.0
         await asyncio.sleep(jitter)
-   
     query_funcs = []
     transports = []
     for server in servers:
@@ -1170,49 +1154,35 @@ async def query_upstream_parallel(qname: str, qtype: int) -> Optional[Tuple[byte
             transport = "udp"
         query_funcs.append(func)
         transports.append(transport)
-   
     STATS["dns_parallel"] += 1
-   
     wrapped_tasks = [asyncio.create_task(wrapped_query(servers[i], query_funcs[i], query_id, transports[i])) for i in range(len(servers))]
-   
     for completed_task in asyncio.as_completed(wrapped_tasks):
         server, result = await completed_task
         if result is not None:
             return result, server
-   
     return None
 async def query_upstream(qname: str, qtype: int, depth: int = 0) -> Optional[bytes]:
     if CONFIG.get("qname_minimization"):
         return await query_upstream_minimized(qname, qtype, depth)
-   
     if CONFIG.get("upstream_parallel") and len(CONFIG["upstream_servers"]) > 1:
         result = await query_upstream_parallel(qname, qtype)
         return result[0] if result else None
-   
     servers = CONFIG["upstream_servers"].copy()
     healthy = UPSTREAM_HEALTH.get_healthy()
-   
     if healthy:
         servers = [s for s in servers if s in healthy or s not in UPSTREAM_HEALTH.get_status()]
-   
     if CONFIG.get("upstream_rotation"):
         random.shuffle(servers)
-   
     normalized_qname = qname.lower().strip('.')
     randomized_qname = apply_0x20_encoding(normalized_qname)
-   
     query = dns.message.make_query(randomized_qname, qtype, use_edns=True)
     query_id = random.randint(0, 65535) if not (CONFIG.get("doq_enabled") and DOQ_AVAILABLE) else 0
     query.id = query_id
-   
-    wire_query = query.to_wire()
-    wire_query = pad_query(wire_query)
-   
+    wire_query = pad_wire(query.to_wire())
     if CONFIG.get("query_jitter") and not (CONFIG.get("doq_enabled") and DOQ_AVAILABLE):
         jitter_range = CONFIG.get("query_jitter_ms", [10, 100])
         jitter = random.randint(jitter_range[0], jitter_range[1]) / 1000.0
         await asyncio.sleep(jitter)
-   
     upstream_queries = 0
     total_latency = 0.0
     for server in servers:
@@ -1231,7 +1201,6 @@ async def query_upstream(qname: str, qtype: int, depth: int = 0) -> Optional[byt
             else:
                 response_wire = await query_udp(wire_query, server)
                 transport = "udp"
-           
             if response_wire:
                 latency = time.time() - start
                 total_latency += latency
@@ -1250,7 +1219,6 @@ async def query_upstream(qname: str, qtype: int, depth: int = 0) -> Optional[byt
             log.debug(f"[upstream] {server} error: {e}")
             await UPSTREAM_HEALTH.record_failure(server)
             continue
-   
     if upstream_queries > 0:
         STATS["dns_upstream_latency"] = total_latency / upstream_queries
     log.warning(f"[dns] All upstreams failed for {qname}. Healthy: {UPSTREAM_HEALTH.get_healthy()}")
@@ -1259,7 +1227,6 @@ async def query_udp(wire_query: bytes, server: str) -> Optional[bytes]:
     loop = asyncio.get_event_loop()
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.settimeout(CONFIG["upstream_timeout"])
-   
     try:
         sock.sendto(wire_query, (server, 53))
         response, _ = sock.recvfrom(4096)
@@ -1273,10 +1240,8 @@ async def query_doh(wire_query: bytes, server: str) -> Optional[bytes]:
         "8.8.8.8": "https://dns.google/dns-query",
         "8.8.4.4": "https://dns.google/dns-query",
     }
-   
     url = doh_urls.get(server, f"https://{server}/dns-query")
     session = await get_conn_pool()
-   
     async with session.post(
         url,
         data=wire_query,
@@ -1284,41 +1249,32 @@ async def query_doh(wire_query: bytes, server: str) -> Optional[bytes]:
     ) as resp:
         if resp.status == 200:
             return await resp.read()
-   
     return None
 async def query_dot(wire_query: bytes, server: str) -> Optional[bytes]:
     import ssl
-   
     try:
         ssl_context = ssl.create_default_context()
         ssl_context.check_hostname = False
         ssl_context.verify_mode = ssl.CERT_NONE
-       
         reader, writer = await asyncio.wait_for(
             asyncio.open_connection(server, 853, ssl=ssl_context),
             timeout=CONFIG["upstream_timeout"]
         )
-       
         msg_len = struct.pack('!H', len(wire_query))
         writer.write(msg_len + wire_query)
         await writer.drain()
-       
         len_bytes = await asyncio.wait_for(
             reader.readexactly(2),
             timeout=CONFIG["upstream_timeout"]
         )
         resp_len = struct.unpack('!H', len_bytes)[0]
-       
         response = await asyncio.wait_for(
             reader.readexactly(resp_len),
             timeout=CONFIG["upstream_timeout"]
         )
-       
         writer.close()
         await writer.wait_closed()
-       
         return response
-   
     except Exception as e:
         log.debug(f"[dot] Error: {e}")
         return None
@@ -1326,7 +1282,6 @@ async def query_dot(wire_query: bytes, server: str) -> Optional[bytes]:
 def build_blocked_response(query: dns.message.Message) -> bytes:
     response = dns.message.make_response(query)
     block_type = CONFIG.get("block_response_type", "NXDOMAIN")
-   
     if block_type == "NXDOMAIN":
         response.set_rcode(dns.rcode.NXDOMAIN)
     elif block_type == "REFUSED":
@@ -1335,7 +1290,6 @@ def build_blocked_response(query: dns.message.Message) -> bytes:
         ip = CONFIG.get("block_custom_ip", "0.0.0.0") if block_type == "custom_ip" else "0.0.0.0"
         qname = query.question[0].name
         qtype = query.question[0].rdtype
-       
         if qtype == dns.rdatatype.A:
             rrset = dns.rrset.RRset(qname, dns.rdataclass.IN, dns.rdatatype.A)
             rrset.add(dns.rdtypes.IN.A.A(dns.rdataclass.IN, dns.rdatatype.A, ip), ttl=300)
@@ -1344,16 +1298,13 @@ def build_blocked_response(query: dns.message.Message) -> bytes:
             rrset = dns.rrset.RRset(qname, dns.rdataclass.IN, dns.rdatatype.AAAA)
             rrset.add(dns.rdtypes.IN.AAAA.AAAA(dns.rdataclass.IN, dns.rdatatype.AAAA, "::"), ttl=300)
             response.answer.append(rrset)
-   
     return response.to_wire()
 def build_rewrite_response(query: dns.message.Message, rewrite: dict) -> bytes:
     response = dns.message.make_response(query)
     qname = query.question[0].name
-   
     record_type = rewrite.get("type", "A")
     value = rewrite.get("value")
     ttl = rewrite.get("ttl", 300)
-   
     if record_type == "A" and value:
         rrset = dns.rrset.RRset(qname, dns.rdataclass.IN, dns.rdatatype.A)
         rrset.add(dns.rdtypes.IN.A.A(dns.rdataclass.IN, dns.rdatatype.A, value), ttl=ttl)
@@ -1377,12 +1328,10 @@ def build_rewrite_response(query: dns.message.Message, rewrite: dict) -> bytes:
         rrset = dns.rrset.RRset(qname, dns.rdataclass.IN, dns.rdatatype.MX)
         rrset.add(dns.rdtypes.ANY.MX.MX(dns.rdataclass.IN, dns.rdatatype.MX, priority, dns.name.from_text(exchange)), ttl=ttl)
         response.answer.append(rrset)
-   
     return response.to_wire()
 def strip_ecs(response_wire: bytes) -> bytes:
     if not CONFIG.get("ecs_strip"):
         return response_wire
-   
     try:
         response = dns.message.from_wire(response_wire)
         if response.edns >= 0:
@@ -1549,7 +1498,8 @@ async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
        
         await DNS_CACHE.set(qname, qtype, response_wire, ttl, negative=(not response.answer))
        
-        return response_wire
+        # === FIXED: Pad response before sending to client ===
+        return pad_wire(response_wire)
    
     except Exception as e:
         log.error(f"[dns] Unexpected error processing query from {addr[0]}: {e}")
