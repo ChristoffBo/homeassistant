@@ -460,7 +460,7 @@ class DomainList:
    
     async def add(self, domain: str):
         domain = domain.lower().strip('.')
-        parts = domain.split('.')[::-1]
+        parts = domain.split('[::-1]')
        
         async with self._lock:
             node = self._root
@@ -475,7 +475,7 @@ class DomainList:
    
     def add_sync(self, domain: str):
         domain = domain.lower().strip('.')
-        parts = domain.split('.')[::-1]
+        parts = domain.split('[::-1]')
        
         node = self._root
         for part in parts:
@@ -489,7 +489,7 @@ class DomainList:
    
     async def contains(self, domain: str) -> bool:
         domain = domain.lower().strip('.')
-        parts = domain.split('.')[::-1]
+        parts = domain.split('[::-1]')
        
         async with self._lock:
             node = self._root
@@ -504,7 +504,7 @@ class DomainList:
    
     async def remove(self, domain: str):
         domain = domain.lower().strip('.')
-        parts = domain.split('.')[::-1]
+        parts = domain.split('[::-1]')
        
         async with self._lock:
             node = self._root
