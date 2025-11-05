@@ -937,6 +937,7 @@ async def validate_dnssec(response_wire: bytes, transport: str, query_id: int) -
         return False
 # ==================== DNS-OVER-QUIC ====================
 # ==================== DNS-over-QUIC (DoQ) ====================
+# ==================== DNS-over-QUIC (DoQ) ====================
 DOQ_AVAILABLE = False
 try:
     from aioquic.asyncio import connect
@@ -1009,15 +1010,14 @@ async def query_doq(wire_query: bytes, server: str) -> Optional[bytes]:
             response = dns.message.from_wire(raw)
 
             # --- RFC 9250: ID normalization and recursion flags ---
-            response.id = 0                   # normalize for DoQ
-            response.flags |= dns.flags.RA    # recursion available
-            response.flags &= ~dns.flags.AA   # not authoritative
+            response.id = 0                    # normalize for DoQ
+            response.flags |= dns.flags.RA     # recursion available
+            response.flags |= dns.flags.RD     # restore Recursion Desired bit
+            response.flags &= ~dns.flags.AA    # not authoritative
 
             response_wire = response.to_wire()
             protocol.close()
             return response_wire
-
-
 
         log.debug(
             f"[doq] Incomplete response from {server}: expected {expected_len}, got {len(response_data) - 2}"
@@ -1028,6 +1028,7 @@ async def query_doq(wire_query: bytes, server: str) -> Optional[bytes]:
     except Exception as e:
         log.debug(f"[doq] Error: {e}")
         return None
+
 
 # ==================== DNS PRIVACY FUNCTIONS ====================
 CONN_POOL = None
