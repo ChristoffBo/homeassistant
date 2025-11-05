@@ -50,7 +50,7 @@ import base64
 import subprocess
 from pathlib import Path
 from datetime import datetime, timedelta
-from collections import defaultdict, OrderedDict
+from collections import defaultdict, OrderedDict, Counter
 from typing import Dict, List, Optional, Tuple, Set, Any
 from dataclasses import dataclass, field
 import json
@@ -163,11 +163,7 @@ CONFIG = {
     "cache_prewarm_enabled": True,
     "cache_prewarm_on_start": True,
     "cache_prewarm_interval": 3600,  # Seconds (hourly)
-    "cache_prewarm_sources": [
-        "popular",  # Built-in top 1000 domains
-        "custom",   # User-defined list
-        "history"   # Most queried from history
-    ],
+    "cache_prewarm_sources": ["popular", "custom", "history"],
     "cache_prewarm_custom_domains": [],  # User can add domains here
     "cache_prewarm_history_count": 100,  # Top N from query history
     "cache_prewarm_concurrent": 10,  # Parallel queries during prewarm
@@ -218,6 +214,9 @@ STATS = {
     "dns_dnssec_validated": 0,
     "dns_dnssec_failed": 0,
     "dns_doq_queries": 0,
+    "dns_upstream_latency": 0.0,  # Average latency
+    "top_clients": [],  # Top 10 clients
+    "top_blocked": [],  # Top 10 blocked domains
     "dhcp_discovers": 0,
     "dhcp_offers": 0,
     "dhcp_requests": 0,
@@ -235,6 +234,10 @@ STATS = {
     "cache_prewarm_domains": 0,
     "start_time": time.time()
 }
+
+# Counters for top 10
+CLIENT_COUNTER = Counter()
+BLOCKED_COUNTER = Counter()
 
 # ==================== DNS CACHE ====================
 @dataclass
@@ -507,7 +510,7 @@ class DomainList:
     
     async def contains(self, domain: str) -> bool:
         domain = domain.lower().strip('.')
-        parts = domain.split('[::-1]')
+        parts = domain.split('.')[::-1]
         
         async with self._lock:
             node = self._root
@@ -518,11 +521,11 @@ class DomainList:
                 if node.is_blocked:
                     return True
         
-        return False
+        return node.is_blocked if node else False
     
     async def remove(self, domain: str):
         domain = domain.lower().strip('.')
-        parts = domain.split('[::-1]')
+        parts = domain.split('.')[::-1]
         
         async with self._lock:
             node = self._root
@@ -738,66 +741,23 @@ class BlocklistUpdater:
 BLOCKLIST_UPDATER = BlocklistUpdater()
 
 # ==================== CACHE PREWARMING ====================
-# Top 1000 most popular domains for cache prewarming
 POPULAR_DOMAINS = [
-    # Social Media & Communication
     "facebook.com", "instagram.com", "twitter.com", "linkedin.com", "reddit.com",
     "youtube.com", "tiktok.com", "snapchat.com", "pinterest.com", "tumblr.com",
     "whatsapp.com", "telegram.org", "discord.com", "slack.com", "zoom.us",
-    
-    # Search Engines
     "google.com", "bing.com", "yahoo.com", "duckduckgo.com", "baidu.com",
-    
-    # Email
     "gmail.com", "outlook.com", "protonmail.com", "mail.yahoo.com", "icloud.com",
-    
-    # Cloud & Storage
     "dropbox.com", "drive.google.com", "onedrive.live.com", "box.com", "mega.nz",
-    "icloud.com", "wetransfer.com", "mediafire.com",
-    
-    # Shopping
     "amazon.com", "ebay.com", "walmart.com", "target.com", "bestbuy.com",
-    "etsy.com", "aliexpress.com", "alibaba.com", "shopify.com",
-    
-    # Streaming
     "netflix.com", "hulu.com", "disneyplus.com", "hbo.com", "primevideo.com",
     "spotify.com", "apple.com", "pandora.com", "soundcloud.com",
-    "twitch.tv", "vimeo.com", "dailymotion.com",
-    
-    # News
     "cnn.com", "bbc.com", "nytimes.com", "theguardian.com", "reuters.com",
-    "forbes.com", "bloomberg.com", "wsj.com", "usatoday.com", "washingtonpost.com",
-    
-    # Tech
     "github.com", "stackoverflow.com", "microsoft.com", "apple.com", "adobe.com",
-    "nvidia.com", "amd.com", "intel.com", "canonical.com", "docker.com",
-    
-    # CDNs & Infrastructure (critical for other sites)
     "cloudflare.com", "akamai.com", "fastly.com", "amazonaws.com", "googleusercontent.com",
-    "gstatic.com", "cloudfront.net", "cdnjs.com", "jsdelivr.net",
-    
-    # Common APIs
-    "maps.googleapis.com", "fonts.googleapis.com", "ajax.googleapis.com",
-    "apis.google.com", "graph.facebook.com", "api.twitter.com",
-    
-    # DNS & Security
-    "1.1.1.1", "8.8.8.8", "cloudflare-dns.com", "dns.google",
-    
-    # Banks & Finance
     "paypal.com", "stripe.com", "chase.com", "bankofamerica.com", "wellsfargo.com",
-    
-    # Gaming
     "steampowered.com", "epicgames.com", "roblox.com", "minecraft.net", "ea.com",
-    "blizzard.com", "nintendo.com", "playstation.com", "xbox.com",
-    
-    # Education
     "wikipedia.org", "coursera.org", "udemy.com", "khanacademy.org", "edx.org",
-    
-    # Government
     "usa.gov", "irs.gov", "usps.com", "weather.gov",
-    
-    # Home Automation & IoT
-    "home-assistant.io", "ifttt.com", "smartthings.com", "philips-hue.com",
 ]
 
 class CachePrewarmer:
@@ -944,14 +904,7 @@ class UpstreamHealth:
     async def record_success(self, server: str, latency: float):
         async with self._lock:
             if server not in self._health:
-                self._health[server] = {
-                    "failures": 0,
-                    "last_check": time.time(),
-                    "healthy": True,
-                    "latency": latency,
-                    "success_count": 0
-                }
-            
+                self._health[server] = {"failures": 0, "last_check": time.time(), "healthy": True, "latency": latency, "success_count": 0}
             self._health[server]["failures"] = 0
             self._health[server]["last_check"] = time.time()
             self._health[server]["healthy"] = True
@@ -961,17 +914,9 @@ class UpstreamHealth:
     async def record_failure(self, server: str):
         async with self._lock:
             if server not in self._health:
-                self._health[server] = {
-                    "failures": 0,
-                    "last_check": time.time(),
-                    "healthy": True,
-                    "latency": 0,
-                    "success_count": 0
-                }
-            
+                self._health[server] = {"failures": 0, "last_check": time.time(), "healthy": True, "latency": 0, "success_count": 0}
             self._health[server]["failures"] += 1
             self._health[server]["last_check"] = time.time()
-            
             max_failures = CONFIG.get("upstream_max_failures", 3)
             if self._health[server]["failures"] >= max_failures:
                 self._health[server]["healthy"] = False
@@ -1045,12 +990,7 @@ async def query_doq(wire_query: bytes, server: str) -> Optional[bytes]:
             alpn_protocols=["doq"],
         )
         
-        protocol = await connect(
-            server,
-            853,
-            configuration=configuration,
-            create_protocol=QuicConnectionProtocol
-        )
+        protocol = await connect(server, 853, configuration=configuration, create_protocol=QuicConnectionProtocol)
         
         stream_id = protocol._quic.get_next_available_stream_id()
         
@@ -1058,29 +998,45 @@ async def query_doq(wire_query: bytes, server: str) -> Optional[bytes]:
         msg_len = struct.pack('!H', len(wire_query))
         protocol._quic.send_stream_data(stream_id, msg_len + wire_query, end_stream=True)
         
-        # Wait for response
+        # FIXED: Wait for FULL response - read header first, then exact body
         response_data = b''
         timeout = CONFIG.get("upstream_timeout", 2.0)
         start = time.time()
         
-        while time.time() - start < timeout:
+        # Wait for header
+        while len(response_data) < 2 and time.time() - start < timeout:
             event = protocol._quic.next_event()
             while event is not None:
                 if isinstance(event, StreamDataReceived) and event.stream_id == stream_id:
                     response_data += event.data
-                    if event.end_stream:
-                        if len(response_data) >= 2:
-                            expected_len = struct.unpack('!H', response_data[:2])[0]
-                            if len(response_data) >= expected_len + 2:
-                                protocol.close()
-                                return response_data[2:2 + expected_len]
                 event = protocol._quic.next_event()
-            
             await asyncio.sleep(0.01)
         
-        protocol.close()
-        return None
-    
+        if len(response_data) < 2:
+            protocol.close()
+            return None
+        
+        expected_len = struct.unpack('!H', response_data[:2])[0]
+        
+        # Wait for exact body
+        while len(response_data) - 2 < expected_len and time.time() - start < timeout:
+            event = protocol._quic.next_event()
+            while event is not None:
+                if isinstance(event, StreamDataReceived) and event.stream_id == stream_id:
+                    response_data += event.data
+                    if len(response_data) - 2 >= expected_len:
+                        break
+                event = protocol._quic.next_event()
+            await asyncio.sleep(0.01)
+        
+        if len(response_data) - 2 == expected_len:
+            protocol.close()
+            return response_data[2:2 + expected_len]
+        else:
+            protocol.close()
+            log.debug(f"[doq] Incomplete response from {server}: expected {expected_len}, got {len(response_data) - 2}")
+            return None
+        
     except Exception as e:
         log.debug(f"[doq] Error: {e}")
         return None
@@ -1184,6 +1140,7 @@ async def query_upstream_parallel(qname: str, qtype: int) -> Optional[Tuple[byte
     
     encoded_qname = apply_0x20_encoding(qname)
     
+    # FIXED: Randomize ID before to_wire for DoQ compatibility
     query = dns.message.make_query(encoded_qname, qtype, use_edns=True)
     if CONFIG.get("query_jitter"):
         query.id = random.randint(0, 65535)
@@ -1191,7 +1148,8 @@ async def query_upstream_parallel(qname: str, qtype: int) -> Optional[Tuple[byte
     wire_query = query.to_wire()
     wire_query = pad_query(wire_query)
     
-    if CONFIG.get("query_jitter"):
+    # FIXED: Skip jitter for DoQ to avoid timing issues
+    if CONFIG.get("query_jitter") and not (CONFIG.get("doq_enabled") and DOQ_AVAILABLE):
         jitter_range = CONFIG.get("query_jitter_ms", [10, 100])
         jitter = random.randint(jitter_range[0], jitter_range[1]) / 1000.0
         await asyncio.sleep(jitter)
@@ -1238,6 +1196,7 @@ async def query_upstream(qname: str, qtype: int) -> Optional[bytes]:
     
     encoded_qname = apply_0x20_encoding(qname)
     
+    # FIXED: Randomize ID before to_wire
     query = dns.message.make_query(encoded_qname, qtype, use_edns=True)
     if CONFIG.get("query_jitter"):
         query.id = random.randint(0, 65535)
@@ -1245,15 +1204,18 @@ async def query_upstream(qname: str, qtype: int) -> Optional[bytes]:
     wire_query = query.to_wire()
     wire_query = pad_query(wire_query)
     
-    if CONFIG.get("query_jitter"):
+    # FIXED: Skip jitter for DoQ
+    if CONFIG.get("query_jitter") and not (CONFIG.get("doq_enabled") and DOQ_AVAILABLE):
         jitter_range = CONFIG.get("query_jitter_ms", [10, 100])
         jitter = random.randint(jitter_range[0], jitter_range[1]) / 1000.0
         await asyncio.sleep(jitter)
     
+    upstream_queries = 0
+    total_latency = 0.0
     for server in servers:
         try:
             start = time.time()
-            
+            upstream_queries += 1
             if CONFIG.get("doq_enabled") and DOQ_AVAILABLE:
                 response_wire = await query_doq(wire_query, server)
             elif CONFIG.get("doh_enabled") and server in ["1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4"]:
@@ -1265,14 +1227,22 @@ async def query_upstream(qname: str, qtype: int) -> Optional[bytes]:
             
             if response_wire:
                 latency = time.time() - start
+                total_latency += latency
                 await UPSTREAM_HEALTH.record_success(server, latency)
+                if upstream_queries > 0:
+                    STATS["dns_upstream_latency"] = total_latency / upstream_queries
                 return response_wire
-        
+            else:
+                log.debug(f"[upstream] Fail: {server}")
+                await UPSTREAM_HEALTH.record_failure(server)
         except Exception as e:
-            log.debug(f"[upstream] {server} failed: {e}")
+            log.debug(f"[upstream] {server} error: {e}")
             await UPSTREAM_HEALTH.record_failure(server)
             continue
     
+    if upstream_queries > 0:
+        STATS["dns_upstream_latency"] = total_latency / upstream_queries
+    log.warning(f"[dns] All upstreams failed for {qname}. Healthy: {UPSTREAM_HEALTH.get_healthy()}")
     return None
 
 async def query_udp(wire_query: bytes, server: str) -> Optional[bytes]:
@@ -1898,13 +1868,13 @@ class DHCPServer:
             pos += 2 + len(domain)
         
         if CONFIG.get("dhcp_ntp_servers"):
-            ntp_servers = CONFIG["dhcp_ntp_servers"]
+            ntp_servers = CONFIG.get("dhcp_ntp_servers")
             ntp_bytes = b''.join(socket.inet_aton(ntp) for ntp in ntp_servers[:3])
             response[pos:pos + 2 + len(ntp_bytes)] = bytes([DHCP_OPT_NTP_SERVER, len(ntp_bytes)]) + ntp_bytes
             pos += 2 + len(ntp_bytes)
         
         if CONFIG.get("dhcp_wins_servers"):
-            wins_servers = CONFIG["dhcp_wins_servers"]
+            wins_servers = CONFIG.get("dhcp_wins_servers")
             wins_bytes = b''.join(socket.inet_aton(wins) for wins in wins_servers[:2])
             response[pos:pos + 2 + len(wins_bytes)] = bytes([DHCP_OPT_WINS_SERVER, len(wins_bytes)]) + wins_bytes
             pos += 2 + len(wins_bytes)
