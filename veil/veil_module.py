@@ -99,7 +99,7 @@ CONFIG = {
         "8.8.4.4",
         "9.9.9.9", # Quad9
     ],
-    "upstream_timeout": 2.0,
+    "upstream_timeout": 5.0,
     "upstream_parallel": True,
     "upstream_rotation": True,
     "upstream_max_failures": 3,
@@ -970,6 +970,7 @@ async def query_doq(wire_query: bytes, server: str) -> Optional[bytes]:
             local_addr=('0.0.0.0', local_port)
         )
         protocol.connect((server, 853))
+        protocol.request_key_update()
         transport.sendto(protocol.datagram_to_send())
         # --- Normalize and stub-mode the query ---
         try:
@@ -986,7 +987,7 @@ async def query_doq(wire_query: bytes, server: str) -> Optional[bytes]:
         response_data = b""
         expected_len = None
         start = time.time()
-        timeout = CONFIG.get("upstream_timeout", 2.0)
+        timeout = CONFIG.get("upstream_timeout", 5.0)
         while True:
             if time.time() - start > timeout:
                 log.debug(f"[doq] Timeout waiting for response from {server}")
@@ -1072,26 +1073,34 @@ def pad_wire(wire_data: bytes) -> bytes:
 # === FIXED: True QNAME minimization (iterative, no full fallback) ===
 async def query_upstream_minimized(qname: str, qtype: int, depth: int = 0) -> Optional[bytes]:
     if not CONFIG.get("qname_minimization"):
-        return await query_upstream(qname, qtype)
+        return await query_upstream(qname, qtype, minimize=False)
     if depth > 20:
         log.error("[dns] QNAME minimization exceeded safe depth")
         return None
     STATS["dns_qname_min"] += 1
     normalized_qname = qname.lower().strip('.')
     labels = normalized_qname.split('.')
-    current = '.'
-    for i in range(len(labels)):
-        current = labels[-1-i] + ('.' + current if current != '.' else '')
-        ns_response = await query_upstream(current, dns.rdatatype.NS)
-        if not ns_response:
-            break
-        response = dns.message.from_wire(ns_response)
-        if response.rcode() != dns.rcode.NOERROR:
-            break
-        if i == len(labels) - 1:
-            final_response = await query_upstream(normalized_qname, qtype)
-            return final_response
-    return await query_upstream(normalized_qname, qtype)
+    current = ''
+    for i in range(1, len(labels) + 1):
+        minimized_qname = '.'.join(labels[-i:])
+        response_wire = await query_upstream(minimized_qname, dns.rdatatype.NS, minimize=False)
+        if response_wire:
+            response = dns.message.from_wire(response_wire)
+            if response.rcode() == dns.rcode.NOERROR and response.authority and response.authority[0].rdtype == dns.rdatatype.NS:
+                # Delegation found, query next level
+                continue
+            elif response.rcode() == dns.rcode.NOERROR and not response.answer:
+                # No delegation, add more labels
+                continue
+            elif response.rcode() == dns.rcode.NXDOMAIN:
+                # No such name
+                return build_nxdomain_response()
+            else:
+                # Fallback to full query
+                return await query_upstream(normalized_qname, qtype, minimize=False)
+    # If we reach here, query the full name
+    return await query_upstream(normalized_qname, qtype, minimize=False)
+
 async def wrapped_query(server: str, query_func, query_id: int, transport: str) -> Tuple[str, Optional[bytes]]:
     start = time.time()
     try:
@@ -1149,8 +1158,8 @@ async def query_upstream_parallel(qname: str, qtype: int) -> Optional[Tuple[byte
         if result is not None:
             return result, server
     return None
-async def query_upstream(qname: str, qtype: int, depth: int = 0) -> Optional[bytes]:
-    if CONFIG.get("qname_minimization"):
+async def query_upstream(qname: str, qtype: int, depth: int = 0, minimize: bool = True) -> Optional[bytes]:
+    if minimize and CONFIG.get("qname_minimization"):
         return await query_upstream_minimized(qname, qtype, depth)
     if CONFIG.get("upstream_parallel") and len(CONFIG["upstream_servers"]) > 1:
         result = await query_upstream_parallel(qname, qtype)
