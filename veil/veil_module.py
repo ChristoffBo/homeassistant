@@ -1525,14 +1525,31 @@ async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
 class DNSProtocol(asyncio.DatagramProtocol):
     def connection_made(self, transport):
         self.transport = transport
-   
+
     def datagram_received(self, data, addr):
         asyncio.create_task(self.handle_query(data, addr))
-   
+
     async def handle_query(self, data, addr):
         try:
+            # Parse original query to extract its transaction ID
+            query = None
+            try:
+                query = dns.message.from_wire(data)
+            except Exception as e:
+                log.warning(f"[dns] Failed to parse incoming query from {addr[0]}: {e}")
+
             response = await process_dns_query(data, addr)
+
             if response:
+                # 🩵 Ensure response ID matches client query ID (fixes dig 'ID mismatch')
+                try:
+                    msg = dns.message.from_wire(response)
+                    if query is not None:
+                        msg.id = query.id
+                    response = msg.to_wire()
+                except Exception as e:
+                    log.warning(f"[dns] ID synchronization failed for {addr[0]}: {e}")
+
                 self.transport.sendto(response, addr)
             else:
                 log.warning(f"[dns] No response generated for query from {addr[0]}")
@@ -1540,7 +1557,11 @@ class DNSProtocol(asyncio.DatagramProtocol):
             log.error(f"[dns] Error handling query from {addr[0]}: {e}")
             import traceback
             log.error(traceback.format_exc())
+
+
 dns_transport = None
+
+
 async def start_dns():
     global dns_transport
     try:
@@ -1565,6 +1586,7 @@ async def start_dns():
     except Exception as e:
         log.error(f"[dns] ❌ UNEXPECTED ERROR starting DNS server: {e}")
         raise
+
 # ==================== DHCP SERVER ====================
 DHCP_DISCOVER = 1
 DHCP_OFFER = 2
