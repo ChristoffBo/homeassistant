@@ -41,5 +41,20 @@ fi
 
 ln -sf "${SHARE_BLOCKLIST}" "${CONFIG_BLOCKLIST}"
 
+# ===== ensure DNSSEC root trust anchor =====
+ROOT_KEY_PATH="${CONFIG_DIR}/dns.root.key"
+
+if [ ! -f "${ROOT_KEY_PATH}" ]; then
+  echo "Downloading DNSSEC root trust anchor..."
+  if curl -fsSL https://data.iana.org/root-anchors/root-anchors.xml -o "${ROOT_KEY_PATH}"; then
+    echo "✓ Root anchor downloaded to ${ROOT_KEY_PATH}"
+  else
+    echo "⚠️  Failed to download root anchor, creating placeholder (offline mode)"
+    echo '<TrustAnchors></TrustAnchors>' > "${ROOT_KEY_PATH}"
+  fi
+fi
+
+chmod 644 "${ROOT_KEY_PATH}"
+
 echo "🧩 Starting Veil (persistent config: ${SHARE_OPTIONS})"
 exec "$@"
