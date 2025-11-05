@@ -1547,6 +1547,7 @@ async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
         log.error(f"[dns] Unexpected error processing query from {addr[0]}: {e}")
         return None
 # ==================== DNS SERVER ====================
+# ==================== DNS SERVER ====================
 class DNSProtocol(asyncio.DatagramProtocol):
     def connection_made(self, transport):
         self.transport = transport
@@ -1566,18 +1567,29 @@ class DNSProtocol(asyncio.DatagramProtocol):
             response = await process_dns_query(data, addr)
 
             if response:
-                # 🩵 Ensure response ID matches client query ID (fixes dig 'ID mismatch')
                 try:
                     msg = dns.message.from_wire(response)
+
+                    # 🩵 Ensure the response ID matches the client's query ID
                     if query is not None:
                         msg.id = query.id
-                    response = msg.to_wire()
-                except Exception as e:
-                    log.warning(f"[dns] ID synchronization failed for {addr[0]}: {e}")
 
-                self.transport.sendto(response, addr)
+                    # --- Final downstream recursion fix ---
+                    msg.flags |= dns.flags.RA     # recursion available
+                    msg.flags |= dns.flags.RD     # recursion desired
+                    msg.flags &= ~dns.flags.AA    # not authoritative
+
+                    log.debug(f"[dns] Outgoing flags: {dns.flags.to_text(msg.flags)}")
+
+                    response = msg.to_wire()
+                    self.transport.sendto(response, addr)
+
+                except Exception as e:
+                    log.warning(f"[dns] ID or flag sync failed for {addr[0]}: {e}")
+
             else:
                 log.warning(f"[dns] No response generated for query from {addr[0]}")
+
         except Exception as e:
             log.error(f"[dns] Error handling query from {addr[0]}: {e}")
             import traceback
@@ -1611,6 +1623,7 @@ async def start_dns():
     except Exception as e:
         log.error(f"[dns] ❌ UNEXPECTED ERROR starting DNS server: {e}")
         raise
+
 
 # ==================== DHCP SERVER ====================
 DHCP_DISCOVER = 1
