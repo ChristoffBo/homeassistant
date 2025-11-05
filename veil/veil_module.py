@@ -937,7 +937,6 @@ async def validate_dnssec(response_wire: bytes, transport: str, query_id: int) -
         return False
 
 # ==================== DNS-over-QUIC (DoQ) ====================
-
 DOQ_AVAILABLE = False
 try:
     from aioquic.asyncio import connect
@@ -949,7 +948,13 @@ except ImportError:
 
 
 async def query_doq(wire_query: bytes, server: str) -> Optional[bytes]:
-    """Query via DNS-over-QUIC (RFC 9250, fully normalized and timeout-safe)"""
+    """
+    Query via DNS-over-QUIC (RFC 9250)
+    Behaviour matches AdGuard Home / Technitium:
+      • Sends stub-mode queries (RD=0) so public DoQ upstreams accept them.
+      • Re-adds RA/RD flags when replying to local clients.
+      • Fully length-checked, timeout-safe.
+    """
     if not DOQ_AVAILABLE or not CONFIG.get("doq_enabled"):
         return None
 
@@ -968,10 +973,11 @@ async def query_doq(wire_query: bytes, server: str) -> Optional[bytes]:
             protocol.close()
             return None
 
-        # --- RFC 9250: Message ID MUST be 0 ---
+        # --- RFC 9250: Message ID = 0  and stub-mode like AdGuard/Technitium ---
         try:
             query = dns.message.from_wire(wire_query)
             query.id = 0
+            query.flags &= ~dns.flags.RD      # 🔹 send as stub (no recursion-desired)
             wire_query = query.to_wire()
         except Exception as e:
             log.warning(f"[doq] Failed to normalize query ID: {e}")
@@ -1004,18 +1010,20 @@ async def query_doq(wire_query: bytes, server: str) -> Optional[bytes]:
 
             await asyncio.sleep(0.01)
 
-        # --- Parse and normalize response ID + recursion flags ---
+        # --- Parse and rewrite response flags for LAN clients ---
         if expected_len and len(response_data) - 2 >= expected_len:
             raw = response_data[2 : 2 + expected_len]
             response = dns.message.from_wire(raw)
 
-            response.id = 0                    # normalize for DoQ
-            response.flags |= dns.flags.RA     # recursion available
-            response.flags |= dns.flags.RD     # restore Recursion Desired bit
+            # Normalize + advertise recursion available
+            response.id = 0
+            response.flags |= dns.flags.RA     # recursion available (to client)
+            response.flags |= dns.flags.RD     # recursion desired (for client visibility)
             response.flags &= ~dns.flags.AA    # not authoritative
 
             response_wire = response.to_wire()
             protocol.close()
+            log.debug(f"[doq] Outgoing flags: {dns.flags.to_text(response.flags)}")
             return response_wire
 
         log.debug(
