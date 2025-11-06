@@ -826,6 +826,42 @@
             </div>
         </div>
 
+        <!-- Top 10 Grid -->
+        <div class="grid-layout">
+            <!-- Top 10 Queries -->
+            <div class="panel">
+                <div class="panel-header">
+                    <span class="panel-title">Top 10 Queries</span>
+                    <span class="panel-icon">🔍</span>
+                </div>
+                <div class="list-container" id="top-queries-list">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+
+            <!-- Top 10 Blocked -->
+            <div class="panel">
+                <div class="panel-header">
+                    <span class="panel-title">Top 10 Blocked</span>
+                    <span class="panel-icon">🚫</span>
+                </div>
+                <div class="list-container" id="top-blocked-list">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+
+            <!-- Top 10 Clients -->
+            <div class="panel">
+                <div class="panel-header">
+                    <span class="panel-title">Top 10 Clients</span>
+                    <span class="panel-icon">👥</span>
+                </div>
+                <div class="list-container" id="top-clients-list">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+        </div>
+
         <!-- Upstream Servers -->
         <div class="panel">
             <div class="panel-header">
@@ -1149,6 +1185,11 @@
                 // Update leases
                 updateLeases(stats.leases || []);
                 
+                // Update top 10 lists
+                updateTopQueries(stats.top_queries || []);
+                updateTopBlocked(stats.top_blocked || []);
+                updateTopClients(stats.top_clients || []);
+                
                 // Update status indicators
                 updateStatusIndicator('dns-status', stats.dns_running);
                 updateStatusIndicator('dhcp-status', stats.dhcp_running);
@@ -1197,10 +1238,14 @@
                 if (!data.healthy) healthClass = 'down';
                 else if (data.success_rate < 0.8) healthClass = 'degraded';
                 
+                const latency = data.avg_latency || data.latency_ms || 0;
+                const successRate = Math.round((data.success_rate || 1) * 100);
+                
                 item.innerHTML = `
                     <span class="list-item-label">${server}</span>
                     <div style="display: flex; align-items: center; gap: 10px;">
-                        <span class="list-item-value">${Math.round(data.success_rate * 100)}%</span>
+                        <span class="list-item-value">${latency.toFixed(1)}ms</span>
+                        <span class="list-item-value">${successRate}%</span>
                         <div class="health-indicator ${healthClass}"></div>
                     </div>
                 `;
@@ -1213,7 +1258,7 @@
             const container = document.getElementById('leases-list');
             container.innerHTML = '';
             
-            if (leases.length === 0) {
+            if (!leases || leases.length === 0) {
                 container.innerHTML = '<div class="list-item"><span class="list-item-label">No active leases</span></div>';
                 return;
             }
@@ -1221,14 +1266,94 @@
             leases.forEach(lease => {
                 const item = document.createElement('div');
                 item.className = 'list-item';
+                
+                const remaining = lease.remaining || 0;
+                const remainingStr = remaining > 86400 
+                    ? `${Math.floor(remaining / 86400)}d` 
+                    : remaining > 3600
+                    ? `${Math.floor(remaining / 3600)}h`
+                    : `${Math.floor(remaining / 60)}m`;
+                
                 item.innerHTML = `
                     <div>
                         <div class="list-item-label">${lease.hostname || 'Unknown'}</div>
-                        <div class="list-item-value" style="font-size: 10px;">${lease.mac}</div>
+                        <div class="list-item-value" style="font-size: 10px; opacity: 0.7;">${lease.mac}</div>
                     </div>
-                    <div class="list-item-value">${lease.ip}</div>
+                    <div style="text-align: right;">
+                        <div class="list-item-value">${lease.ip}</div>
+                        <div class="list-item-value" style="font-size: 10px; opacity: 0.7;">${remainingStr}</div>
+                    </div>
                 `;
                 container.appendChild(item);
+            });
+        }
+
+        // Update top queries
+        function updateTopQueries(topQueries) {
+            const container = document.getElementById('top-queries-list');
+            if (!container) return;
+            
+            container.innerHTML = '';
+            
+            if (!topQueries || topQueries.length === 0) {
+                container.innerHTML = '<div class="list-item"><span class="list-item-label">No queries yet</span></div>';
+                return;
+            }
+            
+            topQueries.forEach((item, index) => {
+                const listItem = document.createElement('div');
+                listItem.className = 'list-item';
+                listItem.innerHTML = `
+                    <span class="list-item-label">${index + 1}. ${item.domain}</span>
+                    <span class="list-item-value">${item.count.toLocaleString()}</span>
+                `;
+                container.appendChild(listItem);
+            });
+        }
+
+        // Update top blocked
+        function updateTopBlocked(topBlocked) {
+            const container = document.getElementById('top-blocked-list');
+            if (!container) return;
+            
+            container.innerHTML = '';
+            
+            if (!topBlocked || topBlocked.length === 0) {
+                container.innerHTML = '<div class="list-item"><span class="list-item-label">No blocked domains yet</span></div>';
+                return;
+            }
+            
+            topBlocked.forEach((item, index) => {
+                const listItem = document.createElement('div');
+                listItem.className = 'list-item';
+                listItem.innerHTML = `
+                    <span class="list-item-label">${index + 1}. ${item.domain}</span>
+                    <span class="list-item-value">${item.count.toLocaleString()}</span>
+                `;
+                container.appendChild(listItem);
+            });
+        }
+
+        // Update top clients
+        function updateTopClients(topClients) {
+            const container = document.getElementById('top-clients-list');
+            if (!container) return;
+            
+            container.innerHTML = '';
+            
+            if (!topClients || topClients.length === 0) {
+                container.innerHTML = '<div class="list-item"><span class="list-item-label">No clients yet</span></div>';
+                return;
+            }
+            
+            topClients.forEach((item, index) => {
+                const listItem = document.createElement('div');
+                listItem.className = 'list-item';
+                listItem.innerHTML = `
+                    <span class="list-item-label">${index + 1}. ${item.ip}</span>
+                    <span class="list-item-value">${item.count.toLocaleString()}</span>
+                `;
+                container.appendChild(listItem);
             });
         }
 
