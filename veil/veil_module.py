@@ -1777,7 +1777,7 @@ class DHCPServer:
                 "yiaddr": socket.inet_ntoa(data[16:20]),
                 "siaddr": socket.inet_ntoa(data[20:24]),
                 "giaddr": socket.inet_ntoa(data[24:28]),
-                "chaddr": ':'.join(f'{b:02x}' for b in data[28:34]),
+                "chaddr": ':'.join(f'{b:02x}' for b in data[28:28 + data[2]]),
                 "sname": data[44:108].split(b'\x00')[0].decode('utf-8', errors='ignore'),
                 "file": data[108:236].split(b'\x00')[0].decode('utf-8', errors='ignore'),
                 "options": {}
