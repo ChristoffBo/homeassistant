@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ðŸ§© Veil â€” Privacy-First DNS/DHCP Server
+🧩 Veil — Privacy-First DNS/DHCP Server
 COMPLETE implementation with ALL features
 Full Privacy Flow:
 - DoH/DoT/DoQ encrypted upstream
@@ -27,11 +27,11 @@ DHCP Features:
 - Vendor options
 - Client identifier handling
 NEW IN THIS VERSION:
-- âœ… DNSSEC validation with dnspython
-- âœ… DoQ (DNS-over-QUIC) with aioquic
-- âœ… Per-client DNS rate limiting
-- âœ… SafeSearch enforcement (Google/Bing/DuckDuckGo/YouTube)
-- âœ… Local blocklist persistence after updates
+- ✅ DNSSEC validation with dnspython
+- ✅ DoQ (DNS-over-QUIC) with aioquic
+- ✅ Per-client DNS rate limiting
+- ✅ SafeSearch enforcement (Google/Bing/DuckDuckGo/YouTube)
+- ✅ Local blocklist persistence after updates
 """
 import asyncio
 import logging
@@ -443,7 +443,7 @@ def apply_safesearch(qname: str) -> Optional[str]:
                 continue
            
             STATS["dns_safesearch"] += 1
-            log.info(f"[safesearch] {qname} â†’ {safe}")
+            log.info(f"[safesearch] {qname} → {safe}")
             return safe
    
     return None
@@ -962,7 +962,7 @@ async def validate_dnssec(response_wire: bytes, transport: str, query_id: int) -
         if transport == "doq":
             pass  # Don't strict-compare IDs for DoQ
         elif response.id != query_id:
-            log.warning(f"[dnssec] Non-matching DNS IDs ({response.id} vs {query_id}) â€“ tolerated")
+            log.warning(f"[dnssec] Non-matching DNS IDs ({response.id} vs {query_id}) – tolerated")
        
         # Check if response has DNSSEC records
         has_dnssec = any(
@@ -1006,9 +1006,9 @@ async def query_doq(wire_query: bytes, server: str) -> Optional[bytes]:
     """
     Query via DNS-over-QUIC (RFC 9250)
     Behaviour matches AdGuard Home / Technitium:
-      â€¢ Sends stub-mode queries (RD=0) so public DoQ upstreams accept them.
-      â€¢ Re-adds RA/RD flags when replying to local clients.
-      â€¢ Length-checked, timeout-safe.
+      • Sends stub-mode queries (RD=0) so public DoQ upstreams accept them.
+      • Re-adds RA/RD flags when replying to local clients.
+      • Length-checked, timeout-safe.
     """
     if not DOQ_AVAILABLE or not CONFIG.get("doq_enabled"):
         return None
@@ -1166,7 +1166,7 @@ async def wrapped_query(server: str, query_func, query_id: int, transport: str) 
             if transport == "doq":
                 pass
             elif response.id != query_id:
-                log.warning(f"[dns] Non-matching DNS IDs ({response.id} vs {query_id}) â€“ tolerated")
+                log.warning(f"[dns] Non-matching DNS IDs ({response.id} vs {query_id}) – tolerated")
         return server, result
     except Exception as e:
         await UPSTREAM_HEALTH.record_failure(server)
@@ -1259,7 +1259,7 @@ async def query_upstream(qname: str, qtype: int, depth: int = 0, minimize: bool 
                 if transport != "doq":
                     response = dns.message.from_wire(response_wire)
                     if response.id != query_id:
-                        log.warning(f"[dns] Non-matching DNS IDs ({response.id} vs {query_id}) â€“ tolerated")
+                        log.warning(f"[dns] Non-matching DNS IDs ({response.id} vs {query_id}) – tolerated")
                 if upstream_queries > 0:
                     STATS["dns_upstream_latency"] = total_latency / upstream_queries
                 return response_wire
@@ -2827,7 +2827,7 @@ def register_routes(app):
 
 async def init_veil():
     log.info("=" * 60)
-    log.info("[veil] ðŸ§© Privacy-First DNS/DHCP initializing")
+    log.info("[veil] 🧩 Privacy-First DNS/DHCP initializing")
     log.info("=" * 60)
     
     # Initialize global objects
@@ -2942,7 +2942,7 @@ async def init_veil():
             
             log.info(f"[veil] Privacy: {', '.join(features)}")
         except Exception as e:
-            log.error(f"[veil] âŒ FAILED TO START DNS SERVER: {e}")
+            log.error(f"[veil] ❌ FAILED TO START DNS SERVER: {e}")
             log.error("[veil] Veil will continue without DNS functionality")
     else:
         log.warning("[veil] DNS is DISABLED in config")
@@ -2952,14 +2952,14 @@ async def init_veil():
         log.info("[veil] Attempting to start DHCP server...")
         try:
             DHCP_SERVER.start()
-            log.info(f"[veil] âœ… DHCP: {CONFIG['dhcp_range_start']} - {CONFIG['dhcp_range_end']}")
+            log.info(f"[veil] ✅ DHCP: {CONFIG['dhcp_range_start']} - {CONFIG['dhcp_range_end']}")
         except Exception as e:
-            log.error(f"[veil] âŒ FAILED TO START DHCP SERVER: {e}")
+            log.error(f"[veil] ❌ FAILED TO START DHCP SERVER: {e}")
     else:
         log.warning("[veil] DHCP is DISABLED in config")
     
     log.info("=" * 60)
-    log.info("[veil] âœ… Initialization complete")
+    log.info("[veil] ✅ Initialization complete")
     log.info("=" * 60)
 
 async def cleanup_veil():
@@ -2982,7 +2982,7 @@ __version__ = "2.0.2"  # Updated version
 __description__ = "Privacy-First DNS/DHCP - Complete with DNSSEC, DoQ, Rate Limiting, SafeSearch"
 
 if __name__ == "__main__":
-    print("ðŸ§© Veil - Privacy-First DNS/DHCP Server")
+    print("🧩 Veil - Privacy-First DNS/DHCP Server")
 
 async def start_background_services(app):
     """Start background services on app startup"""
@@ -3054,7 +3054,7 @@ if __name__ == "__main__":
     if not os.path.exists(ui_path):
         log.warning(f"[veil] UI path {ui_path} not found, serving placeholder")
         async def placeholder(_):
-            return web.Response(text="ðŸ§© Veil is running, but no UI files found.")
+            return web.Response(text="🧩 Veil is running, but no UI files found.")
         app.router.add_get("/", placeholder)
     else:
         app.router.add_static("/", ui_path, show_index=True)
@@ -3064,8 +3064,8 @@ if __name__ == "__main__":
     app.on_startup.append(start_background_services)
     app.on_cleanup.append(cleanup_background_services)
 
-    log.info(f"ðŸŒ Web UI will be available at http://{bind_addr}:{ui_port}")
-    log.info(f"ðŸ§© Veil v{__version__} - Privacy-First DNS/DHCP")
+    log.info(f"🌐 Web UI will be available at http://{bind_addr}:{ui_port}")
+    log.info(f"🧩 Veil v{__version__} - Privacy-First DNS/DHCP")
     
     # Run with proper error handling
     try:
