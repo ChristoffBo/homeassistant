@@ -227,8 +227,9 @@ STATS = {
     "start_time": time.time()
 }
 # Counters for top 10
-CLIENT_COUNTER = Counter()
-BLOCKED_COUNTER = Counter()
+TOP_QUERIES = Counter()  # domain -> query count
+TOP_BLOCKED = Counter()  # domain -> block count
+TOP_CLIENTS = Counter()  # ip -> query count
 # ==================== DNS CACHE ====================
 @dataclass
 class CacheEntry:
@@ -865,23 +866,31 @@ class UpstreamHealth:
     def __init__(self):
         self._health: Dict[str, dict] = {}
         self._lock = asyncio.Lock()
+        self._response_times: Dict[str, List[float]] = defaultdict(list)
    
     async def record_success(self, server: str, latency: float):
         async with self._lock:
             if server not in self._health:
-                self._health[server] = {"failures": 0, "last_check": time.time(), "healthy": True, "latency": latency, "success_count": 0}
+                self._health[server] = {"failures": 0, "last_check": time.time(), "healthy": True, "latency": latency, "success_count": 0, "total_count": 0}
             self._health[server]["failures"] = 0
             self._health[server]["last_check"] = time.time()
             self._health[server]["healthy"] = True
             self._health[server]["latency"] = latency
             self._health[server]["success_count"] += 1
+            self._health[server]["total_count"] += 1
+            
+            # Track response times (last 100)
+            self._response_times[server].append(latency)
+            if len(self._response_times[server]) > 100:
+                self._response_times[server].pop(0)
    
     async def record_failure(self, server: str):
         async with self._lock:
             if server not in self._health:
-                self._health[server] = {"failures": 0, "last_check": time.time(), "healthy": True, "latency": 0, "success_count": 0}
+                self._health[server] = {"failures": 0, "last_check": time.time(), "healthy": True, "latency": 0, "success_count": 0, "total_count": 0}
             self._health[server]["failures"] += 1
             self._health[server]["last_check"] = time.time()
+            self._health[server]["total_count"] += 1
             max_failures = CONFIG.get("upstream_max_failures", 3)
             if self._health[server]["failures"] >= max_failures:
                 self._health[server]["healthy"] = False
@@ -891,7 +900,27 @@ class UpstreamHealth:
         return [s for s, h in self._health.items() if h.get("healthy", True)]
    
     def get_status(self) -> dict:
-        return self._health.copy()
+        """Return detailed health status with response times"""
+        status = {}
+        for server, health in self._health.items():
+            total = health.get("total_count", 0)
+            success = health.get("success_count", 0)
+            success_rate = (success / total) if total > 0 else 1.0
+            
+            # Calculate average response time
+            response_times = self._response_times.get(server, [])
+            avg_latency = sum(response_times) / len(response_times) if response_times else 0
+            
+            status[server] = {
+                "healthy": health.get("healthy", True),
+                "success_rate": round(success_rate, 3),
+                "total": total,
+                "success": success,
+                "avg_latency": round(avg_latency * 1000, 1),  # Convert to ms
+                "latency_ms": round(health.get("latency", 0) * 1000, 1),
+            }
+        
+        return status
 UPSTREAM_HEALTH = UpstreamHealth()
 # ==================== DNSSEC VALIDATION ====================
 async def validate_dnssec(response_wire: bytes, transport: str, query_id: int) -> bool:
@@ -1374,6 +1403,10 @@ async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
             log.info(f"[dns] Query from {addr[0]}: {qname} ({dns.rdatatype.to_text(qtype)})")
        
         STATS["dns_queries"] += 1
+        
+        # Track for top 10
+        TOP_QUERIES[qname] += 1
+        TOP_CLIENTS[addr[0]] += 1
        
         # Record query in history for prewarming
         await QUERY_HISTORY.record(qname)
@@ -1384,11 +1417,13 @@ async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
         else:
             if await BLACKLIST.contains(qname):
                 STATS["dns_blocked"] += 1
+                TOP_BLOCKED[qname] += 1
                 log.info(f"[dns] Blocked (blacklist): {qname}")
                 return build_blocked_response(query)
            
             if CONFIG.get("blocking_enabled") and await BLOCKLIST.contains(qname):
                 STATS["dns_blocked"] += 1
+                TOP_BLOCKED[qname] += 1
                 log.info(f"[dns] Blocked (blocklist): {qname}")
                 return build_blocked_response(query)
        
@@ -2159,7 +2194,7 @@ async def api_stats(req):
         "dhcp_offers": STATS.get("dhcp_offers", 0),
         "dhcp_acks": STATS.get("dhcp_acks", 0),
         "active_leases": len(DHCP_SERVER.leases) if DHCP_SERVER else 0,
-        "pool_total": len(DHCP_SERVER.ip_pool) if DHCP_SERVER else 0,
+        "pool_total": len(DHCP_SERVER.ip_pool) + len(DHCP_SERVER.leases) if DHCP_SERVER else 0,
         
         # System stats
         "uptime_seconds": uptime,
@@ -2176,6 +2211,11 @@ async def api_stats(req):
         # Health & misc
         "upstream_health": upstream_health,
         "leases": [lease.to_dict() for lease in DHCP_SERVER.leases.values()] if DHCP_SERVER else [],
+        
+        # Top 10 lists
+        "top_queries": [{"domain": d, "count": c} for d, c in TOP_QUERIES.most_common(10)],
+        "top_blocked": [{"domain": d, "count": c} for d, c in TOP_BLOCKED.most_common(10)],
+        "top_clients": [{"ip": i, "count": c} for i, c in TOP_CLIENTS.most_common(10)],
         
         # Raw STATS for debugging
         **STATS
