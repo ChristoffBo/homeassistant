@@ -1923,17 +1923,36 @@ class DHCPServer:
             response[pos:pos + 2 + len(wins_bytes)] = bytes([DHCP_OPT_WINS_SERVER, len(wins_bytes)]) + wins_bytes
             pos += 2 + len(wins_bytes)
         
+        # === FIXED: Vendor options with proper validation ===
         vendor_opts = CONFIG.get("dhcp_vendor_options", {})
         if isinstance(vendor_opts, dict):
             vendor_data = b''
-            for opt_code, opt_value in vendor_opts.items():
+            for opt_code_str, opt_value in vendor_opts.items():
+                try:
+                    opt_code = int(opt_code_str)
+                    if not (0 <= opt_code <= 255):
+                        log.warning(f"[dhcp] Vendor option code {opt_code} out of range (0-255), skipping")
+                        continue
+                except (ValueError, TypeError):
+                    log.warning(f"[dhcp] Invalid vendor option code: {opt_code_str}, must be integer, skipping")
+                    continue
+
                 if isinstance(opt_value, str):
-                    opt_value = opt_value.encode()
-                vendor_data += bytes([int(opt_code), len(opt_value)]) + opt_value
-            
+                    opt_value = opt_value.encode('utf-8')
+                elif not isinstance(opt_value, (bytes, bytearray)):
+                    log.warning(f"[dhcp] Vendor option value for {opt_code} must be string or bytes, got {type(opt_value)}, skipping")
+                    continue
+
+                if len(opt_value) > 255:
+                    log.warning(f"[dhcp] Vendor option {opt_code} value too long ({len(opt_value)} bytes), max 255, skipping")
+                    continue
+
+                vendor_data += bytes([opt_code, len(opt_value)]) + opt_value
+
             if vendor_data:
                 response[pos:pos + 2 + len(vendor_data)] = bytes([DHCP_OPT_VENDOR_SPECIFIC, len(vendor_data)]) + vendor_data
                 pos += 2 + len(vendor_data)
+        # === END FIX ===
         
         if CONFIG.get("dhcp_tftp_server"):
             tftp = CONFIG["dhcp_tftp_server"].encode()
@@ -1948,6 +1967,7 @@ class DHCPServer:
         response[pos] = DHCP_OPT_END
         
         return bytes(response[:pos + 1])
+
     
     async def handle_discover(self, packet: dict, addr: Tuple[str, int]):
         mac = packet["chaddr"]
