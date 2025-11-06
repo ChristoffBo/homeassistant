@@ -1841,7 +1841,7 @@ class DHCPServer:
             log.error(f"[dhcp] Parse error: {e}")
             return None
    
-def _build_dhcp_packet(self, packet: dict, msg_type: int, offered_ip: str) -> bytes:
+    def _build_dhcp_packet(self, packet: dict, msg_type: int, offered_ip: str) -> bytes:
         response = bytearray(548)
        
         response[0] = 2
@@ -1923,36 +1923,17 @@ def _build_dhcp_packet(self, packet: dict, msg_type: int, offered_ip: str) -> by
             response[pos:pos + 2 + len(wins_bytes)] = bytes([DHCP_OPT_WINS_SERVER, len(wins_bytes)]) + wins_bytes
             pos += 2 + len(wins_bytes)
         
-        # === FIXED: Vendor options with proper validation ===
         vendor_opts = CONFIG.get("dhcp_vendor_options", {})
         if isinstance(vendor_opts, dict):
             vendor_data = b''
-            for opt_code_str, opt_value in vendor_opts.items():
-                try:
-                    opt_code = int(opt_code_str)
-                    if not (0 <= opt_code <= 255):
-                        log.warning(f"[dhcp] Vendor option code {opt_code} out of range (0-255), skipping")
-                        continue
-                except (ValueError, TypeError):
-                    log.warning(f"[dhcp] Invalid vendor option code: {opt_code_str}, must be integer, skipping")
-                    continue
-
+            for opt_code, opt_value in vendor_opts.items():
                 if isinstance(opt_value, str):
-                    opt_value = opt_value.encode('utf-8')
-                elif not isinstance(opt_value, (bytes, bytearray)):
-                    log.warning(f"[dhcp] Vendor option value for {opt_code} must be string or bytes, got {type(opt_value)}, skipping")
-                    continue
-
-                if len(opt_value) > 255:
-                    log.warning(f"[dhcp] Vendor option {opt_code} value too long ({len(opt_value)} bytes), max 255, skipping")
-                    continue
-
-                vendor_data += bytes([opt_code, len(opt_value)]) + opt_value
-
+                    opt_value = opt_value.encode()
+                vendor_data += bytes([int(opt_code), len(opt_value)]) + opt_value
+            
             if vendor_data:
                 response[pos:pos + 2 + len(vendor_data)] = bytes([DHCP_OPT_VENDOR_SPECIFIC, len(vendor_data)]) + vendor_data
                 pos += 2 + len(vendor_data)
-        # === END FIX ===
         
         if CONFIG.get("dhcp_tftp_server"):
             tftp = CONFIG["dhcp_tftp_server"].encode()
@@ -1967,7 +1948,156 @@ def _build_dhcp_packet(self, packet: dict, msg_type: int, offered_ip: str) -> by
         response[pos] = DHCP_OPT_END
         
         return bytes(response[:pos + 1])
-
+    
+    async def handle_discover(self, packet: dict, addr: Tuple[str, int]):
+        mac = packet["chaddr"]
+        offered_ip = await self._get_available_ip(mac)
+        
+        if not offered_ip:
+            log.warning(f"[dhcp] No available IP for {mac}")
+            return
+        
+        log.info(f"[dhcp] DISCOVER from {mac} -> offering {offered_ip}")
+        STATS["dhcp_discovers"] += 1
+        STATS["dhcp_offers"] += 1
+        
+        response = self._build_dhcp_packet(packet, DHCP_OFFER, offered_ip)
+        
+        if packet["flags"] & 0x8000:
+            self.sock.sendto(response, ('<broadcast>', 68))
+        else:
+            try:
+                self.sock.sendto(response, (offered_ip, 68))
+            except:
+                self.sock.sendto(response, ('<broadcast>', 68))
+    
+    async def handle_request(self, packet: dict, addr: Tuple[str, int]):
+        mac = packet["chaddr"]
+        requested_ip = None
+        
+        if DHCP_OPT_REQUESTED_IP in packet["options"]:
+            requested_ip = socket.inet_ntoa(packet["options"][DHCP_OPT_REQUESTED_IP])
+        elif packet["ciaddr"] != "0.0.0.0":
+            requested_ip = packet["ciaddr"]
+        
+        if not requested_ip:
+            log.warning(f"[dhcp] REQUEST from {mac} without requested IP")
+            return
+        
+        STATS["dhcp_requests"] += 1
+        
+        available_ip = await self._get_available_ip(mac)
+        
+        if requested_ip not in self.ip_pool and requested_ip != available_ip:
+            log.warning(f"[dhcp] NAK: {mac} requested invalid IP {requested_ip}")
+            response = self._build_dhcp_packet(packet, DHCP_NAK, "0.0.0.0")
+            self.sock.sendto(response, ('<broadcast>', 68))
+            STATS["dhcp_naks"] += 1
+            return
+        
+        # Use hostname from request, or fall back to static lease
+        hostname = ""
+        if DHCP_OPT_HOSTNAME in packet["options"]:
+            hostname = packet["options"][DHCP_OPT_HOSTNAME].decode('utf-8', errors='ignore').strip()
+        else:
+            mac = packet["chaddr"]
+            if mac in self.leases and self.leases[mac].static:
+                hostname = self.leases[mac].hostname
+        
+        client_id = ""
+        if DHCP_OPT_CLIENT_ID in packet["options"]:
+            client_id = packet["options"][DHCP_OPT_CLIENT_ID].hex()
+        
+        async with self.lock:
+            self.leases[mac] = DHCPLease(
+                mac=mac,
+                ip=requested_ip,
+                hostname=hostname,
+                client_id=client_id,
+                lease_start=time.time(),
+                lease_end=time.time() + CONFIG["dhcp_lease_time"],
+                static=mac in CONFIG.get("dhcp_static_leases", {})
+            )
+            self._save_leases()
+        
+        log.info(f"[dhcp] ACK {mac} -> {requested_ip} ({hostname or 'no hostname'})")
+        STATS["dhcp_acks"] += 1
+        
+        response = self._build_dhcp_packet(packet, DHCP_ACK, requested_ip)
+        
+        if packet["flags"] & 0x8000:
+            self.sock.sendto(response, ('<broadcast>', 68))
+        else:
+            try:
+                self.sock.sendto(response, (requested_ip, 68))
+            except:
+                self.sock.sendto(response, ('<broadcast>', 68))
+    
+    async def handle_decline(self, packet: dict, addr: Tuple[str, int]):
+        mac = packet["chaddr"]
+        declined_ip = None
+        
+        if DHCP_OPT_REQUESTED_IP in packet["options"]:
+            declined_ip = socket.inet_ntoa(packet["options"][DHCP_OPT_REQUESTED_IP])
+        
+        log.warning(f"[dhcp] DECLINE from {mac} for {declined_ip} - IP conflict detected")
+        STATS["dhcp_declines"] += 1
+        STATS["dhcp_conflicts"] += 1
+        
+        async with self.lock:
+            if mac in self.leases and not self.leases[mac].static:
+                del self.leases[mac]
+                self._save_leases()
+    
+    async def handle_release(self, packet: dict, addr: Tuple[str, int]):
+        mac = packet["chaddr"]
+        
+        async with self.lock:
+            if mac in self.leases and not self.leases[mac].static:
+                released_ip = self.leases[mac].ip
+                del self.leases[mac]
+                self._save_leases()
+                log.info(f"[dhcp] RELEASE {mac} -> {released_ip}")
+                STATS["dhcp_releases"] += 1
+    
+    async def handle_inform(self, packet: dict, addr: Tuple[str, int]):
+        mac = packet["chaddr"]
+        client_ip = packet["ciaddr"]
+        
+        log.info(f"[dhcp] INFORM from {mac} ({client_ip})")
+        STATS["dhcp_informs"] += 1
+        
+        response = self._build_dhcp_packet(packet, DHCP_ACK, client_ip)
+        self.sock.sendto(response, (client_ip, 68))
+    
+    async def handle_packet(self, data: bytes, addr: Tuple[str, int]):
+        try:
+            packet = self._parse_dhcp_packet(data)
+            if not packet:
+                return
+            
+            if CONFIG.get("dhcp_relay_support") and packet["giaddr"] != "0.0.0.0":
+                log.debug(f"[dhcp] Relay agent: {packet['giaddr']}")
+                # Add relay handling if needed, e.g., forward to another server
+                # For now, process as normal
+            if DHCP_OPT_MESSAGE_TYPE not in packet["options"]:
+                return
+            
+            msg_type = packet["options"][DHCP_OPT_MESSAGE_TYPE][0]
+            
+            if msg_type == DHCP_DISCOVER:
+                await self.handle_discover(packet, addr)
+            elif msg_type == DHCP_REQUEST:
+                await self.handle_request(packet, addr)
+            elif msg_type == DHCP_DECLINE:
+                await self.handle_decline(packet, addr)
+            elif msg_type == DHCP_RELEASE:
+                await self.handle_release(packet, addr)
+            elif msg_type == DHCP_INFORM:
+                await self.handle_inform(packet, addr)
+        
+        except Exception as e:
+            log.error(f"[dhcp] Error handling packet: {e}")
     
     async def cleanup_expired_leases(self):
         while self.running:
