@@ -1353,7 +1353,6 @@ class BackupManager:
         - Updates last_run BEFORE starting job (prevents duplicate triggers)
         - Better logging with emoji indicators
         - Handles first-run jobs properly
-        - Checks if job is enabled before running
         """
         logger.info("🔔 Cron scheduler started - checking every 30 seconds")
         
@@ -1365,11 +1364,6 @@ class BackupManager:
                 for job_id, job in list(self.jobs.items()):
                     cron_expr = job.get('cron')
                     if not cron_expr:
-                        continue
-                    
-                    # Skip disabled jobs
-                    if not job.get('enabled', True):
-                        logger.debug(f"Skipping disabled job {job.get('name')}")
                         continue
                     
                     try:
