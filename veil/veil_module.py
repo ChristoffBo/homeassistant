@@ -1760,76 +1760,57 @@ class DHCPServer:
        
         return None
    
-def _parse_dhcp_packet(self, data: bytes) -> Optional[dict]:
-    """
-    Parse a raw DHCP packet into a structured dict.
-    This version includes safe MAC extraction and guards against malformed packets.
-    """
-
-    try:
-        # --- Validate minimum packet length ---
+    def _parse_dhcp_packet(self, data: bytes) -> Optional[dict]:
         if len(data) < 240:
-            log.warning(f"[dhcp] Received truncated packet ({len(data)} bytes)")
             return None
-
-        # --- Extract hardware address length safely ---
-        hlen = data[2]
-        if hlen > 16:  # sanity limit
-            log.warning(f"[dhcp] Invalid hlen={hlen}, forcing 6")
-            hlen = 6
-
-        chaddr = ':'.join(f'{b:02x}' for b in data[28:28 + hlen])
-
-        # --- Build base packet structure ---
-        packet = {
-            "op": data[0],
-            "htype": data[1],
-            "hlen": hlen,
-            "hops": data[3],
-            "xid": struct.unpack("!I", data[4:8])[0],
-            "secs": struct.unpack("!H", data[8:10])[0],
-            "flags": struct.unpack("!H", data[10:12])[0],
-            "ciaddr": str(ipaddress.IPv4Address(data[12:16])),
-            "yiaddr": str(ipaddress.IPv4Address(data[16:20])),
-            "siaddr": str(ipaddress.IPv4Address(data[20:24])),
-            "giaddr": str(ipaddress.IPv4Address(data[24:28])),
-            "chaddr": chaddr,
-            "options": {}
-        }
-
-        # --- Defensive guard: ensure MAC parsed correctly ---
-        if isinstance(packet["chaddr"], dict):
-            log.error(f"[dhcp] Invalid chaddr type: {type(packet['chaddr'])}, skipping packet")
-            return None
-
-        # --- Parse DHCP magic cookie and options ---
-        magic_cookie = data[236:240]
-        if magic_cookie != b'\x63\x82\x53\x63':
-            log.warning("[dhcp] Invalid magic cookie — not a DHCP packet?")
+       
+        try:
+            packet = {
+                "op": data[0],
+                "htype": data[1],
+                "hlen": data[2],
+                "hops": data[3],
+                "xid": struct.unpack("!I", data[4:8])[0],
+                "secs": struct.unpack("!H", data[8:10])[0],
+                "flags": struct.unpack("!H", data[10:12])[0],
+                "ciaddr": socket.inet_ntoa(data[12:16]),
+                "yiaddr": socket.inet_ntoa(data[16:20]),
+                "siaddr": socket.inet_ntoa(data[20:24]),
+                "giaddr": socket.inet_ntoa(data[24:28]),
+                "chaddr": ':'.join(f'{b:02x}' for b in data[28:34]),
+                "sname": data[44:108].split(b'\x00')[0].decode('utf-8', errors='ignore'),
+                "file": data[108:236].split(b'\x00')[0].decode('utf-8', errors='ignore'),
+                "options": {}
+            }
+           
+            if data[236:240] != b'\x63\x82\x53\x63':
+                return None
+           
+            i = 240
+            while i < len(data):
+                opt = data[i]
+                if opt == DHCP_OPT_END:
+                    break
+                if opt == DHCP_OPT_PAD:
+                    i += 1
+                    continue
+               
+                if i + 1 >= len(data):
+                    break
+               
+                opt_len = data[i + 1]
+                if i + 2 + opt_len > len(data):
+                    break
+               
+                opt_data = data[i + 2:i + 2 + opt_len]
+                packet["options"][opt] = opt_data
+                i += 2 + opt_len
+           
             return packet
-
-        options_data = data[240:]
-        i = 0
-        while i < len(options_data):
-            opt = options_data[i]
-            if opt == 255:  # End Option
-                break
-            elif opt == 0:  # Padding
-                i += 1
-                continue
-
-            if i + 1 >= len(options_data):
-                break
-            length = options_data[i + 1]
-            value = options_data[i + 2:i + 2 + length]
-            packet["options"][opt] = value
-            i += 2 + length
-
-        return packet
-
-    except Exception as e:
-        log.error(f"[dhcp] Failed to parse DHCP packet: {e}")
-        return None
+       
+        except Exception as e:
+            log.error(f"[dhcp] Parse error: {e}")
+            return None
    
     def _build_dhcp_packet(self, packet: dict, msg_type: int, offered_ip: str) -> bytes:
         response = bytearray(548)
