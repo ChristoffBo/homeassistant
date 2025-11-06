@@ -585,6 +585,27 @@
         .badge.static {
             background: var(--accent-green);
         }
+        .action-btn {
+            background: var(--accent-cyan);
+            color: var(--bg-dark);
+            border: none;
+            padding: 4px 8px;
+            margin: 0 2px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+        .action-btn:hover {
+            transform: scale(1.1);
+            box-shadow: 0 0 10px var(--accent-cyan);
+        }
+        .action-btn.delete {
+            background: var(--accent-red);
+        }
+        .action-btn.delete:hover {
+            box-shadow: 0 0 10px var(--accent-red);
+        }
         .input-group {
             display: flex;
             gap: 10px;
@@ -778,6 +799,15 @@
                         <div class="stat-label">Upstream</div>
                         <div class="stat-value" id="upstream-queries">0</div>
                     </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Avg Query Time</div>
+                        <div class="stat-value" id="avg-query-time">0ms</div>
+                    </div>
+                </div>
+                <div style="text-align: center; margin-top: 15px;">
+                    <button onclick="purgeStats()" style="background: var(--accent-red); color: white; border: none; padding: 8px 20px; border-radius: 4px; cursor: pointer; font-family: 'Share Tech Mono', monospace;">
+                        🗑️ Reset Statistics
+                    </button>
                 </div>
             </div>
 
@@ -1101,6 +1131,29 @@
                 </div>
 
                 <div class="section">
+                    <div class="section-title">WINS Servers for DHCP Clients</div>
+                    <div class="setting-row">
+                        <label>WINS Servers (one per line)</label>
+                        <textarea id="dhcp-wins-servers" rows="2" placeholder="192.168.1.10&#10;192.168.1.11"></textarea>
+                        <p class="help-text">Windows Name Service servers for DHCP clients</p>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <div class="section-title">PXE Boot Settings</div>
+                    <div class="setting-row">
+                        <label>TFTP Server</label>
+                        <input type="text" id="dhcp-tftp-server" placeholder="192.168.1.5">
+                        <p class="help-text">TFTP server for network booting</p>
+                    </div>
+                    <div class="setting-row">
+                        <label>Boot Filename</label>
+                        <input type="text" id="dhcp-bootfile" placeholder="pxelinux.0">
+                        <p class="help-text">Filename to boot from TFTP server</p>
+                    </div>
+                </div>
+
+                <div class="section">
                     <div class="section-title">DHCP Options</div>
                     <div class="toggle-container">
                         <span>Ping Check Before Offer</span>
@@ -1117,6 +1170,12 @@
                         </div>
                     </div>
                     <p class="help-text">Allow DHCP requests from relay agents</p>
+                </div>
+
+                <div class="section">
+                    <div class="section-title">Static DHCP Leases</div>
+                    <div id="static-leases-container"></div>
+                    <button onclick="showAddStaticLeaseDialog()" style="margin-top: 10px;"><span>➕ Add Static Lease</span></button>
                 </div>
 
                 <div class="section">
@@ -1387,8 +1446,12 @@
         document.addEventListener('DOMContentLoaded', () => {
             loadConfig();
             updateStats();
+            loadDHCPLeases();
+            loadStaticLeases();
             setInterval(updateStats, 2000);
             setInterval(updateChart, 1000);
+            setInterval(loadDHCPLeases, 10000); // Refresh leases every 10s
+            setInterval(loadStaticLeases, 10000);
         });
 
         // Load configuration
@@ -1437,6 +1500,10 @@
                 document.getElementById('ecs-stripped').textContent = (stats.ecs_stripped || 0).toLocaleString();
                 document.getElementById('case-randomized').textContent = (stats.case_randomized || 0).toLocaleString();
                 document.getElementById('dnssec-valid').textContent = (stats.dnssec_valid || 0).toLocaleString();
+               
+                // Update average query time
+                const avgTime = stats.avg_query_latency_ms || stats.average_query_time || 0;
+                document.getElementById('avg-query-time').textContent = avgTime.toFixed(2) + 'ms';
                
                 document.getElementById('active-leases').textContent = stats.active_leases || 0;
                 document.getElementById('dhcp-offers').textContent = stats.dhcp_offers || 0;
@@ -1671,6 +1738,9 @@
                 document.getElementById('dhcp-lease-time').value = config.dhcp_lease_time || 86400;
                 document.getElementById('dhcp-dns-servers').value = (config.dhcp_dns_servers || ['127.0.0.1']).join('\n');
                 document.getElementById('dhcp-ntp-servers').value = (config.dhcp_ntp_servers || []).join('\n');
+                document.getElementById('dhcp-wins-servers').value = (config.dhcp_wins_servers || []).join('\n');
+                document.getElementById('dhcp-tftp-server').value = config.dhcp_tftp_server || '';
+                document.getElementById('dhcp-bootfile').value = config.dhcp_bootfile || '';
                 document.getElementById('dhcp-interface').value = config.dhcp_interface || 'eth0';
                 document.getElementById('dhcp-port').value = config.dhcp_port || 67;
             }
@@ -1780,6 +1850,10 @@
                     .split('\n').map(s => s.trim()).filter(s => s);
                 updatedConfig.dhcp_ntp_servers = document.getElementById('dhcp-ntp-servers').value
                     .split('\n').map(s => s.trim()).filter(s => s);
+                updatedConfig.dhcp_wins_servers = document.getElementById('dhcp-wins-servers').value
+                    .split('\n').map(s => s.trim()).filter(s => s);
+                updatedConfig.dhcp_tftp_server = document.getElementById('dhcp-tftp-server').value || null;
+                updatedConfig.dhcp_bootfile = document.getElementById('dhcp-bootfile').value || null;
                 updatedConfig.dhcp_ping_check = getToggle('toggle-dhcp-ping');
                 updatedConfig.dhcp_relay_support = getToggle('toggle-dhcp-relay');
             } else if (section === 'privacy') {
@@ -1844,6 +1918,24 @@
                 }
             } catch (error) {
                 showAlert('Error flushing cache: ' + error.message, 'error');
+            }
+        }
+
+        // Purge statistics
+        async function purgeStats() {
+            if (!confirm('Are you sure you want to reset all statistics? This cannot be undone.')) {
+                return;
+            }
+            try {
+                const response = await fetch('/api/veil/stats/purge', { method: 'POST' });
+                if (response.ok) {
+                    showAlert('Statistics reset successfully', 'success');
+                    await updateStats(); // Refresh display
+                } else {
+                    showAlert('Failed to reset statistics', 'error');
+                }
+            } catch (error) {
+                showAlert('Error resetting statistics: ' + error.message, 'error');
             }
         }
 
@@ -1930,6 +2022,134 @@
                 container.innerHTML = html;
             } catch (error) {
                 console.error('Failed to load DHCP leases:', error);
+            }
+        }
+
+        // Load static DHCP leases
+        async function loadStaticLeases() {
+            try {
+                const response = await fetch('/api/veil/dhcp/static/list');
+                const data = await response.json();
+                const leases = data.static_leases || [];
+
+                const container = document.getElementById('static-leases-container');
+                if (!container) return;
+
+                if (leases.length === 0) {
+                    container.innerHTML = '<p class="empty-state">No static leases configured</p>';
+                    return;
+                }
+
+                let html = '<table class="lease-table"><thead><tr>';
+                html += '<th>MAC Address</th><th>IP Address</th><th>Hostname</th><th>Actions</th>';
+                html += '</tr></thead><tbody>';
+
+                leases.forEach(lease => {
+                    html += '<tr>';
+                    html += `<td>${lease.mac}</td>`;
+                    html += `<td>${lease.ip}</td>`;
+                    html += `<td>${lease.hostname || '-'}</td>`;
+                    html += `<td>
+                        <button onclick="editStaticLease('${lease.mac}', '${lease.ip}', '${lease.hostname || ''}')" class="action-btn">✏️</button>
+                        <button onclick="deleteStaticLease('${lease.mac}')" class="action-btn delete">🗑️</button>
+                    </td>`;
+                    html += '</tr>';
+                });
+
+                html += '</tbody></table>';
+                container.innerHTML = html;
+            } catch (error) {
+                console.error('Failed to load static leases:', error);
+            }
+        }
+
+        // Show add static lease dialog
+        function showAddStaticLeaseDialog() {
+            const mac = prompt('Enter MAC address (e.g., 00:11:22:33:44:55):');
+            if (!mac) return;
+            
+            const ip = prompt('Enter IP address:');
+            if (!ip) return;
+            
+            const hostname = prompt('Enter hostname (optional):') || '';
+            
+            addStaticLease(mac, ip, hostname);
+        }
+
+        // Add static lease
+        async function addStaticLease(mac, ip, hostname) {
+            try {
+                const response = await fetch('/api/veil/dhcp/static', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mac, ip, hostname })
+                });
+                
+                if (response.ok) {
+                    showAlert('Static lease added successfully', 'success');
+                    await loadStaticLeases();
+                } else {
+                    const data = await response.json();
+                    showAlert('Failed to add static lease: ' + (data.error || 'Unknown error'), 'error');
+                }
+            } catch (error) {
+                showAlert('Error adding static lease: ' + error.message, 'error');
+            }
+        }
+
+        // Edit static lease
+        function editStaticLease(mac, oldIp, oldHostname) {
+            const ip = prompt('Enter new IP address:', oldIp);
+            if (!ip) return;
+            
+            const hostname = prompt('Enter new hostname (optional):', oldHostname) || '';
+            
+            updateStaticLease(mac, ip, hostname);
+        }
+
+        // Update static lease
+        async function updateStaticLease(mac, ip, hostname) {
+            try {
+                const response = await fetch('/api/veil/dhcp/static', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mac, ip, hostname })
+                });
+                
+                if (response.ok) {
+                    showAlert('Static lease updated successfully', 'success');
+                    await loadStaticLeases();
+                } else {
+                    const data = await response.json();
+                    showAlert('Failed to update static lease: ' + (data.error || 'Unknown error'), 'error');
+                }
+            } catch (error) {
+                showAlert('Error updating static lease: ' + error.message, 'error');
+            }
+        }
+
+        // Delete static lease
+        async function deleteStaticLease(mac) {
+            if (!confirm(`Delete static lease for ${mac}?`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/veil/dhcp/static', {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mac })
+                });
+                
+                if (response.ok) {
+                    showAlert('Static lease deleted successfully', 'success');
+                    await loadStaticLeases();
+                } else {
+                    const data = await response.json();
+                    showAlert('Failed to delete static lease: ' + (data.error || 'Unknown error'), 'error');
+                }
+            } catch (error) {
+                showAlert('Error deleting static lease: ' + error.message, 'error');
             }
         }
 
