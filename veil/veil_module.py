@@ -1917,17 +1917,38 @@ class DHCPServer:
             response[pos:pos + 2 + len(domain)] = bytes([DHCP_OPT_DOMAIN_NAME, len(domain)]) + domain
             pos += 2 + len(domain)
         
-        if CONFIG.get("dhcp_ntp_servers"):
-            ntp_servers = CONFIG.get("dhcp_ntp_servers")
-            ntp_bytes = b''.join(socket.inet_aton(ntp) for ntp in ntp_servers[:3])
-            response[pos:pos + 2 + len(ntp_bytes)] = bytes([DHCP_OPT_NTP_SERVER, len(ntp_bytes)]) + ntp_bytes
-            pos += 2 + len(ntp_bytes)
+        ntp_servers_raw = CONFIG.get("dhcp_ntp_servers")
+        if ntp_servers_raw:
+            if isinstance(ntp_servers_raw, str):
+                ntp_servers = [ntp_servers_raw]
+            elif isinstance(ntp_servers_raw, list):
+                ntp_servers = ntp_servers_raw
+            else:
+                ntp_servers = []
+
+            ntp_bytes = b''.join(socket.inet_aton(ip) for ip in ntp_servers[:3] if ip)
+            if ntp_bytes:
+                response[pos:pos + 2 + len(ntp_bytes)] = bytes([DHCP_OPT_NTP_SERVER, len(ntp_bytes)]) + ntp_bytes
+                pos += 2 + len(ntp_bytes)
+
         
-        if CONFIG.get("dhcp_wins_servers"):
-            wins_servers = CONFIG.get("dhcp_wins_servers")
-            wins_bytes = b''.join(socket.inet_aton(wins) for wins in wins_servers[:2])
-            response[pos:pos + 2 + len(wins_bytes)] = bytes([DHCP_OPT_WINS_SERVER, len(wins_bytes)]) + wins_bytes
-            pos += 2 + len(wins_bytes)
+        # === FIXED: Handle wins_servers as string or list ===
+        wins_servers_raw = CONFIG.get("dhcp_wins_servers")
+        if wins_servers_raw:
+            # Normalize to list
+            if isinstance(wins_servers_raw, str):
+                wins_servers = [wins_servers_raw]
+            elif isinstance(wins_servers_raw, list):
+                wins_servers = wins_servers_raw
+            else:
+                wins_servers = []
+
+            wins_bytes = b''.join(socket.inet_aton(ip) for ip in wins_servers[:2] if ip)
+            if wins_bytes:
+                response[pos:pos + 2 + len(wins_bytes)] = bytes([DHCP_OPT_WINS_SERVER, len(wins_bytes)]) + wins_bytes
+                pos += 2 + len(wins_bytes)
+        # === END FIX ===
+
         
         # === FIXED: Vendor options with proper validation ===
         vendor_opts = CONFIG.get("dhcp_vendor_options", {})
