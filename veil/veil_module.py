@@ -966,7 +966,6 @@ async def validate_dnssec(response_wire: bytes, transport: str, query_id: int) -
         return False
 
 # ==================== DNS-over-QUIC (DoQ) ====================
-# ==================== DNS-over-QUIC (DoQ) ====================
 DOQ_AVAILABLE = False
 try:
     from aioquic.asyncio import connect, QuicConnectionProtocol
@@ -1005,7 +1004,7 @@ async def query_doq(wire_query: bytes, server: str) -> Optional[bytes]:
         try:
             query = dns.message.from_wire(wire_query)
             query.id = 0
-            query.flags &= ~dns.flags.RD      # 🔹 clear recursion-desired for upstream
+            query.flags &= ~dns.flags.RD      # clear recursion-desired for upstream
             wire_query = query.to_wire()
         except Exception as e:
             log.warning(f"[doq] Failed to normalize query ID: {e}")
@@ -1536,7 +1535,6 @@ async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
         log.error(f"[dns] Unexpected error processing query from {addr[0]}: {e}")
         return None
 # ==================== DNS SERVER ====================
-# ==================== DNS SERVER ====================
 class DNSProtocol(asyncio.DatagramProtocol):
     def connection_made(self, transport):
         self.transport = transport
@@ -1559,7 +1557,7 @@ class DNSProtocol(asyncio.DatagramProtocol):
                 try:
                     msg = dns.message.from_wire(response)
 
-                    # 🩵 Ensure the response ID matches the client's query ID
+                    # Ensure the response ID matches the client's query ID
                     if query is not None:
                         msg.id = query.id
 
@@ -1599,18 +1597,18 @@ async def start_dns():
             reuse_port=True
         )
         dns_transport = transport
-        log.info(f"[dns] ✅ DNS server SUCCESSFULLY started on {CONFIG['dns_bind']}:{CONFIG['dns_port']}")
+        log.info(f"[dns] DNS server SUCCESSFULLY started on {CONFIG['dns_bind']}:{CONFIG['dns_port']}")
     except PermissionError as e:
-        log.error(f"[dns] ❌ PERMISSION DENIED - Cannot bind to port {CONFIG['dns_port']} (requires root/CAP_NET_BIND_SERVICE)")
+        log.error(f"[dns] PERMISSION DENIED - Cannot bind to port {CONFIG['dns_port']} (requires root/CAP_NET_BIND_SERVICE)")
         log.error(f"[dns] Error: {e}")
         raise
     except OSError as e:
-        log.error(f"[dns] ❌ FAILED to bind to {CONFIG['dns_bind']}:{CONFIG['dns_port']}")
+        log.error(f"[dns] FAILED to bind to {CONFIG['dns_bind']}:{CONFIG['dns_port']}")
         log.error(f"[dns] Error: {e}")
         log.error(f"[dns] Is another DNS server already running on port {CONFIG['dns_port']}?")
         raise
     except Exception as e:
-        log.error(f"[dns] ❌ UNEXPECTED ERROR starting DNS server: {e}")
+        log.error(f"[dns] UNEXPECTED ERROR starting DNS server: {e}")
         raise
 
 
@@ -1699,15 +1697,43 @@ class DHCPServer:
                 with open(lease_file) as f:
                     data = json.load(f)
                     for mac, lease_data in data.items():
+                        ip = lease_data.get("ip")
+                        if not isinstance(ip, str):
+                            log.warning(f"[dhcp] Skipping invalid lease for {mac}: ip is not a string ({type(ip)})")
+                            continue
+                        try:
+                            ipaddress.IPv4Address(ip)
+                        except ValueError:
+                            log.warning(f"[dhcp] Skipping invalid lease for {mac}: invalid IP {ip}")
+                            continue
                         self.leases[mac] = DHCPLease(**lease_data)
                 log.info(f"[dhcp] Loaded {len(self.leases)} leases")
             except Exception as e:
                 log.error(f"[dhcp] Failed to load leases: {e}")
        
-        for mac, ip in CONFIG.get("dhcp_static_leases", {}).items():
+        # Load static leases with hostname support
+        for mac, entry in CONFIG.get("dhcp_static_leases", {}).items():
+            if isinstance(entry, dict):
+                ip = entry.get("ip")
+                hostname = entry.get("hostname", "")
+            else:
+                ip = str(entry)
+                hostname = ""
+            
+            if not ip:
+                log.warning(f"[dhcp] Skipping static lease for {mac}: missing IP")
+                continue
+            
+            try:
+                ipaddress.IPv4Address(ip)
+            except ValueError:
+                log.warning(f"[dhcp] Skipping static lease for {mac}: invalid IP {ip}")
+                continue
+
             self.leases[mac] = DHCPLease(
                 mac=mac,
                 ip=ip,
+                hostname=hostname,
                 static=True,
                 lease_start=time.time(),
                 lease_end=time.time() + (365 * 86400)
@@ -1969,9 +1995,14 @@ class DHCPServer:
             STATS["dhcp_naks"] += 1
             return
         
+        # Use hostname from request, or fall back to static lease
         hostname = ""
         if DHCP_OPT_HOSTNAME in packet["options"]:
-            hostname = packet["options"][DHCP_OPT_HOSTNAME].decode('utf-8', errors='ignore')
+            hostname = packet["options"][DHCP_OPT_HOSTNAME].decode('utf-8', errors='ignore').strip()
+        else:
+            mac = packet["chaddr"]
+            if mac in self.leases and self.leases[mac].static:
+                hostname = self.leases[mac].hostname
         
         client_id = ""
         if DHCP_OPT_CLIENT_ID in packet["options"]:
@@ -2141,7 +2172,7 @@ class DHCPServer:
     def add_static_lease(self, mac: str, ip: str, hostname: str = "") -> bool:
         try:
             ipaddress.IPv4Address(ip)  # Validate IP
-        except ValueError:
+        except Exception:  # Catch ValueError or TypeError
             return False
         
         if ip not in self.ip_pool:
@@ -2158,7 +2189,7 @@ class DHCPServer:
         
         if "dhcp_static_leases" not in CONFIG:
             CONFIG["dhcp_static_leases"] = {}
-        CONFIG["dhcp_static_leases"][mac] = ip
+        CONFIG["dhcp_static_leases"][mac] = {"ip": ip, "hostname": hostname}
         
         self._save_leases()
         return True
@@ -2489,7 +2520,7 @@ async def api_dhcp_static_add(req):
             return web.json_response({"error": "DHCP not enabled"}, status=400)
         
         data = await req.json()
-        mac = data.get('mac', '').strip()
+        mac = data.get('mac', '').strip().upper()
         ip = data.get('ip', '').strip()
         hostname = data.get('hostname', '').strip()
         
@@ -2497,7 +2528,7 @@ async def api_dhcp_static_add(req):
             return web.json_response({"error": "MAC and IP required"}, status=400)
         
         if DHCP_SERVER.add_static_lease(mac, ip, hostname):
-            return web.json_response({"status": "added"})
+            return web.json_response({"status": "added", "mac": mac, "ip": ip, "hostname": hostname})
         else:
             return web.json_response({"error": "Invalid IP or not in pool"}, status=400)
     
