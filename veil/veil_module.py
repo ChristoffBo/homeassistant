@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-🧩 Veil — Privacy-First DNS/DHCP Server
+ðŸ§© Veil â€” Privacy-First DNS/DHCP Server
 COMPLETE implementation with ALL features
 Full Privacy Flow:
 - DoH/DoT/DoQ encrypted upstream
@@ -27,11 +27,11 @@ DHCP Features:
 - Vendor options
 - Client identifier handling
 NEW IN THIS VERSION:
-- ✅ DNSSEC validation with dnspython
-- ✅ DoQ (DNS-over-QUIC) with aioquic
-- ✅ Per-client DNS rate limiting
-- ✅ SafeSearch enforcement (Google/Bing/DuckDuckGo/YouTube)
-- ✅ Local blocklist persistence after updates
+- âœ… DNSSEC validation with dnspython
+- âœ… DoQ (DNS-over-QUIC) with aioquic
+- âœ… Per-client DNS rate limiting
+- âœ… SafeSearch enforcement (Google/Bing/DuckDuckGo/YouTube)
+- âœ… Local blocklist persistence after updates
 """
 import asyncio
 import logging
@@ -443,7 +443,7 @@ def apply_safesearch(qname: str) -> Optional[str]:
                 continue
            
             STATS["dns_safesearch"] += 1
-            log.info(f"[safesearch] {qname} → {safe}")
+            log.info(f"[safesearch] {qname} â†’ {safe}")
             return safe
    
     return None
@@ -935,7 +935,7 @@ async def validate_dnssec(response_wire: bytes, transport: str, query_id: int) -
         if transport == "doq":
             pass  # Don't strict-compare IDs for DoQ
         elif response.id != query_id:
-            log.warning(f"[dnssec] Non-matching DNS IDs ({response.id} vs {query_id}) – tolerated")
+            log.warning(f"[dnssec] Non-matching DNS IDs ({response.id} vs {query_id}) â€“ tolerated")
        
         # Check if response has DNSSEC records
         if not any(rrset.rdtype in (dns.rdatatype.RRSIG, dns.rdatatype.DNSKEY)
@@ -981,9 +981,9 @@ async def query_doq(wire_query: bytes, server: str) -> Optional[bytes]:
     """
     Query via DNS-over-QUIC (RFC 9250)
     Behaviour matches AdGuard Home / Technitium:
-      • Sends stub-mode queries (RD=0) so public DoQ upstreams accept them.
-      • Re-adds RA/RD flags when replying to local clients.
-      • Length-checked, timeout-safe.
+      â€¢ Sends stub-mode queries (RD=0) so public DoQ upstreams accept them.
+      â€¢ Re-adds RA/RD flags when replying to local clients.
+      â€¢ Length-checked, timeout-safe.
     """
     if not DOQ_AVAILABLE or not CONFIG.get("doq_enabled"):
         return None
@@ -1005,7 +1005,7 @@ async def query_doq(wire_query: bytes, server: str) -> Optional[bytes]:
         try:
             query = dns.message.from_wire(wire_query)
             query.id = 0
-            query.flags &= ~dns.flags.RD      # 🔹 clear recursion-desired for upstream
+            query.flags &= ~dns.flags.RD      # ðŸ”¹ clear recursion-desired for upstream
             wire_query = query.to_wire()
         except Exception as e:
             log.warning(f"[doq] Failed to normalize query ID: {e}")
@@ -1141,7 +1141,7 @@ async def wrapped_query(server: str, query_func, query_id: int, transport: str) 
             if transport == "doq":
                 pass
             elif response.id != query_id:
-                log.warning(f"[dns] Non-matching DNS IDs ({response.id} vs {query_id}) – tolerated")
+                log.warning(f"[dns] Non-matching DNS IDs ({response.id} vs {query_id}) â€“ tolerated")
         return server, result
     except Exception as e:
         await UPSTREAM_HEALTH.record_failure(server)
@@ -1234,7 +1234,7 @@ async def query_upstream(qname: str, qtype: int, depth: int = 0, minimize: bool 
                 if transport != "doq":
                     response = dns.message.from_wire(response_wire)
                     if response.id != query_id:
-                        log.warning(f"[dns] Non-matching DNS IDs ({response.id} vs {query_id}) – tolerated")
+                        log.warning(f"[dns] Non-matching DNS IDs ({response.id} vs {query_id}) â€“ tolerated")
                 if upstream_queries > 0:
                     STATS["dns_upstream_latency"] = total_latency / upstream_queries
                 return response_wire
@@ -1559,7 +1559,7 @@ class DNSProtocol(asyncio.DatagramProtocol):
                 try:
                     msg = dns.message.from_wire(response)
 
-                    # 🩵 Ensure the response ID matches the client's query ID
+                    # ðŸ©µ Ensure the response ID matches the client's query ID
                     if query is not None:
                         msg.id = query.id
 
@@ -1599,18 +1599,18 @@ async def start_dns():
             reuse_port=True
         )
         dns_transport = transport
-        log.info(f"[dns] ✅ DNS server SUCCESSFULLY started on {CONFIG['dns_bind']}:{CONFIG['dns_port']}")
+        log.info(f"[dns] âœ… DNS server SUCCESSFULLY started on {CONFIG['dns_bind']}:{CONFIG['dns_port']}")
     except PermissionError as e:
-        log.error(f"[dns] ❌ PERMISSION DENIED - Cannot bind to port {CONFIG['dns_port']} (requires root/CAP_NET_BIND_SERVICE)")
+        log.error(f"[dns] âŒ PERMISSION DENIED - Cannot bind to port {CONFIG['dns_port']} (requires root/CAP_NET_BIND_SERVICE)")
         log.error(f"[dns] Error: {e}")
         raise
     except OSError as e:
-        log.error(f"[dns] ❌ FAILED to bind to {CONFIG['dns_bind']}:{CONFIG['dns_port']}")
+        log.error(f"[dns] âŒ FAILED to bind to {CONFIG['dns_bind']}:{CONFIG['dns_port']}")
         log.error(f"[dns] Error: {e}")
         log.error(f"[dns] Is another DNS server already running on port {CONFIG['dns_port']}?")
         raise
     except Exception as e:
-        log.error(f"[dns] ❌ UNEXPECTED ERROR starting DNS server: {e}")
+        log.error(f"[dns] âŒ UNEXPECTED ERROR starting DNS server: {e}")
         raise
 
 
@@ -1761,56 +1761,76 @@ class DHCPServer:
         return None
    
     def _parse_dhcp_packet(self, data: bytes) -> Optional[dict]:
+    """
+    Parse a raw DHCP packet into a structured dict.
+    This version includes safe MAC extraction and guards against malformed packets.
+    """
+
+    try:
+        # --- Validate minimum packet length ---
         if len(data) < 240:
+            log.warning(f"[dhcp] Received truncated packet ({len(data)} bytes)")
             return None
-       
-        try:
-            packet = {
-                "op": data[0],
-                "htype": data[1],
-                "hlen": data[2],
-                "hops": data[3],
-                "xid": struct.unpack("!I", data[4:8])[0],
-                "secs": struct.unpack("!H", data[8:10])[0],
-                "flags": struct.unpack("!H", data[10:12])[0],
-                "ciaddr": socket.inet_ntoa(data[12:16]),
-                "yiaddr": socket.inet_ntoa(data[16:20]),
-                "siaddr": socket.inet_ntoa(data[20:24]),
-                "giaddr": socket.inet_ntoa(data[24:28]),
-                "chaddr": ':'.join(f'{b:02x}' for b in data[28:34]),
-                "sname": data[44:108].split(b'\x00')[0].decode('utf-8', errors='ignore'),
-                "file": data[108:236].split(b'\x00')[0].decode('utf-8', errors='ignore'),
-                "options": {}
-            }
-           
-            if data[236:240] != b'\x63\x82\x53\x63':
-                return None
-           
-            i = 240
-            while i < len(data):
-                opt = data[i]
-                if opt == DHCP_OPT_END:
-                    break
-                if opt == DHCP_OPT_PAD:
-                    i += 1
-                    continue
-               
-                if i + 1 >= len(data):
-                    break
-               
-                opt_len = data[i + 1]
-                if i + 2 + opt_len > len(data):
-                    break
-               
-                opt_data = data[i + 2:i + 2 + opt_len]
-                packet["options"][opt] = opt_data
-                i += 2 + opt_len
-           
+
+        # --- Extract hardware address length safely ---
+        hlen = data[2]
+        if hlen > 16:  # sanity limit
+            log.warning(f"[dhcp] Invalid hlen={hlen}, forcing 6")
+            hlen = 6
+
+        chaddr = ':'.join(f'{b:02x}' for b in data[28:28 + hlen])
+
+        # --- Build base packet structure ---
+        packet = {
+            "op": data[0],
+            "htype": data[1],
+            "hlen": hlen,
+            "hops": data[3],
+            "xid": struct.unpack("!I", data[4:8])[0],
+            "secs": struct.unpack("!H", data[8:10])[0],
+            "flags": struct.unpack("!H", data[10:12])[0],
+            "ciaddr": str(ipaddress.IPv4Address(data[12:16])),
+            "yiaddr": str(ipaddress.IPv4Address(data[16:20])),
+            "siaddr": str(ipaddress.IPv4Address(data[20:24])),
+            "giaddr": str(ipaddress.IPv4Address(data[24:28])),
+            "chaddr": chaddr,
+            "options": {}
+        }
+
+        # --- Defensive guard: ensure MAC parsed correctly ---
+        if isinstance(packet["chaddr"], dict):
+            log.error(f"[dhcp] Invalid chaddr type: {type(packet['chaddr'])}, skipping packet")
+            return None
+
+        # --- Parse DHCP magic cookie and options ---
+        magic_cookie = data[236:240]
+        if magic_cookie != b'\x63\x82\x53\x63':
+            log.warning("[dhcp] Invalid magic cookie — not a DHCP packet?")
             return packet
-       
-        except Exception as e:
-            log.error(f"[dhcp] Parse error: {e}")
-            return None
+
+        options_data = data[240:]
+        i = 0
+        while i < len(options_data):
+            opt = options_data[i]
+            if opt == 255:  # End Option
+                break
+            elif opt == 0:  # Padding
+                i += 1
+                continue
+
+            if i + 1 >= len(options_data):
+                break
+            length = options_data[i + 1]
+            value = options_data[i + 2:i + 2 + length]
+            packet["options"][opt] = value
+            i += 2 + length
+
+        return packet
+
+    except Exception as e:
+        log.error(f"[dhcp] Failed to parse DHCP packet: {e}")
+        return None
+
    
     def _build_dhcp_packet(self, packet: dict, msg_type: int, offered_ip: str) -> bytes:
         response = bytearray(548)
@@ -2556,7 +2576,7 @@ def register_routes(app):
 
 async def init_veil():
     log.info("=" * 60)
-    log.info("[veil] 🧩 Privacy-First DNS/DHCP initializing")
+    log.info("[veil] ðŸ§© Privacy-First DNS/DHCP initializing")
     log.info("=" * 60)
     
     # Initialize global objects
@@ -2668,7 +2688,7 @@ async def init_veil():
             
             log.info(f"[veil] Privacy: {', '.join(features)}")
         except Exception as e:
-            log.error(f"[veil] ❌ FAILED TO START DNS SERVER: {e}")
+            log.error(f"[veil] âŒ FAILED TO START DNS SERVER: {e}")
             log.error("[veil] Veil will continue without DNS functionality")
     else:
         log.warning("[veil] DNS is DISABLED in config")
@@ -2678,14 +2698,14 @@ async def init_veil():
         log.info("[veil] Attempting to start DHCP server...")
         try:
             DHCP_SERVER.start()
-            log.info(f"[veil] ✅ DHCP: {CONFIG['dhcp_range_start']} - {CONFIG['dhcp_range_end']}")
+            log.info(f"[veil] âœ… DHCP: {CONFIG['dhcp_range_start']} - {CONFIG['dhcp_range_end']}")
         except Exception as e:
-            log.error(f"[veil] ❌ FAILED TO START DHCP SERVER: {e}")
+            log.error(f"[veil] âŒ FAILED TO START DHCP SERVER: {e}")
     else:
         log.warning("[veil] DHCP is DISABLED in config")
     
     log.info("=" * 60)
-    log.info("[veil] ✅ Initialization complete")
+    log.info("[veil] âœ… Initialization complete")
     log.info("=" * 60)
 
 async def cleanup_veil():
@@ -2708,7 +2728,7 @@ __version__ = "2.0.2"  # Updated version
 __description__ = "Privacy-First DNS/DHCP - Complete with DNSSEC, DoQ, Rate Limiting, SafeSearch"
 
 if __name__ == "__main__":
-    print("🧩 Veil - Privacy-First DNS/DHCP Server")
+    print("ðŸ§© Veil - Privacy-First DNS/DHCP Server")
 
 async def start_background_services(app):
     """Start background services on app startup"""
@@ -2780,7 +2800,7 @@ if __name__ == "__main__":
     if not os.path.exists(ui_path):
         log.warning(f"[veil] UI path {ui_path} not found, serving placeholder")
         async def placeholder(_):
-            return web.Response(text="🧩 Veil is running, but no UI files found.")
+            return web.Response(text="ðŸ§© Veil is running, but no UI files found.")
         app.router.add_get("/", placeholder)
     else:
         app.router.add_static("/", ui_path, show_index=True)
@@ -2790,8 +2810,8 @@ if __name__ == "__main__":
     app.on_startup.append(start_background_services)
     app.on_cleanup.append(cleanup_background_services)
 
-    log.info(f"🌐 Web UI will be available at http://{bind_addr}:{ui_port}")
-    log.info(f"🧩 Veil v{__version__} - Privacy-First DNS/DHCP")
+    log.info(f"ðŸŒ Web UI will be available at http://{bind_addr}:{ui_port}")
+    log.info(f"ðŸ§© Veil v{__version__} - Privacy-First DNS/DHCP")
     
     # Run with proper error handling
     try:
