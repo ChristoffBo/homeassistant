@@ -1369,8 +1369,7 @@ def strip_ecs(response_wire: bytes) -> bytes:
     except:
         return response_wire
 # ==================== DNS PROCESSING ====================
-    def build_nxdomain_response() -> bytes:
-    """Minimal NXDOMAIN response for QNAME minimization fallback"""
+def build_nxdomain_response() -> bytes:
     query = dns.message.make_query(".", dns.rdatatype.NS)
     response = dns.message.make_response(query)
     response.set_rcode(dns.rcode.NXDOMAIN)
