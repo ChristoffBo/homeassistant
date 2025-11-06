@@ -1805,7 +1805,10 @@ class DHCPServer:
                 opt_data = data[i + 2:i + 2 + opt_len]
                 packet["options"][opt] = opt_data
                 i += 2 + opt_len
-           
+if isinstance(packet.get("chaddr"), (dict, list)):
+    log.error(f"[dhcp] Malformed chaddr field: {packet['chaddr']}")
+    packet["chaddr"] = str(packet["chaddr"])
+            
             return packet
        
         except Exception as e:
