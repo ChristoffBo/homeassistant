@@ -1,3 +1,5 @@
 🧩 Veil (Experimental)
 
+Failed keeping code for reference 
+
 ⚠️ Veil is an experimental privacy-first DNS/DHCP system — some features are not yet active or still under development. Designed as a self-hosted stealth resolver, it provides encrypted DNS (DoH/DoT/DoQ), DNSSEC validation, SafeSearch enforcement, rate-limiting, local rewrites, conditional forwards, and blocklist-based ad/malware filtering, with a web UI for control and monitoring. Built on Debian-Slim with Python (aiohttp) and fully self-contained, Veil exposes DNS (53/udp/tcp), DoH (443/tcp), DoT (853/tcp), DoQ (853/udp, 784/udp), DHCP (67/udp), TFTP (69/udp), NTP (123/udp), and Web UI (8080/tcp). Configuration is managed via /config/options.json and all logs are under /var/log/veil. Start the add-on, visit http://<host>:8080, and use the dark-mode UI to edit upstream resolvers, toggle DoH/DoT/DoQ, enable blocklists, or manage DHCP. Veil currently implements full DNS resolution, caching, DNSSEC, and local record handling; DHCP, TFTP, and UI advanced settings are placeholders pending activation.
