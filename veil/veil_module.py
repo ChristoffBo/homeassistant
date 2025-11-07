@@ -32,11 +32,6 @@ NEW IN THIS VERSION:
 - ✅ Per-client DNS rate limiting
 - ✅ SafeSearch enforcement (Google/Bing/DuckDuckGo/YouTube)
 - ✅ Local blocklist persistence after updates
-FIXED IN THIS VERSION:
-- ✅ TOP_QUERIES now only counts ANSWERED queries (not blocked)
-- ✅ Top lists now show TOP 20 instead of TOP 10
-- ✅ Block type tracking (blacklist vs blocklist)
-- ✅ Proper stats updates every 5 seconds
 """
 import asyncio
 import logging
@@ -200,8 +195,8 @@ STATS = {
     "dns_queries": 0,
     "dns_cached": 0,
     "dns_blocked": 0,
-    "dns_blocked_blacklist": 0,  # NEW: Track blacklist blocks
-    "dns_blocked_blocklist": 0,  # NEW: Track blocklist blocks
+    "dns_blocked_blacklist": 0,
+    "dns_blocked_blocklist": 0,
     "dns_upstream": 0,
     "dns_parallel": 0,
     "dns_padded": 0,
@@ -234,10 +229,10 @@ STATS = {
     "start_time": time.time()
 }
 # Counters for top 20
-TOP_QUERIES = Counter()  # domain -> query count (ANSWERED queries only)
-TOP_BLOCKED = Counter()  # domain -> block count
-TOP_BLOCKED_TYPE = {}  # domain -> block type ("blacklist" or "blocklist")
-TOP_CLIENTS = Counter()  # ip -> query count
+TOP_QUERIES = Counter()
+TOP_BLOCKED = Counter()
+TOP_BLOCKED_TYPE = {}
+TOP_CLIENTS = Counter()
 # ==================== DNS CACHE ====================
 @dataclass
 class CacheEntry:
@@ -1456,7 +1451,6 @@ async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
        
         STATS["dns_queries"] += 1
         
-        # FIXED: Track client immediately, but TOP_QUERIES only after we know it's not blocked
         TOP_CLIENTS[addr[0]] += 1
        
         # Record query in history for prewarming
@@ -1466,25 +1460,22 @@ async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
         if await WHITELIST.contains(qname):
             pass
         else:
-            # Check blacklist
             if await BLACKLIST.contains(qname):
                 STATS["dns_blocked"] += 1
-                STATS["dns_blocked_blacklist"] += 1  # NEW: Track blacklist blocks
+                STATS["dns_blocked_blacklist"] += 1
                 TOP_BLOCKED[qname] += 1
-                TOP_BLOCKED_TYPE[qname] = "blacklist"  # NEW: Track block type
+                TOP_BLOCKED_TYPE[qname] = "blacklist"
                 log.info(f"[dns] Blocked (blacklist): {qname}")
                 return build_blocked_response(query)
            
-            # Check blocklist
             if CONFIG.get("blocking_enabled") and await BLOCKLIST.contains(qname):
                 STATS["dns_blocked"] += 1
-                STATS["dns_blocked_blocklist"] += 1  # NEW: Track blocklist blocks
+                STATS["dns_blocked_blocklist"] += 1
                 TOP_BLOCKED[qname] += 1
-                TOP_BLOCKED_TYPE[qname] = "blocklist"  # NEW: Track block type
+                TOP_BLOCKED_TYPE[qname] = "blocklist"
                 log.info(f"[dns] Blocked (blocklist): {qname}")
                 return build_blocked_response(query)
        
-        # FIXED: Query was NOT blocked, so count it in TOP_QUERIES
         TOP_QUERIES[qname] += 1
         
         # SafeSearch enforcement (after checks)
@@ -2369,16 +2360,9 @@ async def api_stats(req):
         "upstream_health": upstream_health,
         "leases": [lease.to_dict() for lease in DHCP_SERVER.leases.values()] if DHCP_SERVER else [],
         
-        # FIXED: Top 20 lists with block type information
+        # Top 20 lists
         "top_queries": [{"domain": d, "count": c} for d, c in TOP_QUERIES.most_common(20)],
-        "top_blocked": [
-            {
-                "domain": d, 
-                "count": c,
-                "type": TOP_BLOCKED_TYPE.get(d, "unknown")
-            } 
-            for d, c in TOP_BLOCKED.most_common(20)
-        ],
+        "top_blocked": [{"domain": d, "count": c, "type": TOP_BLOCKED_TYPE.get(d, "unknown")} for d, c in TOP_BLOCKED.most_common(20)],
         "top_clients": [{"ip": i, "count": c} for i, c in TOP_CLIENTS.most_common(20)],
         
         # Raw STATS for debugging
@@ -2420,7 +2404,7 @@ async def api_stats_purge(req):
         # Reset top 10 counters
         TOP_QUERIES.clear()
         TOP_BLOCKED.clear()
-        TOP_BLOCKED_TYPE.clear()  # NEW: Clear block types
+        TOP_BLOCKED_TYPE.clear()
         TOP_CLIENTS.clear()
         
         # Clear query latency tracker
