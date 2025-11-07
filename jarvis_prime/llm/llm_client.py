@@ -1205,16 +1205,21 @@ def rewrite(
             _log(f"rewrite: ctx precheck overflow (prompt={n_in}, out={rewrite_max_tokens}, ctx={ctx_tokens}) → return original text")
             return text
 
-        out = _do_generate(
-            prompt,
-            timeout=timeout,
-            base_url=base_url,
-            model_url=model_url,
-            model_name_hint=model_path,
-            max_tokens=rewrite_max_tokens,
-            with_grammar_auto=False
-        )
-        final = out if out else text
+        # CRITICAL FIX: Wrap generation in try-except to catch timeouts/exceptions
+        try:
+            out = _do_generate(
+                prompt,
+                timeout=timeout,
+                base_url=base_url,
+                model_url=model_url,
+                model_name_hint=model_path,
+                max_tokens=rewrite_max_tokens,
+                with_grammar_auto=False
+            )
+            final = out if out else text
+        except Exception as e:
+            _log(f"rewrite: LLM generation exception ({e}) → return original text")
+            final = text
 
     final = _strip_meta_markers(final)
     if max_lines:
@@ -1375,18 +1380,24 @@ def persona_riff(
             _log(f"persona_riff: ctx overflow → fallback to Lexi")
             return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
 
-        raw = _do_generate(
-            prompt,
-            timeout=timeout,
-            base_url=base_url,
-            model_url=model_url,
-            model_name_hint=model_path,
-            max_tokens=riff_max_tokens,
-            with_grammar_auto=False
-        )
-        
-        if not raw:
-            _log("persona_riff: LLM returned empty → fallback to Lexi")
+        # CRITICAL FIX: Wrap generation in try-except to catch timeouts/exceptions
+        try:
+            raw = _do_generate(
+                prompt,
+                timeout=timeout,
+                base_url=base_url,
+                model_url=model_url,
+                model_name_hint=model_path,
+                max_tokens=riff_max_tokens,
+                with_grammar_auto=False
+            )
+            
+            if not raw:
+                _log("persona_riff: LLM returned empty → fallback to Lexi")
+                return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
+                
+        except Exception as e:
+            _log(f"persona_riff: LLM generation exception ({e}) → fallback to Lexi")
             return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
 
     # Clean LLM output
@@ -1587,15 +1598,20 @@ def chat_generate(
             _log("chat_generate: ctx overflow → refuse generation")
             return ""
 
-        out = _do_generate(
-            prompt,
-            timeout=max(4, int(eff_timeout)),
-            base_url=base_url,
-            model_url=model_url,
-            model_name_hint=model_path,
-            max_tokens=max_new_tokens,
-            with_grammar_auto=False
-        )
+        # CRITICAL FIX: Wrap generation in try-except to catch timeouts/exceptions
+        try:
+            out = _do_generate(
+                prompt,
+                timeout=max(4, int(eff_timeout)),
+                base_url=base_url,
+                model_url=model_url,
+                model_name_hint=model_path,
+                max_tokens=max_new_tokens,
+                with_grammar_auto=False
+            )
+        except Exception as e:
+            _log(f"chat_generate: LLM generation exception ({e}) → return empty")
+            out = ""
 
     return _strip_meta_markers(out or "").strip()
 
