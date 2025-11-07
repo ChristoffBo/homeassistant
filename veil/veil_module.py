@@ -1843,7 +1843,7 @@ class DHCPServer:
         return None
    
 def _parse_dhcp_packet(self, data: bytes) -> Optional[dict]:
-    if len(data) < 240:
+  if len(data) < 240:
         log.debug(f"[dhcp] Packet too short: {len(data)} bytes")
         return None
 
