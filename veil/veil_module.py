@@ -2367,7 +2367,6 @@ async def api_stats(req):
         "leases": [lease.to_dict() for lease in DHCP_SERVER.leases.values()] if DHCP_SERVER else [],
         
         # Top 20 lists
-        log.info(f"[api_stats] TOP_QUERIES has {len(TOP_QUERIES)} domains, TOP_BLOCKED has {len(TOP_BLOCKED)} domains, TOP_CLIENTS has {len(TOP_CLIENTS)} clients")
         "top_queries": [{"domain": d, "count": c} for d, c in TOP_QUERIES.most_common(20)],
         "top_blocked": [{"domain": d, "count": c, "type": TOP_BLOCKED_TYPE.get(d, "unknown")} for d, c in TOP_BLOCKED.most_common(20)],
         "top_clients": [{"ip": i, "count": c} for i, c in TOP_CLIENTS.most_common(20)],
