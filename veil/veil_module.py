@@ -32,6 +32,11 @@ NEW IN THIS VERSION:
 - ✅ Per-client DNS rate limiting
 - ✅ SafeSearch enforcement (Google/Bing/DuckDuckGo/YouTube)
 - ✅ Local blocklist persistence after updates
+FIXED IN THIS VERSION:
+- ✅ TOP_QUERIES now only counts ANSWERED queries (not blocked)
+- ✅ Top lists now show TOP 20 instead of TOP 10
+- ✅ Block type tracking (blacklist vs blocklist)
+- ✅ Proper stats updates every 5 seconds
 """
 import asyncio
 import logging
@@ -195,6 +200,8 @@ STATS = {
     "dns_queries": 0,
     "dns_cached": 0,
     "dns_blocked": 0,
+    "dns_blocked_blacklist": 0,  # NEW: Track blacklist blocks
+    "dns_blocked_blocklist": 0,  # NEW: Track blocklist blocks
     "dns_upstream": 0,
     "dns_parallel": 0,
     "dns_padded": 0,
@@ -207,8 +214,8 @@ STATS = {
     "dns_dnssec_failed": 0,
     "dns_doq_queries": 0,
     "dns_upstream_latency": 0.0, # Average latency
-    "top_clients": [], # Top 10 clients
-    "top_blocked": [], # Top 10 blocked domains
+    "top_clients": [], # Top 20 clients
+    "top_blocked": [], # Top 20 blocked domains
     "dhcp_discovers": 0,
     "dhcp_offers": 0,
     "dhcp_requests": 0,
@@ -226,9 +233,10 @@ STATS = {
     "cache_prewarm_domains": 0,
     "start_time": time.time()
 }
-# Counters for top 10
-TOP_QUERIES = Counter()  # domain -> query count
+# Counters for top 20
+TOP_QUERIES = Counter()  # domain -> query count (ANSWERED queries only)
 TOP_BLOCKED = Counter()  # domain -> block count
+TOP_BLOCKED_TYPE = {}  # domain -> block type ("blacklist" or "blocklist")
 TOP_CLIENTS = Counter()  # ip -> query count
 # ==================== DNS CACHE ====================
 @dataclass
@@ -1448,8 +1456,7 @@ async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
        
         STATS["dns_queries"] += 1
         
-        # Track for top 10
-        TOP_QUERIES[qname] += 1
+        # FIXED: Track client immediately, but TOP_QUERIES only after we know it's not blocked
         TOP_CLIENTS[addr[0]] += 1
        
         # Record query in history for prewarming
@@ -1459,18 +1466,27 @@ async def process_dns_query(data: bytes, addr: Tuple[str, int]) -> bytes:
         if await WHITELIST.contains(qname):
             pass
         else:
+            # Check blacklist
             if await BLACKLIST.contains(qname):
                 STATS["dns_blocked"] += 1
+                STATS["dns_blocked_blacklist"] += 1  # NEW: Track blacklist blocks
                 TOP_BLOCKED[qname] += 1
+                TOP_BLOCKED_TYPE[qname] = "blacklist"  # NEW: Track block type
                 log.info(f"[dns] Blocked (blacklist): {qname}")
                 return build_blocked_response(query)
            
+            # Check blocklist
             if CONFIG.get("blocking_enabled") and await BLOCKLIST.contains(qname):
                 STATS["dns_blocked"] += 1
+                STATS["dns_blocked_blocklist"] += 1  # NEW: Track blocklist blocks
                 TOP_BLOCKED[qname] += 1
+                TOP_BLOCKED_TYPE[qname] = "blocklist"  # NEW: Track block type
                 log.info(f"[dns] Blocked (blocklist): {qname}")
                 return build_blocked_response(query)
        
+        # FIXED: Query was NOT blocked, so count it in TOP_QUERIES
+        TOP_QUERIES[qname] += 1
+        
         # SafeSearch enforcement (after checks)
         safesearch_domain = apply_safesearch(qname)
         if safesearch_domain:
@@ -2353,10 +2369,17 @@ async def api_stats(req):
         "upstream_health": upstream_health,
         "leases": [lease.to_dict() for lease in DHCP_SERVER.leases.values()] if DHCP_SERVER else [],
         
-        # Top 10 lists
-        "top_queries": [{"domain": d, "count": c} for d, c in TOP_QUERIES.most_common(10)],
-        "top_blocked": [{"domain": d, "count": c} for d, c in TOP_BLOCKED.most_common(10)],
-        "top_clients": [{"ip": i, "count": c} for i, c in TOP_CLIENTS.most_common(10)],
+        # FIXED: Top 20 lists with block type information
+        "top_queries": [{"domain": d, "count": c} for d, c in TOP_QUERIES.most_common(20)],
+        "top_blocked": [
+            {
+                "domain": d, 
+                "count": c,
+                "type": TOP_BLOCKED_TYPE.get(d, "unknown")
+            } 
+            for d, c in TOP_BLOCKED.most_common(20)
+        ],
+        "top_clients": [{"ip": i, "count": c} for i, c in TOP_CLIENTS.most_common(20)],
         
         # Raw STATS for debugging
         **STATS
@@ -2397,6 +2420,7 @@ async def api_stats_purge(req):
         # Reset top 10 counters
         TOP_QUERIES.clear()
         TOP_BLOCKED.clear()
+        TOP_BLOCKED_TYPE.clear()  # NEW: Clear block types
         TOP_CLIENTS.clear()
         
         # Clear query latency tracker
