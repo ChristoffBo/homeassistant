@@ -7,8 +7,6 @@ set -eo pipefail
 CONFIG_PATH="/data/options.json"
 REPO_DIR="/data/homeassistant"
 LOG_FILE="/data/updater.log"
-LOCK_FILE="/tmp/addon-updater.lock"
-BACKUP_DIR="/tmp/addon-backups"
 
 # ======================
 # COLOR DEFINITIONS
@@ -27,55 +25,10 @@ COLOR_CYAN="\033[0;36m"
 # ======================
 declare -A UPDATED_ADDONS
 declare -A UNCHANGED_ADDONS
-declare -A FAILED_ADDONS
 declare -a SKIP_LIST=()
 PULL_STATUS=""
 PUSH_STATUS=""
-MAX_RETRIES=3
-RETRY_DELAY=2
-CURL_TIMEOUT=10
-PARALLEL_JOBS=4
 
-# ======================
-# LOCK MANAGEMENT
-# ======================
-acquire_lock() {
-  local max_wait=300
-  local waited=0
-  
-  while [ $waited -lt $max_wait ]; do
-    if mkdir "$LOCK_FILE" 2>/dev/null; then
-      trap 'release_lock' EXIT INT TERM
-      echo $$ > "$LOCK_FILE/pid"
-      return 0
-    fi
-    
-    # Check if lock is stale (process no longer exists)
-    if [ -f "$LOCK_FILE/pid" ]; then
-      local lock_pid
-      lock_pid=$(cat "$LOCK_FILE/pid" 2>/dev/null || echo "")
-      if [ -n "$lock_pid" ] && ! kill -0 "$lock_pid" 2>/dev/null; then
-        log "$COLOR_YELLOW" "⚠️ Removing stale lock from PID $lock_pid"
-        release_lock
-        continue
-      fi
-    fi
-    
-    sleep 2
-    waited=$((waited + 2))
-  done
-  
-  log "$COLOR_RED" "❌ Failed to acquire lock after ${max_wait}s"
-  return 1
-}
-
-release_lock() {
-  rm -rf "$LOCK_FILE" 2>/dev/null || true
-}
-
-# ======================
-# HELPER FUNCTIONS
-# ======================
 safe_jq() {
   local expr="$1"
   local file="$2"
@@ -90,6 +43,7 @@ read_config() {
   DEBUG=$(jq -er '.debug // false' "$CONFIG_PATH" 2>/dev/null || echo "false")
   SKIP_PUSH=$(jq -er '.skip_push // false' "$CONFIG_PATH" 2>/dev/null || echo "false")
   
+  # Fix: Properly handle array reading with mapfile
   mapfile -t SKIP_LIST < <(jq -er '.skip_addons[]?' "$CONFIG_PATH" 2>/dev/null || true)
 
   NOTIFY_ENABLED=$(jq -er '.enable_notifications // false' "$CONFIG_PATH" 2>/dev/null || echo "false")
@@ -113,29 +67,15 @@ read_config() {
     GIT_TOKEN=$(jq -er '.github_token' "$CONFIG_PATH" 2>/dev/null || echo "")
   fi
 
-  # Sanitize repo URL for auth (prevent credential leakage)
   GIT_AUTH_REPO="$GIT_REPO"
   if [ -n "$GIT_USER" ] && [ -n "$GIT_TOKEN" ]; then
     GIT_AUTH_REPO="${GIT_REPO/https:\/\//https://$GIT_USER:$GIT_TOKEN@}"
   fi
-  
-  # Read optional performance tuning
-  PARALLEL_JOBS=$(jq -er '.parallel_jobs // 4' "$CONFIG_PATH" 2>/dev/null || echo "4")
-  CURL_TIMEOUT=$(jq -er '.curl_timeout // 10' "$CONFIG_PATH" 2>/dev/null || echo "10")
 }
 
 log() {
   local color="$1"; shift
-  
-  # Sanitize log output to prevent credential leakage
-  local message="$*"
-  if [ -n "$GIT_TOKEN" ]; then
-    message="${message//$GIT_TOKEN/***TOKEN***}"
-  fi
-  
-  echo -e "$(date '+[%Y-%m-%d %H:%M:%S %Z]') ${color}${message}${COLOR_RESET}" | tee -a "$LOG_FILE"
-  
-  [ "$DEBUG" = "true" ] && echo "[DEBUG] $*" >> "$LOG_FILE.debug"
+  echo -e "$(date '+[%Y-%m-%d %H:%M:%S %Z]') ${color}$*${COLOR_RESET}" | tee -a "$LOG_FILE"
 }
 
 notify() {
@@ -153,67 +93,10 @@ notify() {
   if [ "$NOTIFY_SERVICE" = "gotify" ]; then
     local payload
     payload=$(jq -n --arg t "$title" --arg m "$message" --argjson p "$priority" '{title: $t, message: $m, priority: $p}')
-    
-    if ! curl -s -X POST "${NOTIFY_URL%/}/message?token=${NOTIFY_TOKEN}" \
-         -H "Content-Type: application/json" \
-         -d "$payload" \
-         --max-time 10 > /dev/null 2>&1; then
-      log "$COLOR_RED" "Gotify notification failed"
-    fi
+    curl -s -X POST "${NOTIFY_URL%/}/message?token=${NOTIFY_TOKEN}" -H "Content-Type: application/json" -d "$payload" > /dev/null || log "$COLOR_RED" "❌ Gotify notification failed"
   fi
 }
 
-# ======================
-# RETRY WRAPPER
-# ======================
-retry_command() {
-  local max_attempts="$1"
-  shift
-  local attempt=1
-  local delay="$RETRY_DELAY"
-  
-  while [ $attempt -le $max_attempts ]; do
-    if "$@"; then
-      return 0
-    fi
-    
-    if [ $attempt -lt $max_attempts ]; then
-      log "$COLOR_YELLOW" "Command failed (attempt $attempt/$max_attempts), retrying in ${delay}s..."
-      sleep "$delay"
-      delay=$((delay * 2))
-    fi
-    
-    attempt=$((attempt + 1))
-  done
-  
-  log "$COLOR_RED" "Command failed after $max_attempts attempts"
-  return 1
-}
-
-# ======================
-# VERSION VALIDATION
-# ======================
-validate_version() {
-  local version="$1"
-  
-  # Validate version format (semver-like)
-  if ! echo "$version" | grep -qE '^[vV]?[0-9]+(\.[0-9]+){0,3}(-[a-zA-Z0-9]+)?$'; then
-    log "$COLOR_RED" "Invalid version format: $version"
-    return 1
-  fi
-  
-  # Reject suspicious versions
-  if echo "$version" | grep -qiE '(latest|dev|test|debug|alpha|beta|rc[0-9]*)$'; then
-    log "$COLOR_YELLOW" "Suspicious version tag: $version"
-    return 1
-  fi
-  
-  return 0
-}
-
-# ======================
-# TAG FETCHING WITH RETRY
-# ======================
 get_latest_tag() {
   local image="$1"
   [ -z "$image" ] && return
@@ -226,8 +109,7 @@ get_latest_tag() {
   local image_name="${image%%:*}"
   local cache_file="/tmp/tags_$(echo "$image_name" | tr '/' '_').txt"
 
-  # Use cached result if fresh (4 hours)
-  if [ -f "$cache_file" ] && [ $(($(date +%s) - $(stat -c %Y "$cache_file" 2>/dev/null || echo 0))) -lt 14400 ]; then
+  if [ -f "$cache_file" ] && [ $(($(date +%s) - $(stat -c %Y "$cache_file"))) -lt 14400 ]; then
     cat "$cache_file"
     return
   fi
@@ -235,101 +117,48 @@ get_latest_tag() {
   local tags=""
   local ns_repo="${image_name/library\//}"
 
-  # Docker Hub with retry
-  if [ -z "$tags" ]; then
-    local page=1
-    while [ $page -le 5 ]; do
-      local result
-      if result=$(retry_command 2 curl -sf --max-time "$CURL_TIMEOUT" \
-                  "https://hub.docker.com/v2/repositories/$ns_repo/tags?page=$page&page_size=100"); then
-        local page_tags
-        page_tags=$(echo "$result" | jq -r '.results[].name' 2>/dev/null || echo "")
-        [ -z "$page_tags" ] && break
-        tags="$tags
+  # Docker Hub
+  local page=1
+  while :; do
+    local result
+    result=$(curl -sf "https://hub.docker.com/v2/repositories/$ns_repo/tags?page=$page&page_size=100") || break
+    local page_tags
+    page_tags=$(echo "$result" | jq -r '.results[].name')
+    [ -z "$page_tags" ] && break
+    tags="$tags
 $page_tags"
-        [ "$(echo "$result" | jq -r '.next')" = "null" ] && break
-        page=$((page + 1))
-      else
-        break
-      fi
-    done
-  fi
+    [ "$(echo "$result" | jq -r '.next')" = "null" ] && break
+    page=$((page + 1))
+  done
 
-  # lscr.io with retry
+  # lscr.io
   if [ -z "$tags" ]; then
-    if result=$(retry_command 2 curl -sf --max-time "$CURL_TIMEOUT" \
-                "https://fleet.linuxserver.io/image?name=${image_name##*/}"); then
-      tags=$(echo "$result" | jq -r '.platforms."linux/amd64".lastUpdated.tag' 2>/dev/null || echo "")
-    fi
+    tags=$(curl -sf "https://fleet.linuxserver.io/image?name=${image_name##*/}" |
+      jq -r '.platforms."linux/amd64".lastUpdated.tag' 2>/dev/null || true)
   fi
 
-  # ghcr.io with retry
+  # ghcr.io
   if [ -z "$tags" ] && echo "$image_name" | grep -q "^ghcr.io/"; then
     local path="${image_name#ghcr.io/}"
     local org_repo="${path%%/*}"
     local package="${path#*/}"
-    
     local token
-    if token=$(retry_command 2 curl -sf --max-time "$CURL_TIMEOUT" \
-               "https://ghcr.io/token?scope=repository:$org_repo/$package:pull" | jq -r '.token'); then
-      if [ -n "$token" ] && [ "$token" != "null" ]; then
-        tags=$(retry_command 2 curl -sf --max-time "$CURL_TIMEOUT" \
-               -H "Authorization: Bearer $token" \
-               "https://ghcr.io/v2/$org_repo/$package/tags/list" | jq -r '.tags[]?' 2>/dev/null || echo "")
-      fi
+    token=$(curl -sf "https://ghcr.io/token?scope=repository:$org_repo/$package:pull" | jq -r '.token')
+    if [ -n "$token" ] && [ "$token" != "null" ]; then
+      tags=$(curl -sf -H "Authorization: Bearer $token" "https://ghcr.io/v2/$org_repo/$package/tags/list" | jq -r '.tags[]?')
     fi
   fi
 
-  # Filter and validate
-  local latest
-  latest=$(echo "$tags" | grep -E '^[vV]?[0-9]+(\.[0-9]+){1,2}(-[a-z0-9]+)?$' | \
-           grep -viE 'latest|dev|rc|beta|alpha' | \
-           sort -Vr | head -n1)
-  
-  if [ -n "$latest" ] && validate_version "$latest"; then
-    echo "$latest" | tee "$cache_file"
-  fi
+  echo "$tags" | grep -E '^[vV]?[0-9]+(\.[0-9]+){1,2}(-[a-z0-9]+)?$' | grep -viE 'latest|dev|rc|beta' | sort -Vr | head -n1 | tee "$cache_file"
 }
 
-# ======================
-# BACKUP MANAGEMENT
-# ======================
-backup_addon() {
-  local addon_path="$1"
-  local name
-  name=$(basename "$addon_path")
-  local backup_path="$BACKUP_DIR/$name"
-  
-  mkdir -p "$backup_path"
-  cp -f "$addon_path/config.json" "$backup_path/config.json.bak" 2>/dev/null || true
-  [ -f "$addon_path/build.json" ] && cp -f "$addon_path/build.json" "$backup_path/build.json.bak" 2>/dev/null || true
-  [ -f "$addon_path/CHANGELOG.md" ] && cp -f "$addon_path/CHANGELOG.md" "$backup_path/CHANGELOG.md.bak" 2>/dev/null || true
-}
-
-restore_addon() {
-  local addon_path="$1"
-  local name
-  name=$(basename "$addon_path")
-  local backup_path="$BACKUP_DIR/$name"
-  
-  if [ -d "$backup_path" ]; then
-    [ -f "$backup_path/config.json.bak" ] && cp -f "$backup_path/config.json.bak" "$addon_path/config.json"
-    [ -f "$backup_path/build.json.bak" ] && cp -f "$backup_path/build.json.bak" "$addon_path/build.json"
-    [ -f "$backup_path/CHANGELOG.md.bak" ] && cp -f "$backup_path/CHANGELOG.md.bak" "$addon_path/CHANGELOG.md"
-    log "$COLOR_YELLOW" "Restored backup for $name"
-  fi
-}
-
-# ======================
-# ADDON UPDATE LOGIC
-# ======================
 update_addon() {
   local addon_path="$1"
   local name
   name=$(basename "$addon_path")
 
   for skip in "${SKIP_LIST[@]}"; do
-    [ "$name" = "$skip" ] && log "$COLOR_YELLOW" "INFO" "⏭️ Skipping $name (listed)" && return 0
+    [ "$name" = "$skip" ] && log "$COLOR_YELLOW" "⏭️ Skipping $name (listed)" && return
   done
 
   log "$COLOR_DARK_BLUE" "🔍 Checking $name"
@@ -349,14 +178,14 @@ update_addon() {
   if [ -z "$image" ]; then
     log "$COLOR_YELLOW" "⚠️ No image defined for $name"
     UNCHANGED_ADDONS["$name"]="No image defined"
-    return 0
+    return
   fi
 
   latest=$(get_latest_tag "$image")
   if [ -z "$latest" ]; then
     log "$COLOR_YELLOW" "⚠️ No valid version tag found for $image"
     UNCHANGED_ADDONS["$name"]="No valid tag"
-    return 0
+    return
   fi
 
   if [ "$version" != "$latest" ]; then
@@ -365,46 +194,26 @@ update_addon() {
 
     if [ "$DRY_RUN" = "true" ]; then
       log "$COLOR_PURPLE" "💡 Dry run active: skipping update of $name"
-      return 0
+      return
     fi
 
-    # Backup before updating
-    backup_addon "$addon_path"
-
-    # Atomic file operations with rollback on failure
+    # Fix: Atomic file operations with better error handling
     if ! jq --arg v "$latest" '.version = $v' "$config" > "$config.tmp"; then
       log "$COLOR_RED" "❌ Failed to update $config"
       rm -f "$config.tmp"
-      restore_addon "$addon_path"
-      FAILED_ADDONS["$name"]="Config update failed"
-      return 1
+      return
     fi
-    
-    if ! mv "$config.tmp" "$config"; then
-      log "$COLOR_RED" "❌ Failed to write $config"
-      restore_addon "$addon_path"
-      FAILED_ADDONS["$name"]="Config write failed"
-      return 1
-    fi
+    mv "$config.tmp" "$config"
     
     if [ -f "$build" ]; then
       if ! jq --arg v "$latest" '.version = $v' "$build" > "$build.tmp"; then
         log "$COLOR_RED" "❌ Failed to update $build"
         rm -f "$build.tmp"
-        restore_addon "$addon_path"
-        FAILED_ADDONS["$name"]="Build update failed"
-        return 1
+        return
       fi
-      
-      if ! mv "$build.tmp" "$build"; then
-        log "$COLOR_RED" "❌ Failed to write $build"
-        restore_addon "$addon_path"
-        FAILED_ADDONS["$name"]="Build write failed"
-        return 1
-      fi
+      mv "$build.tmp" "$build"
     fi
 
-    # Update changelog
     local changelog="$addon_path/CHANGELOG.md"
     local timestamp
     timestamp=$(date '+%Y-%m-%d %H:%M:%S')
@@ -420,6 +229,7 @@ update_addon() {
       image_url="https://hub.docker.com/r/${image%%:*}/tags"
     fi
 
+    # Fix: Safer changelog update with error handling
     if [ -f "$changelog" ]; then
       {
         echo "## $latest ($timestamp)"
@@ -434,11 +244,9 @@ update_addon() {
       else
         log "$COLOR_RED" "❌ Failed to update changelog for $name"
         rm -f "$changelog.tmp"
-        restore_addon "$addon_path"
-        FAILED_ADDONS["$name"]="Changelog update failed"
-        return 1
       fi
     else
+      # Create changelog if it doesn't exist
       {
         echo "# Changelog"
         echo
@@ -452,13 +260,8 @@ update_addon() {
     log "$COLOR_CYAN" "✅ $name is up to date ($version)"
     UNCHANGED_ADDONS["$name"]="Up to date ($version)"
   fi
-  
-  return 0
 }
 
-# ======================
-# GIT OPERATIONS
-# ======================
 commit_and_push() {
   cd "$REPO_DIR" || {
     log "$COLOR_RED" "❌ Failed to change to repo directory"
@@ -468,30 +271,16 @@ commit_and_push() {
   git config user.email "updater@local"
   git config user.name "Add-on Updater"
 
-  if retry_command "$MAX_RETRIES" git pull --rebase; then
+  if git pull --rebase; then
     PULL_STATUS="✅ Git pull (rebase) succeeded"
     log "$COLOR_GREEN" "$PULL_STATUS"
   else
     PULL_STATUS="❌ Git pull (rebase) failed"
     log "$COLOR_RED" "$PULL_STATUS"
-    return 1
   fi
 
   if [ -n "$(git status --porcelain)" ]; then
-    local commit_msg="🔄 Updated add-on versions"
-    
-    # Add details to commit message
-    if [ ${#UPDATED_ADDONS[@]} -gt 0 ]; then
-      commit_msg="$commit_msg
-
-Updated addons:"
-      for addon in "${!UPDATED_ADDONS[@]}"; do
-        commit_msg="$commit_msg
-- $addon: ${UPDATED_ADDONS[$addon]}"
-      done
-    fi
-    
-    if git add . && git commit -m "$commit_msg"; then
+    if git add . && git commit -m "🔄 Updated add-on versions"; then
       log "$COLOR_GREEN" "✅ Changes committed successfully"
     else
       log "$COLOR_RED" "❌ Failed to commit changes"
@@ -500,8 +289,8 @@ Updated addons:"
     
     if [ "$SKIP_PUSH" = "true" ]; then
       PUSH_STATUS="⏭️ Git push skipped (skip_push enabled)"
-      log "$COLOR_YELLOW" "INFO" "$PUSH_STATUS"
-    elif retry_command "$MAX_RETRIES" git push "$GIT_AUTH_REPO" main; then
+      log "$COLOR_YELLOW" "$PUSH_STATUS"
+    elif git push "$GIT_AUTH_REPO" main; then
       PUSH_STATUS="✅ Git push succeeded"
       log "$COLOR_GREEN" "$PUSH_STATUS"
     else
@@ -513,60 +302,16 @@ Updated addons:"
     PUSH_STATUS="ℹ️ No changes to commit or push"
     log "$COLOR_CYAN" "$PUSH_STATUS"
   fi
-  
-  return 0
 }
 
-# ======================
-# PARALLEL PROCESSING
-# ======================
-process_addons_parallel() {
-  local temp_dir="$1"
-  local pids=()
-  local count=0
-  
-  for path in "$REPO_DIR"/*; do
-    [ ! -d "$path" ] && continue
-    
-    # Run in background with job control
-    (update_addon "$path") &
-    pids+=($!)
-    count=$((count + 1))
-    
-    # Limit concurrent jobs
-    if [ $count -ge "$PARALLEL_JOBS" ]; then
-      wait "${pids[@]}"
-      pids=()
-      count=0
-    fi
-  done
-  
-  # Wait for remaining jobs
-  [ ${#pids[@]} -gt 0 ] && wait "${pids[@]}"
-}
-
-# ======================
-# MAIN LOGIC
-# ======================
 main() {
-  # Initialize log
-  : > "$LOG_FILE"
-  
-  # Acquire lock
-  if ! acquire_lock; then
-    log "$COLOR_RED" "❌ Another instance is running"
-    exit 1
-  fi
-  
+  echo "" > "$LOG_FILE"
   read_config
   log "$COLOR_BLUE" "ℹ️ Starting Home Assistant Add-on Updater"
-  log "$COLOR_BLUE" "ℹ️ Parallel jobs: $PARALLEL_JOBS, Curl timeout: ${CURL_TIMEOUT}s"
 
-  # Setup temp and backup directories
+  # Fix: Better directory handling
   local temp_dir
   temp_dir=$(mktemp -d) || temp_dir="/tmp/updater_$$"
-  mkdir -p "$BACKUP_DIR"
-  
   cd "$temp_dir" || {
     log "$COLOR_RED" "❌ Failed to change to temporary directory"
     exit 1
@@ -574,63 +319,51 @@ main() {
   
   [ -d "$REPO_DIR" ] && rm -rf "$REPO_DIR"
 
-  if ! retry_command "$MAX_RETRIES" git clone --depth 1 "$GIT_AUTH_REPO" "$REPO_DIR"; then
-    log "$COLOR_RED" "❌ Git clone failed after retries"
-    notify "Updater Error" "Git clone failed after $MAX_RETRIES attempts" 5
+  if ! git clone --depth 1 "$GIT_AUTH_REPO" "$REPO_DIR"; then
+    log "$COLOR_RED" "❌ Git clone failed"
+    notify "Updater Error" "Git clone failed" 5
     exit 1
   fi
 
-  # Process addons (parallel if enabled)
-  if [ "$PARALLEL_JOBS" -gt 1 ]; then
-    log "$COLOR_BLUE" "ℹ️ Processing addons in parallel (jobs: $PARALLEL_JOBS)"
-    process_addons_parallel "$temp_dir"
-  else
-    for path in "$REPO_DIR"/*; do
-      [ -d "$path" ] && update_addon "$path"
-    done
-  fi
+  # Fix: Better error handling in the loop
+  for path in "$REPO_DIR"/*; do
+    if [ -d "$path" ]; then
+      update_addon "$path" || {
+        local name
+        name=$(basename "$path")
+        log "$COLOR_RED" "❌ Failed to update addon $name"
+        UNCHANGED_ADDONS["$name"]="Update failed"
+      }
+    fi
+  done
 
-  # Commit and push changes
-  if ! commit_and_push; then
+  commit_and_push || {
     log "$COLOR_RED" "❌ Git operations failed"
     notify "Updater Error" "Git commit/push failed" 5
-  fi
+  }
 
-  # Generate summary
   local summary="📦 Add-on Update Summary
 🕒 $(date '+%Y-%m-%d %H:%M:%S %Z')
 
 "
 
-  if [ ${#UPDATED_ADDONS[@]} -gt 0 ]; then
-    summary+="🔄 Updated (${#UPDATED_ADDONS[@]}):\n"
-    for name in "${!UPDATED_ADDONS[@]}"; do
-      summary+="  • $name: ${UPDATED_ADDONS[$name]}
-"
-    done
-    summary+="
-"
-  fi
-  
-  if [ ${#FAILED_ADDONS[@]} -gt 0 ]; then
-    summary+="❌ Failed (${#FAILED_ADDONS[@]}):\n"
-    for name in "${!FAILED_ADDONS[@]}"; do
-      summary+="  • $name: ${FAILED_ADDONS[$name]}
-"
-    done
-    summary+="
-"
-  fi
+  for path in "$REPO_DIR"/*; do
+    [ ! -d "$path" ] && continue
+    local name
+    name=$(basename "$path")
+    local status=""
 
-  if [ ${#UNCHANGED_ADDONS[@]} -gt 0 ]; then
-    summary+="✅ Unchanged (${#UNCHANGED_ADDONS[@]}):\n"
-    for name in "${!UNCHANGED_ADDONS[@]}"; do
-      summary+="  • $name: ${UNCHANGED_ADDONS[$name]}
+    if [ -n "${UPDATED_ADDONS[$name]}" ]; then
+      status="🔄 ${UPDATED_ADDONS[$name]}"
+    elif [ -n "${UNCHANGED_ADDONS[$name]}" ]; then
+      status="✅ ${UNCHANGED_ADDONS[$name]}"
+    else
+      status="⏭️ Skipped"
+    fi
+
+    summary+="$name: $status
 "
-    done
-    summary+="
-"
-  fi
+  done
 
   [ -n "$PULL_STATUS" ] && summary+="
 $PULL_STATUS"
@@ -639,17 +372,11 @@ $PUSH_STATUS"
   [ "$DRY_RUN" = "true" ] && summary+="
 🔁 DRY RUN MODE ENABLED"
 
-  # Determine notification priority
-  local notify_priority=3
-  [ ${#FAILED_ADDONS[@]} -gt 0 ] && notify_priority=5
-  [ ${#UPDATED_ADDONS[@]} -eq 0 ] && [ ${#FAILED_ADDONS[@]} -eq 0 ] && notify_priority=0
-
-  notify "Add-on Updater" "$summary" "$notify_priority"
+  notify "Add-on Updater" "$summary" 3
   log "$COLOR_BLUE" "ℹ️ Update process complete."
-  echo -e "\n$summary" | tee -a "$LOG_FILE"
   
-  # Cleanup
-  cd / && rm -rf "$temp_dir" "$BACKUP_DIR" 2>/dev/null || true
+  # Clean up temporary directory
+  cd / && rm -rf "$temp_dir" 2>/dev/null || true
 }
 
 main "$@"
