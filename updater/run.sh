@@ -126,8 +126,6 @@ read_config() {
 
 log() {
   local color="$1"; shift
-  local level="${1:-INFO}"
-  shift || true
   
   # Sanitize log output to prevent credential leakage
   local message="$*"
@@ -135,7 +133,7 @@ log() {
     message="${message//$GIT_TOKEN/***TOKEN***}"
   fi
   
-  echo -e "$(date '+[%Y-%m-%d %H:%M:%S %Z]') ${color}[${level}]${COLOR_RESET} ${message}" | tee -a "$LOG_FILE"
+  echo -e "$(date '+[%Y-%m-%d %H:%M:%S %Z]') ${color}${message}${COLOR_RESET}" | tee -a "$LOG_FILE"
   
   [ "$DEBUG" = "true" ] && echo "[DEBUG] $*" >> "$LOG_FILE.debug"
 }
@@ -160,7 +158,7 @@ notify() {
          -H "Content-Type: application/json" \
          -d "$payload" \
          --max-time 10 > /dev/null 2>&1; then
-      log "$COLOR_RED" "ERROR" "Gotify notification failed"
+      log "$COLOR_RED" "Gotify notification failed"
     fi
   fi
 }
@@ -180,7 +178,7 @@ retry_command() {
     fi
     
     if [ $attempt -lt $max_attempts ]; then
-      log "$COLOR_YELLOW" "WARN" "Command failed (attempt $attempt/$max_attempts), retrying in ${delay}s..."
+      log "$COLOR_YELLOW" "Command failed (attempt $attempt/$max_attempts), retrying in ${delay}s..."
       sleep "$delay"
       delay=$((delay * 2))
     fi
@@ -188,7 +186,7 @@ retry_command() {
     attempt=$((attempt + 1))
   done
   
-  log "$COLOR_RED" "ERROR" "Command failed after $max_attempts attempts"
+  log "$COLOR_RED" "Command failed after $max_attempts attempts"
   return 1
 }
 
@@ -200,13 +198,13 @@ validate_version() {
   
   # Validate version format (semver-like)
   if ! echo "$version" | grep -qE '^[vV]?[0-9]+(\.[0-9]+){0,3}(-[a-zA-Z0-9]+)?$'; then
-    log "$COLOR_RED" "ERROR" "Invalid version format: $version"
+    log "$COLOR_RED" "Invalid version format: $version"
     return 1
   fi
   
   # Reject suspicious versions
   if echo "$version" | grep -qiE '(latest|dev|test|debug|alpha|beta|rc[0-9]*)$'; then
-    log "$COLOR_YELLOW" "WARN" "Suspicious version tag: $version"
+    log "$COLOR_YELLOW" "Suspicious version tag: $version"
     return 1
   fi
   
@@ -318,7 +316,7 @@ restore_addon() {
     [ -f "$backup_path/config.json.bak" ] && cp -f "$backup_path/config.json.bak" "$addon_path/config.json"
     [ -f "$backup_path/build.json.bak" ] && cp -f "$backup_path/build.json.bak" "$addon_path/build.json"
     [ -f "$backup_path/CHANGELOG.md.bak" ] && cp -f "$backup_path/CHANGELOG.md.bak" "$addon_path/CHANGELOG.md"
-    log "$COLOR_YELLOW" "WARN" "Restored backup for $name"
+    log "$COLOR_YELLOW" "Restored backup for $name"
   fi
 }
 
@@ -334,7 +332,7 @@ update_addon() {
     [ "$name" = "$skip" ] && log "$COLOR_YELLOW" "INFO" "⏭️ Skipping $name (listed)" && return 0
   done
 
-  log "$COLOR_DARK_BLUE" "INFO" "🔍 Checking $name"
+  log "$COLOR_DARK_BLUE" "🔍 Checking $name"
 
   local config="$addon_path/config.json"
   local build="$addon_path/build.json"
@@ -349,24 +347,24 @@ update_addon() {
   fi
 
   if [ -z "$image" ]; then
-    log "$COLOR_YELLOW" "WARN" "⚠️ No image defined for $name"
+    log "$COLOR_YELLOW" "⚠️ No image defined for $name"
     UNCHANGED_ADDONS["$name"]="No image defined"
     return 0
   fi
 
   latest=$(get_latest_tag "$image")
   if [ -z "$latest" ]; then
-    log "$COLOR_YELLOW" "WARN" "⚠️ No valid version tag found for $image"
+    log "$COLOR_YELLOW" "⚠️ No valid version tag found for $image"
     UNCHANGED_ADDONS["$name"]="No valid tag"
     return 0
   fi
 
   if [ "$version" != "$latest" ]; then
-    log "$COLOR_GREEN" "INFO" "⬆️ $name updated from $version to $latest"
+    log "$COLOR_GREEN" "⬆️ $name updated from $version to $latest"
     UPDATED_ADDONS["$name"]="$version → $latest"
 
     if [ "$DRY_RUN" = "true" ]; then
-      log "$COLOR_PURPLE" "INFO" "💡 Dry run active: skipping update of $name"
+      log "$COLOR_PURPLE" "💡 Dry run active: skipping update of $name"
       return 0
     fi
 
@@ -375,7 +373,7 @@ update_addon() {
 
     # Atomic file operations with rollback on failure
     if ! jq --arg v "$latest" '.version = $v' "$config" > "$config.tmp"; then
-      log "$COLOR_RED" "ERROR" "❌ Failed to update $config"
+      log "$COLOR_RED" "❌ Failed to update $config"
       rm -f "$config.tmp"
       restore_addon "$addon_path"
       FAILED_ADDONS["$name"]="Config update failed"
@@ -383,7 +381,7 @@ update_addon() {
     fi
     
     if ! mv "$config.tmp" "$config"; then
-      log "$COLOR_RED" "ERROR" "❌ Failed to write $config"
+      log "$COLOR_RED" "❌ Failed to write $config"
       restore_addon "$addon_path"
       FAILED_ADDONS["$name"]="Config write failed"
       return 1
@@ -391,7 +389,7 @@ update_addon() {
     
     if [ -f "$build" ]; then
       if ! jq --arg v "$latest" '.version = $v' "$build" > "$build.tmp"; then
-        log "$COLOR_RED" "ERROR" "❌ Failed to update $build"
+        log "$COLOR_RED" "❌ Failed to update $build"
         rm -f "$build.tmp"
         restore_addon "$addon_path"
         FAILED_ADDONS["$name"]="Build update failed"
@@ -399,7 +397,7 @@ update_addon() {
       fi
       
       if ! mv "$build.tmp" "$build"; then
-        log "$COLOR_RED" "ERROR" "❌ Failed to write $build"
+        log "$COLOR_RED" "❌ Failed to write $build"
         restore_addon "$addon_path"
         FAILED_ADDONS["$name"]="Build write failed"
         return 1
@@ -434,7 +432,7 @@ update_addon() {
       if [ -s "$changelog.tmp" ]; then
         mv "$changelog.tmp" "$changelog"
       else
-        log "$COLOR_RED" "ERROR" "❌ Failed to update changelog for $name"
+        log "$COLOR_RED" "❌ Failed to update changelog for $name"
         rm -f "$changelog.tmp"
         restore_addon "$addon_path"
         FAILED_ADDONS["$name"]="Changelog update failed"
@@ -451,7 +449,7 @@ update_addon() {
       } > "$changelog"
     fi
   else
-    log "$COLOR_CYAN" "INFO" "✅ $name is up to date ($version)"
+    log "$COLOR_CYAN" "✅ $name is up to date ($version)"
     UNCHANGED_ADDONS["$name"]="Up to date ($version)"
   fi
   
@@ -463,7 +461,7 @@ update_addon() {
 # ======================
 commit_and_push() {
   cd "$REPO_DIR" || {
-    log "$COLOR_RED" "ERROR" "❌ Failed to change to repo directory"
+    log "$COLOR_RED" "❌ Failed to change to repo directory"
     return 1
   }
   
@@ -472,10 +470,10 @@ commit_and_push() {
 
   if retry_command "$MAX_RETRIES" git pull --rebase; then
     PULL_STATUS="✅ Git pull (rebase) succeeded"
-    log "$COLOR_GREEN" "INFO" "$PULL_STATUS"
+    log "$COLOR_GREEN" "$PULL_STATUS"
   else
     PULL_STATUS="❌ Git pull (rebase) failed"
-    log "$COLOR_RED" "ERROR" "$PULL_STATUS"
+    log "$COLOR_RED" "$PULL_STATUS"
     return 1
   fi
 
@@ -494,9 +492,9 @@ Updated addons:"
     fi
     
     if git add . && git commit -m "$commit_msg"; then
-      log "$COLOR_GREEN" "INFO" "✅ Changes committed successfully"
+      log "$COLOR_GREEN" "✅ Changes committed successfully"
     else
-      log "$COLOR_RED" "ERROR" "❌ Failed to commit changes"
+      log "$COLOR_RED" "❌ Failed to commit changes"
       return 1
     fi
     
@@ -505,15 +503,15 @@ Updated addons:"
       log "$COLOR_YELLOW" "INFO" "$PUSH_STATUS"
     elif retry_command "$MAX_RETRIES" git push "$GIT_AUTH_REPO" main; then
       PUSH_STATUS="✅ Git push succeeded"
-      log "$COLOR_GREEN" "INFO" "$PUSH_STATUS"
+      log "$COLOR_GREEN" "$PUSH_STATUS"
     else
-      log "$COLOR_RED" "ERROR" "❌ Git push failed"
+      log "$COLOR_RED" "❌ Git push failed"
       PUSH_STATUS="❌ Git push failed"
       return 1
     fi
   else
     PUSH_STATUS="ℹ️ No changes to commit or push"
-    log "$COLOR_CYAN" "INFO" "$PUSH_STATUS"
+    log "$COLOR_CYAN" "$PUSH_STATUS"
   fi
   
   return 0
@@ -556,13 +554,13 @@ main() {
   
   # Acquire lock
   if ! acquire_lock; then
-    log "$COLOR_RED" "ERROR" "❌ Another instance is running"
+    log "$COLOR_RED" "❌ Another instance is running"
     exit 1
   fi
   
   read_config
-  log "$COLOR_BLUE" "INFO" "ℹ️ Starting Home Assistant Add-on Updater"
-  log "$COLOR_BLUE" "INFO" "ℹ️ Parallel jobs: $PARALLEL_JOBS, Curl timeout: ${CURL_TIMEOUT}s"
+  log "$COLOR_BLUE" "ℹ️ Starting Home Assistant Add-on Updater"
+  log "$COLOR_BLUE" "ℹ️ Parallel jobs: $PARALLEL_JOBS, Curl timeout: ${CURL_TIMEOUT}s"
 
   # Setup temp and backup directories
   local temp_dir
@@ -570,21 +568,21 @@ main() {
   mkdir -p "$BACKUP_DIR"
   
   cd "$temp_dir" || {
-    log "$COLOR_RED" "ERROR" "❌ Failed to change to temporary directory"
+    log "$COLOR_RED" "❌ Failed to change to temporary directory"
     exit 1
   }
   
   [ -d "$REPO_DIR" ] && rm -rf "$REPO_DIR"
 
   if ! retry_command "$MAX_RETRIES" git clone --depth 1 "$GIT_AUTH_REPO" "$REPO_DIR"; then
-    log "$COLOR_RED" "ERROR" "❌ Git clone failed after retries"
+    log "$COLOR_RED" "❌ Git clone failed after retries"
     notify "Updater Error" "Git clone failed after $MAX_RETRIES attempts" 5
     exit 1
   fi
 
   # Process addons (parallel if enabled)
   if [ "$PARALLEL_JOBS" -gt 1 ]; then
-    log "$COLOR_BLUE" "INFO" "ℹ️ Processing addons in parallel (jobs: $PARALLEL_JOBS)"
+    log "$COLOR_BLUE" "ℹ️ Processing addons in parallel (jobs: $PARALLEL_JOBS)"
     process_addons_parallel "$temp_dir"
   else
     for path in "$REPO_DIR"/*; do
@@ -594,7 +592,7 @@ main() {
 
   # Commit and push changes
   if ! commit_and_push; then
-    log "$COLOR_RED" "ERROR" "❌ Git operations failed"
+    log "$COLOR_RED" "❌ Git operations failed"
     notify "Updater Error" "Git commit/push failed" 5
   fi
 
@@ -647,7 +645,7 @@ $PUSH_STATUS"
   [ ${#UPDATED_ADDONS[@]} -eq 0 ] && [ ${#FAILED_ADDONS[@]} -eq 0 ] && notify_priority=0
 
   notify "Add-on Updater" "$summary" "$notify_priority"
-  log "$COLOR_BLUE" "INFO" "ℹ️ Update process complete."
+  log "$COLOR_BLUE" "ℹ️ Update process complete."
   echo -e "\n$summary" | tee -a "$LOG_FILE"
   
   # Cleanup
