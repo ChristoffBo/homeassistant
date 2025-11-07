@@ -1020,6 +1020,24 @@
                             <div class="toggle-slider"></div>
                         </div>
                     </div>
+
+                    <div class="section-title" style="margin-top: 20px;">Cache Prewarming</div>
+                    <div class="toggle-container">
+                        <span>Enable Cache Prewarming</span>
+                        <div class="toggle-switch" id="toggle-cache-prewarm" onclick="toggleSwitch(this)">
+                            <div class="toggle-slider"></div>
+                        </div>
+                    </div>
+
+                    <div class="setting-row">
+                        <label>Prewarm Interval (seconds)</label>
+                        <input type="number" id="cache-prewarm-interval" value="3600" min="300" max="86400" />
+                    </div>
+
+                    <div class="setting-row">
+                        <label>Domains to Prewarm (one per line)</label>
+                        <textarea id="cache-prewarm-domains" rows="6" style="width: 100%; font-family: monospace; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: #fff; padding: 10px; border-radius: 4px;" placeholder="google.com&#10;github.com&#10;cloudflare.com"></textarea>
+                    </div>
                 </div>
 
                 <div class="section">
@@ -1740,6 +1758,9 @@
             setToggle('toggle-dns-enabled', config.enabled !== false);
             setToggle('toggle-cache-enabled', config.cache_enabled !== false);
             setToggle('toggle-stale-serving', config.stale_serving || false);
+            setToggle('toggle-cache-prewarm', config.cache_prewarm_enabled || false);
+            document.getElementById('cache-prewarm-interval').value = config.cache_prewarm_interval || 3600;
+            document.getElementById('cache-prewarm-domains').value = (config.cache_prewarm_domains || []).join('\n');
             setToggle('toggle-upstream-parallel', config.upstream_parallel || false);
 
             // DHCP
@@ -1848,6 +1869,10 @@
                 updatedConfig.cache_max_size = parseInt(document.getElementById('cache-max-size').value);
                 updatedConfig.negative_cache_ttl = parseInt(document.getElementById('negative-cache-ttl').value);
                 updatedConfig.stale_serving = getToggle('toggle-stale-serving');
+                updatedConfig.cache_prewarm_enabled = getToggle('toggle-cache-prewarm');
+                updatedConfig.cache_prewarm_interval = parseInt(document.getElementById('cache-prewarm-interval').value);
+                updatedConfig.cache_prewarm_domains = document.getElementById('cache-prewarm-domains').value
+                    .split('\n').map(s => s.trim()).filter(s => s);
                 updatedConfig.upstream_timeout = parseFloat(document.getElementById('upstream-timeout').value);
                 updatedConfig.upstream_parallel = getToggle('toggle-upstream-parallel');
             } else if (section === 'dhcp') {
