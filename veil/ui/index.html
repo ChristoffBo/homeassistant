@@ -1623,7 +1623,7 @@
             });
         }
 
-        // Update top blocked - FIXED with block type badges
+        // Update top blocked - FIXED to handle both object and array formats
         function updateTopBlocked(topBlocked) {
             const container = document.getElementById('top-blocked-list');
             container.innerHTML = '';
@@ -1638,7 +1638,6 @@
                 const count = item.count || item[1] || 0;
                 const type = item.type || 'unknown';
                 
-                // Determine badge color
                 let badgeColor = '#666';
                 let badgeText = type;
                 if (type === 'blacklist') {
