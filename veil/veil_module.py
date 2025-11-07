@@ -1843,59 +1843,88 @@ class DHCPServer:
         return None
    
     def _parse_dhcp_packet(self, data: bytes) -> Optional[dict]:
+        """Robust DHCP packet parser – never raises struct errors."""
         if len(data) < 240:
+            log.debug(f"[dhcp] Packet too short ({len(data)} bytes)")
             return None
-       
+
         try:
+            # ---- Fixed header fields (with length guards) ----
             packet = {
                 "op": data[0],
                 "htype": data[1],
                 "hlen": data[2],
                 "hops": data[3],
-                "xid": struct.unpack("!I", data[4:8])[0],
-                "secs": struct.unpack("!H", data[8:10])[0],
-                "flags": struct.unpack("!H", data[10:12])[0],
-                "ciaddr": socket.inet_ntoa(data[12:16]),
-                "yiaddr": socket.inet_ntoa(data[16:20]),
-                "siaddr": socket.inet_ntoa(data[20:24]),
-                "giaddr": socket.inet_ntoa(data[24:28]),
-                "chaddr": ':'.join(f'{b:02x}' for b in data[28:34]),
-                "sname": data[44:108].split(b'\x00')[0].decode('utf-8', errors='ignore'),
-                "file": data[108:236].split(b'\x00')[0].decode('utf-8', errors='ignore'),
+                "xid": struct.unpack("!I", data[4:8])[0] if len(data) >= 8 else 0,
+                "secs": struct.unpack("!H", data[8:10])[0] if len(data) >= 10 else 0,
+                "flags": struct.unpack("!H", data[10:12])[0] if len(data) >= 12 else 0,
+                "ciaddr": socket.inet_ntoa(data[12:16]) if len(data) >= 16 else "0.0.0.0",
+                "yiaddr": socket.inet_ntoa(data[16:20]) if len(data) >= 20 else "0.0.0.0",
+                "siaddr": socket.inet_ntoa(data[20:24]) if len(data) >= 24 else "0.0.0.0",
+                "giaddr": socket.inet_ntoa(data[24:28]) if len(data) >= 28 else "0.0.0.0",
+                "chaddr": ':'.join(f'{b:02x}' for b in data[28:34]) if len(data) >= 34 else "00:00:00:00:00:00",
+                "sname": data[44:108].split(b'\x00')[0].decode('utf-8', errors='ignore') if len(data) >= 108 else "",
+                "file": data[108:236].split(b'\x00')[0].decode('utf-8', errors='ignore') if len(data) >= 236 else "",
                 "options": {}
             }
-           
-            if data[236:240] != b'\x63\x82\x53\x63':
+
+            # ---- Magic cookie ----
+            magic = data[236:240]
+            if len(magic) != 4 or magic != b'\x63\x82\x53\x63':
+                log.debug(f"[dhcp] Bad magic cookie: {magic.hex()}")
                 return None
-           
+
+            # ---- Options parsing (bullet-proof) ----
             i = 240
             while i < len(data):
+                if i + 1 >= len(data):
+                    break
                 opt = data[i]
+
                 if opt == DHCP_OPT_END:
                     break
                 if opt == DHCP_OPT_PAD:
                     i += 1
                     continue
-               
-                if i + 1 >= len(data):
+
+                if i + 2 >= len(data):
                     break
-               
-                opt_len = data[i + 1]
+
+                # opt_len must be a real integer 0-255
+                try:
+                    opt_len = int(data[i + 1])
+                except Exception:
+                    log.debug(f"[dhcp] opt_len not int at {i}")
+                    break
+
+                if opt_len < 0 or opt_len > 255:
+                    log.debug(f"[dhcp] opt_len out of range: {opt_len}")
+                    break
+
                 if i + 2 + opt_len > len(data):
+                    log.debug(f"[dhcp] Option truncated at {i}, len={opt_len}")
                     break
-               
+
                 opt_data = data[i + 2:i + 2 + opt_len]
                 packet["options"][opt] = opt_data
                 i += 2 + opt_len
-                if isinstance(packet.get("chaddr"), (dict, list)):
-                    log.error(f"[dhcp] Malformed chaddr field: {packet['chaddr']}")
-                    packet["chaddr"] = str(packet["chaddr"])
-            
+
+            # ---- chaddr sanity (same as original) ----
+            if isinstance(packet.get("chaddr"), (dict, list)):
+                log.error(f"[dhcp] Malformed chaddr field: {packet['chaddr']}")
+                packet["chaddr"] = str(packet["chaddr"])
+
+            # ---- Require a message type ----
+            if DHCP_OPT_MESSAGE_TYPE not in packet["options"]:
+                log.debug("[dhcp] Missing DHCP message type")
+                return None
+
             return packet
-       
+
         except Exception as e:
-            log.error(f"[dhcp] Parse error: {e}")
+            log.debug(f"[dhcp] Parse exception: {type(e).__name__}: {e}")
             return None
+
    
     def _build_dhcp_packet(self, packet: dict, msg_type: int, offered_ip: str) -> bytes:
         response = bytearray(548)
