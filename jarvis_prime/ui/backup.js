@@ -440,7 +440,7 @@
       compress: document.getElementById('backup-job-compress').checked,
       stop_containers: document.getElementById('backup-job-stop-containers').checked,
       containers: document.getElementById('backup-job-containers').value.split(',').map(c => c.trim()).filter(c => c),
-      schedule: document.getElementById('backup-job-schedule').value,
+      cron: document.getElementById('backup-job-schedule').value,
       retention_days: parseInt(document.getElementById('backup-job-retention-days').value) || 0,
       retention_count: parseInt(document.getElementById('backup-job-retention-count').value) || 0,
       enabled: true
@@ -567,7 +567,7 @@
           <div style="flex: 1;">
             <div style="font-weight: 600; color: var(--text-primary); margin-bottom: 8px;">${job.name}</div>
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; font-size: 13px; color: var(--text-muted);">
-              <div><strong>Schedule:</strong> ${job.schedule}</div>
+              <div><strong>Schedule:</strong> ${job.cron || job.schedule || 'N/A'}</div>
               <div><strong>Last Run:</strong> ${job.last_run ? formatDate(job.last_run) : 'Never'}</div>
               <div><strong>Status:</strong> ${job.enabled ? '<span style="color: #10b981;">Active</span>' : '<span style="color: #ef4444;">Disabled</span>'}</div>
             </div>
@@ -1521,7 +1521,7 @@
     document.getElementById('backup-edit-job-compress').checked = job.compress !== false;
     document.getElementById('backup-edit-job-stop-containers').checked = job.stop_containers || false;
     document.getElementById('backup-edit-job-containers').value = Array.isArray(job.containers) ? job.containers.join(', ') : '';
-    document.getElementById('backup-edit-job-schedule').value = job.schedule || '0 2 * * *';
+    document.getElementById('backup-edit-job-schedule').value = job.cron || job.schedule || '0 2 * * *';
     document.getElementById('backup-edit-job-retention-days').value = job.retention_days || 0;
     document.getElementById('backup-edit-job-retention-count').value = job.retention_count || 0;
     document.getElementById('backup-edit-job-enabled').checked = job.enabled !== false;
@@ -1556,7 +1556,7 @@
       compress: document.getElementById('backup-edit-job-compress').checked,
       stop_containers: document.getElementById('backup-edit-job-stop-containers').checked,
       containers: document.getElementById('backup-edit-job-containers').value.split(',').map(c => c.trim()).filter(c => c),
-      schedule: document.getElementById('backup-edit-job-schedule').value,
+      cron: document.getElementById('backup-edit-job-schedule').value,
       retention_days: parseInt(document.getElementById('backup-edit-job-retention-days').value) || 0,
       retention_count: parseInt(document.getElementById('backup-edit-job-retention-count').value) || 0,
       enabled: document.getElementById('backup-edit-job-enabled').checked
