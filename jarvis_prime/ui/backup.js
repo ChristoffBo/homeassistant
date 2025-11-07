@@ -3,7 +3,6 @@
  * Click and select folders from source/destination servers
  * 
  * FIXED: Archive contents browsing now uses /api/backup/archives/{id}/contents
- * FIXED: Changed 'schedule' to 'cron' to match backend expectation
  */
 
 (function() {
@@ -156,185 +155,276 @@
         server.export_path = document.getElementById('backup-nfs-export').value;
       }
 
-      if (!name || !server.host) {
-        toast('Please fill in all required fields', 'error');
-        return;
-      }
-
       await backupFetch('api/backup/servers', {
         method: 'POST',
         body: JSON.stringify(server)
       });
       
-      toast('Server added successfully', 'success');
+      toast('Server saved successfully', 'success');
       backupCloseServerModal();
       await backupLoadServers();
     } catch (error) {
-      toast('Failed to add server: ' + error.message, 'error');
+      toast('Failed to save server: ' + error.message, 'error');
     }
   };
 
-  /* =============== JOB MODALS =============== */
+  /* =============== FILE EXPLORER MODAL =============== */
 
-  window.backupOpenJobModal = function() {
-    backupLoadServers(); // Ensure servers are loaded
-    document.getElementById('backup-job-modal').style.display = 'flex';
-  };
-
-  window.backupCloseJobModal = function() {
-    document.getElementById('backup-job-modal').style.display = 'none';
-    document.getElementById('backup-job-form').reset();
-    backupState.selectedPaths = [];
-    backupState.selectedDestination = '';
-    renderSelectedPathsPreview();
-  };
-
-  window.backupOpenSourceExplorer = async function() {
-    const sourceServerId = document.getElementById('backup-job-source').value;
-    if (!sourceServerId) {
-      toast('Please select a source server first', 'error');
+  window.backupOpenFileExplorer = function(side) {
+    backupState.explorerSide = side;
+    const servers = side === 'source' ? backupState.sourceServers : backupState.destinationServers;
+    
+    if (servers.length === 0) {
+      toast(`No ${side} servers configured`, 'error');
       return;
     }
     
-    const server = [...backupState.sourceServers, ...backupState.destinationServers].find(s => s.id === sourceServerId);
-    if (!server) return;
+    // Populate server dropdown
+    const select = document.getElementById('backup-explorer-server');
+    select.innerHTML = '<option value="">Select server...</option>';
+    servers.forEach(server => {
+      const option = document.createElement('option');
+      option.value = server.id;
+      option.textContent = `${server.name} (${server.host})`;
+      select.appendChild(option);
+    });
     
-    backupState.currentBrowseServer = server;
-    backupState.currentBrowsePath = '/';
-    backupState.explorerSide = 'source';
-    
+    document.getElementById('backup-explorer-modal-title').textContent = 
+      side === 'source' ? 'Select Source Folders' : 'Select Destination Folder';
     document.getElementById('backup-explorer-modal').style.display = 'flex';
-    document.getElementById('backup-explorer-title').textContent = `Browse ${server.name}`;
-    
-    await backupBrowsePath('/');
+    document.getElementById('backup-explorer-list').innerHTML = '<div class="text-muted">Select a server to browse</div>';
   };
 
-  window.backupOpenDestinationExplorer = async function() {
-    const destServerId = document.getElementById('backup-job-destination').value;
-    if (!destServerId) {
-      toast('Please select a destination server first', 'error');
-      return;
-    }
-    
-    const server = [...backupState.sourceServers, ...backupState.destinationServers].find(s => s.id === destServerId);
-    if (!server) return;
-    
-    backupState.currentBrowseServer = server;
-    backupState.currentBrowsePath = '/';
-    backupState.explorerSide = 'destination';
-    
-    document.getElementById('backup-explorer-modal').style.display = 'flex';
-    document.getElementById('backup-explorer-title').textContent = `Browse ${server.name}`;
-    
-    await backupBrowsePath('/');
-  };
-
-  window.backupCloseExplorerModal = function() {
+  window.backupCloseFileExplorer = function() {
     document.getElementById('backup-explorer-modal').style.display = 'none';
   };
 
-  async function backupBrowsePath(path) {
-    const container = document.getElementById('backup-explorer-files');
-    container.innerHTML = '<div class="text-center text-muted" style="padding: 32px;">Loading...</div>';
+  window.backupExplorerServerChanged = async function() {
+    const serverId = document.getElementById('backup-explorer-server').value;
+    if (!serverId) return;
+    
+    const allServers = [...backupState.sourceServers, ...backupState.destinationServers];
+    backupState.currentBrowseServer = allServers.find(s => s.id === serverId);
+    backupState.currentBrowsePath = '/';
+    
+    await backupBrowseDirectory('/');
+  };
+
+  async function backupBrowseDirectory(path) {
+    if (!backupState.currentBrowseServer) return;
     
     try {
+      document.getElementById('backup-explorer-list').innerHTML = '<div class="text-muted">Loading...</div>';
+      
       const result = await backupFetch('api/backup/browse', {
         method: 'POST',
         body: JSON.stringify({
+          server_id: backupState.currentBrowseServer.id,
           server_config: backupState.currentBrowseServer,
           path: path
         })
       });
       
-      if (result.success) {
-        backupState.currentBrowsePath = path;
-        renderExplorerFiles(result.files || []);
-        
-        // Update breadcrumb
-        const parts = path.split('/').filter(p => p);
-        let breadcrumb = '<span class="explorer-breadcrumb-item" onclick="backupBrowsePath(\'/\')">Root</span>';
-        let currentPath = '';
-        parts.forEach(part => {
-          currentPath += '/' + part;
-          breadcrumb += ' / <span class="explorer-breadcrumb-item" onclick="backupBrowsePath(\'' + currentPath + '\')">' + part + '</span>';
-        });
-        document.getElementById('backup-explorer-breadcrumb').innerHTML = breadcrumb;
-      } else {
+      if (!result.success) {
         throw new Error(result.error || 'Browse failed');
       }
+      
+      backupState.currentBrowsePath = path;
+      document.getElementById('backup-current-path').textContent = path;
+      
+      renderFileExplorer(result.files || []);
     } catch (error) {
       toast('Failed to browse: ' + error.message, 'error');
-      container.innerHTML = '<div class="text-center text-muted" style="padding: 32px; color: #ef4444;">Failed to load directory</div>';
+      document.getElementById('backup-explorer-list').innerHTML = '<div class="text-muted">Failed to load directory</div>';
     }
   }
 
-  function renderExplorerFiles(files) {
-    const container = document.getElementById('backup-explorer-files');
+  function renderFileExplorer(files) {
+    const container = document.getElementById('backup-explorer-list');
     
-    if (!files || files.length === 0) {
-      container.innerHTML = '<div class="text-center text-muted" style="padding: 32px;">Empty directory</div>';
+    if (files.length === 0) {
+      container.innerHTML = '<div class="text-muted">Empty directory</div>';
       return;
     }
     
-    // Sort: directories first, then alphabetically
+    // Sort: directories first, then files
     files.sort((a, b) => {
       if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
       return a.name.localeCompare(b.name);
     });
     
-    container.innerHTML = files.map(file => {
-      const icon = file.is_dir ? '📁' : '📄';
-      const isSelected = backupState.explorerSide === 'source' 
-        ? backupState.selectedPaths.includes(file.path)
-        : backupState.selectedDestination === file.path;
-      
-      return `
-        <div class="explorer-file-item ${isSelected ? 'selected' : ''}" 
-             onclick="${file.is_dir ? `backupBrowsePath('${file.path}')` : ''}"
-             style="padding: 12px; cursor: ${file.is_dir ? 'pointer' : 'default'}; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
-          <div style="display: flex; align-items: center; gap: 12px;">
-            <span style="font-size: 20px;">${icon}</span>
-            <span style="color: var(--text-primary);">${file.name}</span>
-          </div>
-          <div style="display: flex; gap: 8px; align-items: center;">
-            ${!file.is_dir && file.size ? `<span style="font-size: 12px; color: var(--text-muted);">${formatBytes(file.size)}</span>` : ''}
-            ${backupState.explorerSide === 'source' 
-              ? `<button class="btn btn-sm ${isSelected ? 'success' : 'primary'}" onclick="event.stopPropagation(); backupTogglePathSelection('${file.path}')" style="padding: 4px 12px;">${isSelected ? 'Selected' : 'Select'}</button>`
-              : file.is_dir 
-                ? `<button class="btn primary btn-sm" onclick="event.stopPropagation(); backupSelectDestination('${file.path}')" style="padding: 4px 12px;">Choose</button>`
-                : ''
-            }
-          </div>
-        </div>
+    let html = '<table style="width: 100%; border-collapse: collapse;">';
+    html += '<thead><tr style="border-bottom: 1px solid var(--border-color);"><th style="text-align: left; padding: 8px;">Name</th><th style="text-align: right; padding: 8px;">Size</th><th style="text-align: right; padding: 8px;">Modified</th><th style="width: 80px;"></th></tr></thead><tbody>';
+    
+    // Parent directory
+    if (backupState.currentBrowsePath !== '/') {
+      const parent = backupState.currentBrowsePath.split('/').slice(0, -1).join('/') || '/';
+      html += `
+        <tr style="cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.05);" data-action="navigate" data-path="${parent}">
+          <td style="padding: 12px;">..</td>
+          <td></td>
+          <td></td>
+          <td></td>
+        </tr>
       `;
-    }).join('');
+    }
+    
+    files.forEach(file => {
+      const fullPath = backupState.currentBrowsePath === '/' 
+        ? `/${file.name}` 
+        : `${backupState.currentBrowsePath}/${file.name}`;
+      
+      const icon = file.is_dir ? '📁' : '📄';
+      const size = file.is_dir ? '' : formatBytes(file.size);
+      const modified = file.mtime ? new Date(file.mtime * 1000).toLocaleString() : '';
+      const isSelected = backupState.selectedPaths.includes(fullPath);
+      
+      html += `
+        <tr style="border-bottom: 1px solid rgba(255,255,255,0.05); ${isSelected ? 'background: rgba(14, 165, 233, 0.1);' : ''}">
+          <td style="padding: 12px;">
+            ${file.is_dir 
+              ? `<span style="cursor: pointer; color: #0ea5e9;" data-action="navigate" data-path="${fullPath}">${icon} ${file.name}</span>`
+              : `${icon} ${file.name}`
+            }
+          </td>
+          <td style="padding: 12px; text-align: right; color: var(--text-muted);">${size}</td>
+          <td style="padding: 12px; text-align: right; color: var(--text-muted);">${modified}</td>
+          <td style="padding: 12px; text-align: center;">
+            <button class="btn btn-sm" data-action="select" data-path="${fullPath}" data-is-dir="${file.is_dir}" style="padding: 4px 8px;">
+              ${isSelected ? '✓ Selected' : 'Select'}
+            </button>
+          </td>
+        </tr>
+      `;
+    });
+    
+    html += '</tbody></table>';
+    container.innerHTML = html;
+    
+    // Add event delegation
+    container.onclick = function(e) {
+      const target = e.target.closest('[data-action]');
+      if (!target) return;
+      
+      const action = target.getAttribute('data-action');
+      const path = target.getAttribute('data-path');
+      
+      if (action === 'navigate') {
+        backupBrowseDirectory(path);
+      } else if (action === 'select') {
+        const isDir = target.getAttribute('data-is-dir') === 'true';
+        backupToggleSelection(path, isDir);
+      }
+    };
   }
 
-  window.backupTogglePathSelection = function(path) {
+  window.backupToggleSelection = function(path, isDir) {
     const index = backupState.selectedPaths.indexOf(path);
     if (index > -1) {
       backupState.selectedPaths.splice(index, 1);
     } else {
-      backupState.selectedPaths.push(path);
+      if (backupState.explorerSide === 'destination' || backupState.explorerSide === 'restore-dest') {
+        // Only one destination folder (must be directory)
+        if (!isDir) {
+          toast('Destination must be a folder, not a file', 'error');
+          return;
+        }
+        backupState.selectedPaths = [path];
+      } else {
+        // Source can have multiple files/folders
+        backupState.selectedPaths.push(path);
+      }
     }
-    renderExplorerFiles(Array.from(document.querySelectorAll('.explorer-file-item')).map(el => ({
-      name: el.querySelector('span:nth-child(2)').textContent,
-      path: path,
-      is_dir: el.querySelector('span:first-child').textContent === '📁'
-    })));
-    renderSelectedPathsPreview();
+    
+    // Update display
+    backupBrowseDirectory(backupState.currentBrowsePath);
+    
+    // Show current selection count
+    const itemType = isDir ? 'folder' : 'file';
+    const count = backupState.selectedPaths.length;
+    if (index > -1) {
+      toast(`Deselected ${itemType}`, 'info');
+    } else {
+      toast(`Selected ${itemType} (${count} total)`, 'success');
+    }
   };
 
-  window.backupSelectDestination = function(path) {
-    backupState.selectedDestination = path;
-    document.getElementById('backup-job-dest-path').value = path;
-    backupCloseExplorerModal();
-    toast('Destination selected', 'success');
+  window.backupConfirmSelection = function() {
+    if (backupState.selectedPaths.length === 0) {
+      toast('No items selected', 'error');
+      return;
+    }
+
+    if (backupState.explorerSide === 'restore-dest' && backupState.selectedPaths.length === 0) {
+      toast('Please select a destination folder', 'error');
+      return;
+    }
+    
+    if (backupState.explorerSide === 'source') {
+      const textarea = backupState.editMode 
+        ? document.getElementById('backup-edit-job-paths')
+        : document.getElementById('backup-job-paths');
+      textarea.value = backupState.selectedPaths.join('\n');
+      toast(`Selected ${backupState.selectedPaths.length} items for backup`, 'success');
+    } else if (backupState.explorerSide === 'destination') {
+      const input = backupState.editMode
+        ? document.getElementById('backup-edit-job-dest-path')
+        : document.getElementById('backup-job-dest-path');
+      input.value = backupState.selectedPaths[0] || '/backups';
+      toast(`Destination set to: ${backupState.selectedPaths[0]}`, 'success');
+    } else if (backupState.explorerSide === 'restore-dest') {
+      document.getElementById('restore-dest-path').value = backupState.selectedPaths[0] || '/';
+      toast(`Restore destination set`, 'success');
+    } else if (backupState.explorerSide === 'restore-selective') {
+      backupState.restoreSelectedItems = backupState.selectedPaths.slice();
+      const itemsDiv = document.getElementById('restore-selected-items');
+      if (backupState.restoreSelectedItems.length > 0) {
+        itemsDiv.innerHTML = backupState.restoreSelectedItems.map(p => `<div style="padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.05);">${p}</div>`).join('');
+        itemsDiv.style.color = 'var(--text-primary)';
+      } else {
+        itemsDiv.innerHTML = 'No items selected';
+        itemsDiv.style.color = 'var(--text-muted)';
+      }
+      toast(`Selected ${backupState.restoreSelectedItems.length} items to restore`, 'success');
+    }
+    
+    backupState.selectedPaths = [];
+    backupState.editMode = false;
+    backupCloseFileExplorer();
   };
 
-  function renderSelectedPathsPreview() {
-    const textarea = document.getElementById('backup-job-paths');
-    textarea.value = backupState.selectedPaths.join('\n');
+  /* =============== JOB MODAL =============== */
+
+  window.backupOpenJobModal = function() {
+    document.getElementById('backup-job-modal').style.display = 'flex';
+    backupPopulateServerDropdowns();
+  };
+
+  window.backupCloseJobModal = function() {
+    document.getElementById('backup-job-modal').style.display = 'none';
+    document.getElementById('backup-job-form').reset();
+  };
+
+  function backupPopulateServerDropdowns() {
+    const sourceSelect = document.getElementById('backup-job-source');
+    const destSelect = document.getElementById('backup-job-destination');
+    
+    sourceSelect.innerHTML = '<option value="">Select source server...</option>';
+    destSelect.innerHTML = '<option value="">Select destination server...</option>';
+    
+    backupState.sourceServers.forEach(server => {
+      const option = document.createElement('option');
+      option.value = server.id;
+      option.textContent = `${server.name} (${server.host})`;
+      sourceSelect.appendChild(option);
+    });
+    
+    backupState.destinationServers.forEach(server => {
+      const option = document.createElement('option');
+      option.value = server.id;
+      option.textContent = `${server.name} (${server.host})`;
+      destSelect.appendChild(option);
+    });
   }
 
   window.backupCreateJob = async function(event) {
@@ -350,7 +440,7 @@
       compress: document.getElementById('backup-job-compress').checked,
       stop_containers: document.getElementById('backup-job-stop-containers').checked,
       containers: document.getElementById('backup-job-containers').value.split(',').map(c => c.trim()).filter(c => c),
-      cron: document.getElementById('backup-job-schedule').value, // FIXED: Changed from 'schedule' to 'cron'
+      schedule: document.getElementById('backup-job-schedule').value,
       retention_days: parseInt(document.getElementById('backup-job-retention-days').value) || 0,
       retention_count: parseInt(document.getElementById('backup-job-retention-count').value) || 0,
       enabled: true
@@ -389,9 +479,12 @@
   async function backupLoadJobs() {
     try {
       const data = await backupFetch('api/backup/jobs');
-      backupState.jobs = Object.values(data.jobs || {});
+      backupState.jobs = data.jobs || [];
+      
       renderJobsList();
+      toast('Backup data refreshed', 'success');
     } catch (error) {
+      toast('Failed to load jobs', 'error');
       console.error('[backup] Failed to load jobs:', error);
     }
   }
@@ -400,6 +493,7 @@
     try {
       const data = await backupFetch('api/backup/archives');
       backupState.archives = data.archives || [];
+      
       renderArchivesList();
       updateStatistics();
     } catch (error) {
@@ -473,7 +567,7 @@
           <div style="flex: 1;">
             <div style="font-weight: 600; color: var(--text-primary); margin-bottom: 8px;">${job.name}</div>
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; font-size: 13px; color: var(--text-muted);">
-              <div><strong>Schedule:</strong> ${job.cron || job.schedule || 'Manual'}</div>
+              <div><strong>Schedule:</strong> ${job.schedule}</div>
               <div><strong>Last Run:</strong> ${job.last_run ? formatDate(job.last_run) : 'Never'}</div>
               <div><strong>Status:</strong> ${job.enabled ? '<span style="color: #10b981;">Active</span>' : '<span style="color: #ef4444;">Disabled</span>'}</div>
             </div>
@@ -605,9 +699,8 @@
       // Start polling for progress
       backupStartProgressPolling(jobId);
       
-      toast('Backup job started', 'success');
     } catch (error) {
-      toast('Failed to start backup: ' + error.message, 'error');
+      toast('Failed to run job: ' + error.message, 'error');
     }
   };
 
@@ -615,11 +708,22 @@
   let progressLogEntries = [];
 
   window.backupOpenProgressModal = function(jobId) {
-    progressLogEntries = [];
-    document.getElementById('backup-progress-modal').style.display = 'flex';
+    // Find job details
+    const job = backupState.jobs.find(j => j.id === jobId);
+    if (job) {
+      document.getElementById('backup-progress-job-name').textContent = job.name;
+    }
+    
+    // Reset progress
     document.getElementById('backup-progress-bar').style.width = '0%';
-    document.getElementById('backup-progress-message').textContent = 'Starting backup...';
-    document.getElementById('backup-progress-log').innerHTML = '';
+    document.getElementById('backup-progress-percent').textContent = '0%';
+    document.getElementById('backup-progress-status').textContent = 'Starting...';
+    document.getElementById('backup-progress-message').textContent = 'Initializing backup...';
+    document.getElementById('backup-progress-log').innerHTML = '<div style="color: var(--text-muted);">Starting backup...</div>';
+    progressLogEntries = ['[' + new Date().toLocaleTimeString() + '] Backup job started'];
+    
+    backupState.currentProgressJobId = jobId;
+    document.getElementById('backup-progress-modal').style.display = 'flex';
   };
 
   window.backupCloseProgressModal = function() {
@@ -628,48 +732,67 @@
       clearInterval(progressPollingInterval);
       progressPollingInterval = null;
     }
+    backupLoadJobs(); // Refresh job list
   };
 
-  function backupStartProgressPolling(jobId) {
+  window.backupStartProgressPolling = function(jobId) {
+    // Clear any existing interval
     if (progressPollingInterval) {
       clearInterval(progressPollingInterval);
     }
     
+    // Poll every 2 seconds
     progressPollingInterval = setInterval(async () => {
       try {
         const result = await backupFetch(`api/backup/jobs/${jobId}/status`);
-        if (result.success && result.status) {
-          updateProgressModal(result.status);
+        const status = result.status || result; // Handle both {status: {...}} and direct status
+        backupUpdateProgressDisplay(status);
+        
+        // Stop polling if completed or failed
+        if (status.status === 'completed' || status.status === 'failed') {
+          clearInterval(progressPollingInterval);
+          progressPollingInterval = null;
           
-          if (result.status.status === 'completed' || result.status.status === 'failed') {
-            clearInterval(progressPollingInterval);
-            progressPollingInterval = null;
-            
-            setTimeout(() => {
-              backupCloseProgressModal();
-              backupRefreshArchives();
-            }, 3000);
-          }
+          setTimeout(() => {
+            backupLoadJobs();
+            backupRefreshArchives();
+          }, 2000);
         }
       } catch (error) {
-        console.error('[backup] Progress polling error:', error);
+        console.error('Progress polling error:', error);
       }
     }, 2000);
-  }
+  };
 
-  function updateProgressModal(status) {
+  function backupUpdateProgressDisplay(status) {
+    if (!status) return;
+    
     const progress = status.progress || 0;
+    const statusText = status.status || 'running';
     const message = status.message || 'Processing...';
     
     // Update progress bar
-    const progressBar = document.getElementById('backup-progress-bar');
-    progressBar.style.width = progress + '%';
+    document.getElementById('backup-progress-bar').style.width = progress + '%';
+    document.getElementById('backup-progress-percent').textContent = progress + '%';
     
-    if (status.status === 'completed') {
-      progressBar.style.background = 'linear-gradient(135deg, #10b981 0%, #059669 100%)';
-    } else if (status.status === 'failed') {
-      progressBar.style.background = 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)';
+    // Update status text
+    let statusColor = '#0ea5e9';
+    let statusDisplay = statusText.toUpperCase();
+    
+    if (statusText === 'completed') {
+      statusColor = '#10b981';
+      statusDisplay = 'COMPLETED';
+      document.getElementById('backup-progress-bar').style.background = 'linear-gradient(90deg, #10b981, #059669)';
+    } else if (statusText === 'failed') {
+      statusColor = '#ef4444';
+      statusDisplay = 'FAILED';
+      document.getElementById('backup-progress-bar').style.background = 'linear-gradient(90deg, #ef4444, #dc2626)';
+    } else if (statusText === 'running') {
+      statusDisplay = 'RUNNING';
     }
+    
+    document.getElementById('backup-progress-status').textContent = statusDisplay;
+    document.getElementById('backup-progress-status').style.color = statusColor;
     
     // Update message
     document.getElementById('backup-progress-message').textContent = message;
@@ -876,187 +999,308 @@
       return a.name.localeCompare(b.name);
     });
     
-    let html = `<div style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px;">Current: ${currentPath}</div>`;
+    let html = `<div style="margin-bottom: 8px; padding: 8px; background: rgba(14, 165, 233, 0.1); border-radius: 4px; font-family: monospace; font-size: 12px;">
+      <strong>Current:</strong> ${currentPath}
+      <button class="btn btn-sm" onclick="backupUseDestPath('${currentPath.replace(/'/g, "\\'")}') "style="float: right; padding: 2px 8px; font-size: 11px;">Use This Path</button>
+    </div>`;
     
+    html += '<div style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 4px;">';
+    html += '<table style="width: 100%; border-collapse: collapse; font-size: 13px;"><tbody>';
+    
+    // Parent directory
     if (currentPath !== '/') {
-      const parentPath = currentPath.split('/').slice(0, -1).join('/') || '/';
+      const parent = currentPath.split('/').slice(0, -1).join('/') || '/';
       html += `
-        <div style="padding: 8px; cursor: pointer; border-bottom: 1px solid var(--border-color);" 
-             onclick="browseDestPathInline('${parentPath}')">
-          <span style="font-size: 16px;">⬆️</span> ..
-        </div>
+        <tr style="cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.02);" onclick='browseDestPathInline("${parent.replace(/'/g, "\\'")}") '>
+          <td style="padding: 8px;">📁 ..</td>
+        </tr>
       `;
     }
     
-    html += files.filter(f => f.is_dir).map(file => `
-      <div style="padding: 8px; cursor: pointer; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
-        <div onclick="browseDestPathInline('${file.path}')" style="flex: 1;">
-          <span style="font-size: 16px;">📁</span> ${file.name}
-        </div>
-        <button class="btn primary btn-sm" onclick="selectRestoreDestPath('${file.path}')" style="padding: 4px 8px;">Choose</button>
-      </div>
-    `).join('');
+    // Only show directories
+    files.filter(f => f.is_dir).forEach(file => {
+      const fullPath = currentPath === '/' ? `/${file.name}` : `${currentPath}/${file.name}`;
+      html += `
+        <tr style="cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.02);" onclick='browseDestPathInline("${fullPath.replace(/'/g, "\\'")}") '>
+          <td style="padding: 8px;">📁 ${file.name}</td>
+        </tr>
+      `;
+    });
+    
+    html += '</tbody></table></div>';
+    
+    html += '<div style="margin-top: 8px; text-align: right;">';
+    html += '<button class="btn btn-sm" onclick="backupCloseDestBrowser()" style="padding: 4px 12px; font-size: 12px;">Close Browser</button>';
+    html += '</div>';
     
     container.innerHTML = html;
   }
   
-  window.selectRestoreDestPath = function(path) {
+  window.backupUseDestPath = function(path) {
     document.getElementById('restore-dest-path').value = path;
+    backupCloseDestBrowser();
+    toast('Destination path set to: ' + path, 'success');
+  };
+  
+  window.backupCloseDestBrowser = function() {
     const browser = document.getElementById('restore-dest-browser');
     if (browser) {
       browser.remove();
     }
-    toast('Destination path selected', 'success');
+  };
+  
+  window.OLD_backupBrowseRestoreDestination = function() {
+    const serverId = document.getElementById('restore-dest-server').value;
+    if (!serverId) {
+      toast('Please select a destination server first', 'error');
+      return;
+    }
+    
+    const server = backupState.servers.find(s => s.id === serverId);
+    if (!server) return;
+    
+    backupState.explorerSide = 'restore-dest';
+    backupState.currentBrowseServer = server;
+    backupState.selectedPaths = [];
+    
+    document.getElementById('backup-explorer-modal').style.display = 'flex';
+    document.getElementById('backup-explorer-modal-title').textContent = `Browse ${server.name} - Select Destination`;
+    
+    backupBrowseDirectory('/');
   };
 
-  window.backupBrowseArchiveContents = async function() {
+  // === FIXED: Browse archive contents with pagination ===
+  window.backupBrowseBackupContents = async function(page = 1) {
     const archive = backupState.currentRestoreArchive;
-    if (!archive) return;
+    if (!archive) {
+      toast('No archive selected', 'error');
+      return;
+    }
     
-    // Show browse modal
-    document.getElementById('backup-archive-browser-modal').style.display = 'flex';
-    document.getElementById('backup-archive-browser-title').textContent = `Browse: ${archive.job_name || archive.id}`;
+    backupState.selectedPaths = backupState.restoreSelectedItems || [];
+    backupState.currentArchivePage = page;
     
-    const container = document.getElementById('backup-archive-browser-files');
-    container.innerHTML = '<div class="text-center text-muted" style="padding: 32px;">Loading archive contents...</div>';
+    const itemsDiv = document.getElementById('restore-selected-items');
     
     try {
-      // === FIXED: Use the /contents endpoint ===
-      const result = await backupFetch(`api/backup/archives/${archive.id}/contents?page=1&page_size=1000`);
+      itemsDiv.innerHTML = '<div class="text-muted">Loading archive contents... This may take a moment.</div>';
       
-      if (result.success && result.items) {
-        renderArchiveContents(result.items);
-      } else {
+      const result = await backupFetch(`api/backup/archives/${archive.id}/contents?page=${page}&page_size=1000`);
+      
+      if (!result.success) {
         throw new Error(result.error || 'Failed to load archive contents');
       }
+      
+      renderArchiveContentsInline(result.items || [], result);
+      
+      const source = result.source === 'manifest' ? 'from index' : 'sampled';
+      toast(`Loaded ${result.items.length} items ${source}`, 'success');
     } catch (error) {
-      toast('Failed to browse archive: ' + error.message, 'error');
-      container.innerHTML = '<div class="text-center" style="padding: 32px; color: #ef4444;">Failed to load archive contents</div>';
+      toast('Failed to load archive contents: ' + error.message, 'error');
+      itemsDiv.innerHTML = `<div style="padding: 12px; color: #ef4444; background: rgba(239, 68, 68, 0.1); border-radius: 4px;">
+        <strong>Error:</strong> ${error.message}
+      </div>`;
     }
   };
-
-  function renderArchiveContents(items) {
-    const container = document.getElementById('backup-archive-browser-files');
+  
+  function renderArchiveContentsInline(items, metadata) {
+    const container = document.getElementById('restore-selected-items');
     
-    if (!items || items.length === 0) {
-      container.innerHTML = '<div class="text-center text-muted" style="padding: 32px;">No files found in archive</div>';
+    if (items.length === 0) {
+      container.innerHTML = '<div class="text-muted">Archive is empty</div>';
       return;
     }
     
     // Sort: directories first, then files
     items.sort((a, b) => {
       if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
-      return (a.path || a.name || '').localeCompare(b.path || b.name || '');
+      return a.path.localeCompare(b.path);
     });
     
-    container.innerHTML = items.map(item => {
-      const icon = item.is_dir ? '📁' : '📄';
-      const displayName = item.name || item.path.split('/').pop() || item.path;
-      const isSelected = backupState.restoreSelectedItems.includes(item.path);
-      
-      // Handle notes
-      if (item.note) {
-        return `
-          <div style="padding: 12px; background: rgba(14, 165, 233, 0.08); color: var(--text-muted); font-size: 12px; border-bottom: 1px solid var(--border-color);">
-            ℹ️ ${item.note}
-          </div>
-        `;
+    let html = '';
+    
+    // Show pagination info if available
+    if (metadata && metadata.total_pages > 1) {
+      html += `<div style="padding: 8px; background: rgba(14, 165, 233, 0.1); border-radius: 4px; margin-bottom: 8px; font-size: 12px;">
+        Page ${metadata.page} of ${metadata.total_pages} (${metadata.total} total items)
+        <div style="margin-top: 4px;">
+          ${metadata.page > 1 ? `<button class="btn btn-sm" onclick="backupBrowseBackupContents(${metadata.page - 1})" style="padding: 2px 8px; font-size: 11px;">← Previous</button>` : ''}
+          ${metadata.page < metadata.total_pages ? `<button class="btn btn-sm" onclick="backupBrowseBackupContents(${metadata.page + 1})" style="padding: 2px 8px; font-size: 11px; margin-left: 4px;">Next →</button>` : ''}
+        </div>
+      </div>`;
+    }
+    
+    if (metadata && metadata.sampled) {
+      html += `<div style="padding: 8px; background: rgba(251, 191, 36, 0.1); border: 1px solid rgba(251, 191, 36, 0.3); border-radius: 4px; margin-bottom: 8px; font-size: 12px; color: #f59e0b;">
+        ⚠️ Showing sampled view (old backup without index). All folders + sample of files shown.
+      </div>`;
+    }
+    
+    html += '<div style="max-height: 300px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 4px;">';
+    html += '<table style="width: 100%; border-collapse: collapse; font-size: 13px;">';
+    html += '<thead style="position: sticky; top: 0; background: var(--surface-secondary); z-index: 1;"><tr style="border-bottom: 1px solid var(--border-color);"><th style="text-align: left; padding: 8px;">Path</th><th style="text-align: right; padding: 8px; width: 100px;">Size</th><th style="width: 80px; padding: 8px;"></th></tr></thead><tbody>';
+    
+    items.forEach(item => {
+      // Skip note items
+      if (item.path && (item.path.startsWith('__note__') || item.note)) {
+        html += `<tr style="background: rgba(251, 191, 36, 0.1);"><td colspan="3" style="padding: 8px; font-size: 11px; color: #f59e0b;">${item.note || item.path}</td></tr>`;
+        return;
       }
       
-      return `
-        <div class="archive-file-item ${isSelected ? 'selected' : ''}" 
-             style="padding: 12px; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
-          <div style="display: flex; align-items: center; gap: 12px; flex: 1;">
-            <span style="font-size: 20px;">${icon}</span>
-            <div>
-              <div style="color: var(--text-primary);">${displayName}</div>
-              <div style="font-size: 11px; color: var(--text-muted); font-family: monospace;">${item.path}</div>
-            </div>
-          </div>
-          <div style="display: flex; gap: 8px; align-items: center;">
-            ${item.size ? `<span style="font-size: 12px; color: var(--text-muted);">${formatBytes(item.size)}</span>` : ''}
-            <button class="btn btn-sm ${isSelected ? 'success' : 'primary'}" 
-                    onclick="backupToggleSelectiveItem('${item.path.replace(/'/g, "\\'")}')" 
-                    style="padding: 4px 12px;">
-              ${isSelected ? 'Selected' : 'Select'}
+      const icon = item.is_dir ? '📁' : '📄';
+      const size = item.is_dir ? '' : formatBytes(item.size);
+      const isSelected = backupState.selectedPaths.includes(item.path);
+      
+      html += `
+        <tr style="border-bottom: 1px solid rgba(255,255,255,0.02); ${isSelected ? 'background: rgba(14, 165, 233, 0.15);' : ''}">
+          <td style="padding: 8px; font-family: monospace; font-size: 12px;">${icon} ${item.path}</td>
+          <td style="padding: 8px; text-align: right; color: var(--text-muted); font-size: 11px;">${size}</td>
+          <td style="padding: 8px; text-align: center;">
+            <button class="btn btn-sm" onclick='backupToggleInlineSelection("${item.path.replace(/'/g, "\\'")}",  ${item.is_dir}, ${JSON.stringify(items).replace(/'/g, "\\'")})' style="padding: 2px 8px; font-size: 11px;">
+              ${isSelected ? '✓' : 'Select'}
             </button>
-          </div>
-        </div>
+          </td>
+        </tr>
       `;
-    }).join('');
+    });
+    
+    html += '</tbody></table></div>';
+    html += `<div style="margin-top: 8px; padding: 8px; background: rgba(14, 165, 233, 0.1); border-radius: 4px; font-size: 12px;">
+      <strong>${backupState.selectedPaths.length}</strong> item(s) selected
+      ${backupState.selectedPaths.length > 0 ? '<button class="btn btn-sm" onclick="backupClearInlineSelection()" style="float: right; padding: 2px 8px; font-size: 11px;">Clear All</button>' : ''}
+    </div>`;
+    
+    container.innerHTML = html;
+    container.style.color = 'var(--text-primary)';
   }
-
-  window.backupToggleSelectiveItem = function(path) {
-    const index = backupState.restoreSelectedItems.indexOf(path);
+  
+  window.backupToggleInlineSelection = function(path, isDir, items) {
+    const index = backupState.selectedPaths.indexOf(path);
     if (index > -1) {
-      backupState.restoreSelectedItems.splice(index, 1);
+      backupState.selectedPaths.splice(index, 1);
     } else {
-      backupState.restoreSelectedItems.push(path);
+      backupState.selectedPaths.push(path);
     }
     
-    // Update selection count in restore modal
-    const countEl = document.getElementById('restore-selected-items');
-    if (backupState.restoreSelectedItems.length > 0) {
-      countEl.innerHTML = `${backupState.restoreSelectedItems.length} item(s) selected`;
-      countEl.style.color = '#10b981';
-    } else {
-      countEl.innerHTML = 'No items selected';
-      countEl.style.color = 'var(--text-muted)';
-    }
+    // Update the items to restore
+    backupState.restoreSelectedItems = backupState.selectedPaths.slice();
     
-    // Re-render to update UI
-    const container = document.getElementById('backup-archive-browser-files');
-    const items = Array.from(container.querySelectorAll('.archive-file-item')).map(el => {
-      const pathText = el.querySelector('div div:last-child').textContent;
-      return { path: pathText };
-    });
-    
-    // Just update the button states
-    container.querySelectorAll('.archive-file-item button').forEach((btn, idx) => {
-      const itemPath = items[idx]?.path;
-      const isSelected = backupState.restoreSelectedItems.includes(itemPath);
-      btn.className = `btn btn-sm ${isSelected ? 'success' : 'primary'}`;
-      btn.textContent = isSelected ? 'Selected' : 'Select';
-      btn.parentElement.parentElement.classList.toggle('selected', isSelected);
-    });
+    // Re-render
+    renderArchiveContentsInline(items);
   };
-
-  window.backupCloseArchiveBrowser = function() {
-    document.getElementById('backup-archive-browser-modal').style.display = 'none';
-  };
-
-  window.backupPerformRestore = async function() {
+  
+  window.backupClearInlineSelection = function() {
+    backupState.selectedPaths = [];
+    backupState.restoreSelectedItems = [];
     const archive = backupState.currentRestoreArchive;
-    if (!archive) return;
+    if (archive) {
+      backupBrowseBackupContents(); // Reload to show cleared selection
+    }
+  };
+  
+  function renderArchiveContents(items) {
+    const container = document.getElementById('backup-explorer-list');
+    
+    if (items.length === 0) {
+      container.innerHTML = '<div class="text-muted">Archive is empty</div>';
+      return;
+    }
+    
+    // Sort: directories first, then files
+    items.sort((a, b) => {
+      if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+      return a.path.localeCompare(b.path);
+    });
+    
+    let html = '<table style="width: 100%; border-collapse: collapse;">';
+    html += '<thead><tr style="border-bottom: 1px solid var(--border-color);"><th style="text-align: left; padding: 8px;">Path</th><th style="text-align: right; padding: 8px;">Size</th><th style="width: 100px;"></th></tr></thead><tbody>';
+    
+    items.forEach(item => {
+      const icon = item.is_dir ? '📁' : '📄';
+      const size = item.is_dir ? '' : formatBytes(item.size);
+      const isSelected = backupState.selectedPaths.includes(item.path);
+      
+      html += `
+        <tr style="border-bottom: 1px solid rgba(255,255,255,0.05); ${isSelected ? 'background: rgba(14, 165, 233, 0.1);' : ''}">
+          <td style="padding: 12px;">${icon} ${item.path}</td>
+          <td style="padding: 12px; text-align: right; color: var(--text-muted);">${size}</td>
+          <td style="padding: 12px; text-align: center;">
+            <button class="btn btn-sm" data-action="select-archive" data-path="${item.path}" data-is-dir="${item.is_dir}" style="padding: 4px 12px;">
+              ${isSelected ? '✓ Selected' : 'Select'}
+            </button>
+          </td>
+        </tr>
+      `;
+    });
+    
+    html += '</tbody></table>';
+    container.innerHTML = html;
+    
+    // Add event delegation for archive item selection
+    container.onclick = function(e) {
+      const target = e.target.closest('[data-action]');
+      if (!target) return;
+      
+      const action = target.getAttribute('data-action');
+      const path = target.getAttribute('data-path');
+      
+      if (action === 'select-archive') {
+        const isDir = target.getAttribute('data-is-dir') === 'true';
+        backupToggleArchiveSelection(path, isDir, items);
+      }
+    };
+  }
+  
+  window.backupToggleArchiveSelection = function(path, isDir, items) {
+    const index = backupState.selectedPaths.indexOf(path);
+    if (index > -1) {
+      backupState.selectedPaths.splice(index, 1);
+      toast(`Deselected ${isDir ? 'folder' : 'file'}`, 'info');
+    } else {
+      backupState.selectedPaths.push(path);
+      toast(`Selected ${isDir ? 'folder' : 'file'} (${backupState.selectedPaths.length} total)`, 'success');
+    }
+    
+    // Re-render to update selection state
+    renderArchiveContents(items);
+  };
+
+  window.backupSubmitRestore = async function(e) {
+    e.preventDefault();
+    
+    const archive = backupState.currentRestoreArchive;
+    if (!archive) {
+      toast('No archive selected', 'error');
+      return;
+    }
     
     const toOriginal = document.getElementById('restore-to-original').checked;
     const isFull = document.getElementById('restore-full').checked;
-    
     let destServerId, destPath;
     
     if (toOriginal) {
       destServerId = archive.source_server_id;
-      destPath = (archive.source_paths || [])[0] || '';
+      destPath = 'original';
     } else {
       destServerId = document.getElementById('restore-dest-server').value;
       destPath = document.getElementById('restore-dest-path').value;
-      
-      if (!destServerId || !destPath) {
-        toast('Please select destination server and path', 'error');
-        return;
-      }
+    }
+    
+    if (!destServerId || !destPath) {
+      toast('Please select destination server and path', 'error');
+      return;
     }
     
     const restoreData = {
       archive_id: archive.id,
       destination_server_id: destServerId,
       destination_path: destPath,
-      selective_items: isFull ? [] : backupState.restoreSelectedItems
+      overwrite: document.getElementById('restore-overwrite').checked
     };
     
-    if (!isFull && restoreData.selective_items.length === 0) {
-      toast('Please select items to restore or choose full restore', 'error');
-      return;
+    // Add selective restore items if applicable
+    if (!isFull && backupState.restoreSelectedItems && backupState.restoreSelectedItems.length > 0) {
+      restoreData.selective_items = backupState.restoreSelectedItems;
     }
     
     try {
@@ -1065,66 +1309,140 @@
         body: JSON.stringify(restoreData)
       });
       
-      if (result.success) {
-        toast('Restore started successfully', 'success');
-        backupCloseRestoreModal();
-        
-        // Start polling restore status
-        backupStartRestorePolling(result.restore_id);
-      } else {
-        throw new Error(result.error || 'Restore failed');
-      }
+      toast('Restore started!', 'success');
+      backupCloseRestoreModal();
+      
+      // Open progress modal and start polling
+      backupOpenRestoreProgressModal(archive, result.restore_id || result.job_id);
+      backupStartRestoreProgressPolling(result.restore_id || result.job_id);
+      
     } catch (error) {
       toast('Failed to start restore: ' + error.message, 'error');
     }
   };
 
-  function backupStartRestorePolling(restoreId) {
-    const interval = setInterval(async () => {
+  let restoreProgressPollingInterval = null;
+  let restoreProgressLogEntries = [];
+
+  window.backupOpenRestoreProgressModal = function(archive, restoreId) {
+    // Set restore details
+    document.getElementById('backup-progress-job-name').textContent = 'Restore: ' + (archive.job_name || archive.id);
+    
+    // Reset progress
+    document.getElementById('backup-progress-bar').style.width = '0%';
+    document.getElementById('backup-progress-bar').style.background = 'linear-gradient(90deg, #0ea5e9, #0284c7)';
+    document.getElementById('backup-progress-percent').textContent = '0%';
+    document.getElementById('backup-progress-status').textContent = 'Starting...';
+    document.getElementById('backup-progress-message').textContent = 'Initializing restore...';
+    document.getElementById('backup-progress-log').innerHTML = '<div style="color: var(--text-muted);">Starting restore...</div>';
+    restoreProgressLogEntries = ['[' + new Date().toLocaleTimeString() + '] Restore started'];
+    
+    backupState.currentRestoreId = restoreId;
+    document.getElementById('backup-progress-modal').style.display = 'flex';
+  };
+
+  window.backupStartRestoreProgressPolling = function(restoreId) {
+    // Clear any existing interval
+    if (restoreProgressPollingInterval) {
+      clearInterval(restoreProgressPollingInterval);
+    }
+    
+    // Poll every 2 seconds
+    restoreProgressPollingInterval = setInterval(async () => {
       try {
         const result = await backupFetch(`api/backup/restore/${restoreId}/status`);
+        const status = result.status || result;
+        backupUpdateRestoreProgressDisplay(status);
         
-        if (result.success && result.status) {
-          const status = result.status.status;
+        // Stop polling if completed or failed
+        if (status.status === 'completed') {
+          clearInterval(restoreProgressPollingInterval);
+          restoreProgressPollingInterval = null;
+          toast('Restore completed successfully!', 'success');
           
-          if (status === 'completed') {
-            clearInterval(interval);
-            toast('Restore completed successfully!', 'success');
-          } else if (status === 'failed') {
-            clearInterval(interval);
-            toast('Restore failed: ' + (result.status.message || 'Unknown error'), 'error');
-          }
+          setTimeout(() => {
+            backupCloseProgressModal();
+            backupRefreshArchives();
+          }, 3000);
+        } else if (status.status === 'failed') {
+          clearInterval(restoreProgressPollingInterval);
+          restoreProgressPollingInterval = null;
+          toast('Restore failed: ' + (status.error || status.message || 'Unknown error'), 'error');
         }
       } catch (error) {
-        console.error('[backup] Restore polling error:', error);
+        console.error('Restore progress polling error:', error);
+        clearInterval(restoreProgressPollingInterval);
+        restoreProgressPollingInterval = null;
+        toast('Restore monitoring error: ' + error.message, 'error');
       }
-    }, 3000);
+    }, 2000);
+  };
+
+  function backupUpdateRestoreProgressDisplay(status) {
+    if (!status) return;
+    
+    const progress = status.progress || 0;
+    const statusText = status.status || 'running';
+    const message = status.message || 'Restoring files...';
+    
+    // Update progress bar
+    document.getElementById('backup-progress-bar').style.width = progress + '%';
+    document.getElementById('backup-progress-percent').textContent = progress + '%';
+    
+    // Update status text
+    let statusColor = '#0ea5e9';
+    let statusDisplay = statusText.toUpperCase();
+    
+    if (statusText === 'completed') {
+      statusColor = '#10b981';
+      statusDisplay = 'COMPLETED';
+      document.getElementById('backup-progress-bar').style.background = 'linear-gradient(90deg, #10b981, #059669)';
+    } else if (statusText === 'failed') {
+      statusColor = '#ef4444';
+      statusDisplay = 'FAILED';
+      document.getElementById('backup-progress-bar').style.background = 'linear-gradient(90deg, #ef4444, #dc2626)';
+    }
+    
+    document.getElementById('backup-progress-status').textContent = statusDisplay;
+    document.getElementById('backup-progress-status').style.color = statusColor;
+    document.getElementById('backup-progress-message').textContent = message;
+    
+    // Update log if available
+    if (status.log && status.log.length > restoreProgressLogEntries.length) {
+      restoreProgressLogEntries = status.log;
+      const logHtml = status.log.map(line => 
+        `<div style="color: var(--text-secondary); font-size: 12px; margin-bottom: 4px;">${line}</div>`
+      ).join('');
+      document.getElementById('backup-progress-log').innerHTML = logHtml;
+      
+      // Auto-scroll to bottom
+      const logContainer = document.getElementById('backup-progress-log');
+      logContainer.scrollTop = logContainer.scrollHeight;
+    }
   }
 
-  /* =============== EDIT MODALS =============== */
+  /* =============== EDIT SERVER MODAL =============== */
 
   window.backupOpenEditServerModal = function(server) {
-    // Populate form with server data
     document.getElementById('backup-edit-server-id').value = server.id;
     document.getElementById('backup-edit-server-name').value = server.name;
-    document.getElementById('backup-edit-server-type').value = server.server_type;
     document.getElementById('backup-edit-connection-type').value = server.type;
     
     backupUpdateEditConnectionFields();
     
     if (server.type === 'ssh') {
-      document.getElementById('backup-edit-ssh-host').value = server.host;
-      document.getElementById('backup-edit-ssh-port').value = server.port;
-      document.getElementById('backup-edit-ssh-username').value = server.username;
+      document.getElementById('backup-edit-ssh-host').value = server.host || '';
+      document.getElementById('backup-edit-ssh-port').value = server.port || 22;
+      document.getElementById('backup-edit-ssh-username').value = server.username || '';
       document.getElementById('backup-edit-ssh-password').value = server.password || '';
     } else if (server.type === 'smb') {
-      document.getElementById('backup-edit-smb-host').value = server.host;
-      document.getElementById('backup-edit-smb-share').value = server.share;
-      document.getElementById('backup-edit-smb-username').value = server.username;
+      document.getElementById('backup-edit-smb-host').value = server.host || '';
+      document.getElementById('backup-edit-smb-share').value = server.share || '';
+      document.getElementById('backup-edit-smb-username').value = server.username || '';
       document.getElementById('backup-edit-smb-password').value = server.password || '';
     } else if (server.type === 'nfs') {
-      document.getElementById('backup-edit-nfs-host').value = server.host;
-      document.getElementById('backup-edit-nfs-export').value = server.export_path;
+      document.getElementById('backup-edit-nfs-host').value = server.host || '';
+      document.getElementById('backup-edit-nfs-export').value = server.export_path || '';
     }
     
     document.getElementById('backup-edit-server-modal').style.display = 'flex';
@@ -1132,7 +1450,6 @@
 
   window.backupCloseEditServerModal = function() {
     document.getElementById('backup-edit-server-modal').style.display = 'none';
-    document.getElementById('backup-edit-server-form').reset();
   };
 
   window.backupUpdateEditConnectionFields = function() {
@@ -1147,39 +1464,42 @@
     
     const serverId = document.getElementById('backup-edit-server-id').value;
     const type = document.getElementById('backup-edit-connection-type').value;
-    const serverType = document.getElementById('backup-edit-server-type').value;
     const name = document.getElementById('backup-edit-server-name').value;
     
-    const server = { id: serverId, name, type, server_type: serverType };
+    // Get current server to preserve server_type
+    const allServers = [...backupState.sourceServers, ...backupState.destinationServers];
+    const currentServer = allServers.find(s => s.id === serverId);
+    
+    const updatedServer = {
+      id: serverId,
+      name,
+      type,
+      server_type: currentServer ? currentServer.server_type : 'source'
+    };
     
     try {
       if (type === 'ssh') {
-        server.host = document.getElementById('backup-edit-ssh-host').value;
-        server.port = parseInt(document.getElementById('backup-edit-ssh-port').value);
-        server.username = document.getElementById('backup-edit-ssh-username').value;
-        server.password = document.getElementById('backup-edit-ssh-password').value;
+        updatedServer.host = document.getElementById('backup-edit-ssh-host').value;
+        updatedServer.port = parseInt(document.getElementById('backup-edit-ssh-port').value);
+        updatedServer.username = document.getElementById('backup-edit-ssh-username').value;
+        updatedServer.password = document.getElementById('backup-edit-ssh-password').value;
       } else if (type === 'smb') {
-        server.host = document.getElementById('backup-edit-smb-host').value;
-        server.share = document.getElementById('backup-edit-smb-share').value;
-        server.username = document.getElementById('backup-edit-smb-username').value;
-        server.password = document.getElementById('backup-edit-smb-password').value;
+        updatedServer.host = document.getElementById('backup-edit-smb-host').value;
+        updatedServer.share = document.getElementById('backup-edit-smb-share').value;
+        updatedServer.username = document.getElementById('backup-edit-smb-username').value;
+        updatedServer.password = document.getElementById('backup-edit-smb-password').value;
       } else if (type === 'nfs') {
-        server.host = document.getElementById('backup-edit-nfs-host').value;
-        server.export_path = document.getElementById('backup-edit-nfs-export').value;
-      }
-
-      if (!name || !server.host) {
-        toast('Please fill in all required fields', 'error');
-        return;
+        updatedServer.host = document.getElementById('backup-edit-nfs-host').value;
+        updatedServer.export_path = document.getElementById('backup-edit-nfs-export').value;
       }
 
       // Delete old server
       await backupFetch(`api/backup/servers/${serverId}`, { method: 'DELETE' });
       
-      // Create updated server
+      // Add updated server
       await backupFetch('api/backup/servers', {
         method: 'POST',
-        body: JSON.stringify(server)
+        body: JSON.stringify(updatedServer)
       });
       
       toast('Server updated successfully', 'success');
@@ -1190,51 +1510,28 @@
     }
   };
 
-  window.backupOpenEditJobModal = async function(job) {
-    backupState.editingJobId = job.id;
-    
-    // Load servers if needed
-    if (backupState.servers.length === 0) {
-      await backupLoadServers();
-    }
-    
-    // Populate form
+  /* =============== EDIT JOB MODAL =============== */
+
+  window.backupOpenEditJobModal = function(job) {
+    document.getElementById('backup-edit-job-id').value = job.id;
     document.getElementById('backup-edit-job-name').value = job.name;
-    document.getElementById('backup-edit-job-paths').value = (job.paths || []).join('\n');
-    document.getElementById('backup-edit-job-dest-path').value = job.destination_path || '';
-    document.getElementById('backup-edit-job-type').value = job.backup_type || 'incremental';
+    document.getElementById('backup-edit-job-paths').value = Array.isArray(job.paths) ? job.paths.join('\n') : job.paths;
+    document.getElementById('backup-edit-job-dest-path').value = job.destination_path || '/backups';
+    document.getElementById('backup-edit-job-type').value = job.backup_type || 'full';
     document.getElementById('backup-edit-job-compress').checked = job.compress !== false;
     document.getElementById('backup-edit-job-stop-containers').checked = job.stop_containers || false;
-    document.getElementById('backup-edit-job-containers').value = (job.containers || []).join(',');
-    document.getElementById('backup-edit-job-schedule').value = job.cron || job.schedule || '0 2 * * *';
+    document.getElementById('backup-edit-job-containers').value = Array.isArray(job.containers) ? job.containers.join(', ') : '';
+    document.getElementById('backup-edit-job-schedule').value = job.schedule || '0 2 * * *';
     document.getElementById('backup-edit-job-retention-days').value = job.retention_days || 0;
     document.getElementById('backup-edit-job-retention-count').value = job.retention_count || 0;
     document.getElementById('backup-edit-job-enabled').checked = job.enabled !== false;
     
-    // Store server IDs
+    // Show/hide container field
+    document.getElementById('backup-edit-container-field').style.display = job.stop_containers ? 'block' : 'none';
+    
+    // Store source/dest server IDs for update
     backupState.editingJobSourceServer = job.source_server_id;
     backupState.editingJobDestServer = job.destination_server_id;
-    
-    // Populate dropdowns
-    const sourceSelect = document.getElementById('backup-edit-job-source');
-    sourceSelect.innerHTML = '<option value="">Select source server...</option>';
-    backupState.sourceServers.forEach(server => {
-      const opt = document.createElement('option');
-      opt.value = server.id;
-      opt.textContent = `${server.name} (${server.host})`;
-      opt.selected = server.id === job.source_server_id;
-      sourceSelect.appendChild(opt);
-    });
-    
-    const destSelect = document.getElementById('backup-edit-job-destination');
-    destSelect.innerHTML = '<option value="">Select destination server...</option>';
-    backupState.destinationServers.forEach(server => {
-      const opt = document.createElement('option');
-      opt.value = server.id;
-      opt.textContent = `${server.name} (${server.host})`;
-      opt.selected = server.id === job.destination_server_id;
-      destSelect.appendChild(opt);
-    });
     
     document.getElementById('backup-edit-job-modal').style.display = 'flex';
   };
@@ -1246,9 +1543,10 @@
   window.backupUpdateJob = async function(event) {
     event.preventDefault();
     
-    const jobId = backupState.editingJobId;
+    const jobId = document.getElementById('backup-edit-job-id').value;
     
     const updatedJob = {
+      id: jobId,
       name: document.getElementById('backup-edit-job-name').value,
       source_server_id: backupState.editingJobSourceServer,
       paths: document.getElementById('backup-edit-job-paths').value.split('\n').filter(p => p.trim()),
@@ -1258,7 +1556,7 @@
       compress: document.getElementById('backup-edit-job-compress').checked,
       stop_containers: document.getElementById('backup-edit-job-stop-containers').checked,
       containers: document.getElementById('backup-edit-job-containers').value.split(',').map(c => c.trim()).filter(c => c),
-      cron: document.getElementById('backup-edit-job-schedule').value, // FIXED: Changed from 'schedule' to 'cron'
+      schedule: document.getElementById('backup-edit-job-schedule').value,
       retention_days: parseInt(document.getElementById('backup-edit-job-retention-days').value) || 0,
       retention_count: parseInt(document.getElementById('backup-edit-job-retention-count').value) || 0,
       enabled: document.getElementById('backup-edit-job-enabled').checked
@@ -1282,48 +1580,39 @@
     }
   };
 
-  window.backupOnEditSourceChange = function() {
-    backupState.editingJobSourceServer = document.getElementById('backup-edit-job-source').value;
-  };
-
-  window.backupOnEditDestChange = function() {
-    backupState.editingJobDestServer = document.getElementById('backup-edit-job-destination').value;
-  };
-
-  /* =============== IMPORT ARCHIVES =============== */
-
-  window.backupImportArchives = async function() {
-    if (!confirm('Import archives from /backups directory? This will scan for existing backup files.')) {
-      return;
-    }
-    
-    try {
-      toast('Scanning for archives...', 'info');
-      const result = await backupFetch('api/backup/import-archives', { method: 'POST' });
-      
-      if (result.success) {
-        toast(`Imported ${result.imported} archive(s)`, 'success');
-        backupRefreshArchives();
-      } else {
-        throw new Error(result.error || 'Import failed');
-      }
-    } catch (error) {
-      toast('Failed to import archives: ' + error.message, 'error');
-    }
+  window.backupOpenFileExplorerForEdit = function(side) {
+    // Use the same file explorer but remember we're in edit mode
+    backupState.editMode = true;
+    backupOpenFileExplorer(side);
   };
 
   /* =============== INIT =============== */
 
-  window.backupInit = function() {
-    backupLoadServers();
-    backupLoadJobs();
-    backupRefreshArchives();
+  window.backupModule = {
+    init: async function() {
+      console.log('[backup] Initializing module...');
+      await backupRefreshAll();
+      console.log('[backup] Module initialized');
+    }
   };
 
-  // Auto-init on load
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', window.backupInit);
-  } else {
-    window.backupInit();
+  // Container toggle
+  const stopContainersCheckbox = document.getElementById('backup-job-stop-containers');
+  if (stopContainersCheckbox) {
+    stopContainersCheckbox.addEventListener('change', function() {
+      const field = document.getElementById('backup-container-field');
+      if (field) field.style.display = this.checked ? 'block' : 'none';
+    });
   }
+
+  const stopContainersEditCheckbox = document.getElementById('backup-edit-job-stop-containers');
+  if (stopContainersEditCheckbox) {
+    stopContainersEditCheckbox.addEventListener('change', function() {
+      const field = document.getElementById('backup-edit-container-field');
+      if (field) field.style.display = this.checked ? 'block' : 'none';
+    });
+  }
+
+  console.log('[backup] Module loaded and ready');
+
 })();
