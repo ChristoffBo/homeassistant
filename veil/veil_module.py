@@ -2042,14 +2042,20 @@ class DHCPServer:
         # === END FIX ===
         
         if CONFIG.get("dhcp_tftp_server"):
-            tftp = CONFIG["dhcp_tftp_server"].encode()
-            response[pos:pos + 2 + len(tftp)] = bytes([DHCP_OPT_TFTP_SERVER, len(tftp)]) + tftp
-            pos += 2 + len(tftp)
+            try:
+                tftp_ip = socket.inet_aton(CONFIG["dhcp_tftp_server"])
+                response[pos:pos + 6] = bytes([DHCP_OPT_TFTP_SERVER, 4]) + tftp_ip
+                pos += 6
+            except (OSError, TypeError) as e:
+                log.warning(f"[dhcp] Invalid TFTP server IP: {CONFIG.get('dhcp_tftp_server')}: {e}")
         
         if CONFIG.get("dhcp_bootfile"):
-            bootfile = CONFIG["dhcp_bootfile"].encode()
-            response[pos:pos + 2 + len(bootfile)] = bytes([DHCP_OPT_BOOTFILE, len(bootfile)]) + bootfile
-            pos += 2 + len(bootfile)
+            try:
+                bootfile = CONFIG["dhcp_bootfile"].encode()
+                response[pos:pos + 2 + len(bootfile)] = bytes([DHCP_OPT_BOOTFILE, len(bootfile)]) + bootfile
+                pos += 2 + len(bootfile)
+            except Exception as e:
+                log.warning(f"[dhcp] Invalid bootfile: {e}")
         
         response[pos] = DHCP_OPT_END
         
