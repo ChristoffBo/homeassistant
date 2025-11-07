@@ -1847,7 +1847,7 @@ def _parse_dhcp_packet(self, data: bytes) -> Optional[dict]:
         log.debug(f"[dhcp] Packet too short: {len(data)} bytes")
         return None
 
-    try:
+ try:
         # === Fixed header fields with length guards ===
         packet = {
             "op": data[0] if len(data) > 0 else 0,
