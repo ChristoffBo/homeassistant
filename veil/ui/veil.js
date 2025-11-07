@@ -132,6 +132,22 @@ const VeilUI = {
           </div>
         </div>
 
+        <!-- Top 20 Lists -->
+        <div class="veil-top-lists" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin: 20px 0;">
+          <div class="top-list-panel" style="background: rgba(255,255,255,0.05); padding: 20px; border-radius: 8px;">
+            <h3 style="margin: 0 0 15px 0; color: #00d4ff;">Top 20 Queries</h3>
+            <div id="top-queries-list" class="top-list"></div>
+          </div>
+          <div class="top-list-panel" style="background: rgba(255,255,255,0.05); padding: 20px; border-radius: 8px;">
+            <h3 style="margin: 0 0 15px 0; color: #ff4444;">Top 20 Blocked</h3>
+            <div id="top-blocked-list" class="top-list"></div>
+          </div>
+          <div class="top-list-panel" style="background: rgba(255,255,255,0.05); padding: 20px; border-radius: 8px;">
+            <h3 style="margin: 0 0 15px 0; color: #00ff88;">Top 20 Clients</h3>
+            <div id="top-clients-list" class="top-list"></div>
+          </div>
+        </div>
+
         <!-- Tabs -->
         <div class="veil-tabs">
           <button class="tab-button active" data-tab="dns">DNS</button>
@@ -212,6 +228,88 @@ const VeilUI = {
     document.getElementById('stat-privacy').textContent = privacyFeatures.toLocaleString();
 
     document.getElementById('stat-dhcp').textContent = (s.dhcp_leases || 0).toLocaleString();
+
+    // Update Top 20 lists
+    this.updateTopQueries(s.top_queries || []);
+    this.updateTopBlocked(s.top_blocked || []);
+    this.updateTopClients(s.top_clients || []);
+  },
+
+  updateTopQueries(topQueries) {
+    const container = document.getElementById('top-queries-list');
+    if (!container) return;
+    
+    container.innerHTML = '';
+    if (!topQueries || topQueries.length === 0) {
+      container.innerHTML = '<div style="color: #666; text-align: center; padding: 20px;">No queries yet</div>';
+      return;
+    }
+
+    topQueries.forEach((item, index) => {
+      const div = document.createElement('div');
+      div.style.cssText = 'display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.1);';
+      div.innerHTML = `
+        <span style="color: #ccc;">${index + 1}. ${item.domain}</span>
+        <span style="color: #00d4ff; font-weight: bold;">${item.count.toLocaleString()}</span>
+      `;
+      container.appendChild(div);
+    });
+  },
+
+  updateTopBlocked(topBlocked) {
+    const container = document.getElementById('top-blocked-list');
+    if (!container) return;
+    
+    container.innerHTML = '';
+    if (!topBlocked || topBlocked.length === 0) {
+      container.innerHTML = '<div style="color: #666; text-align: center; padding: 20px;">No blocked domains yet</div>';
+      return;
+    }
+
+    topBlocked.forEach((item, index) => {
+      const type = item.type || 'unknown';
+      let badgeColor = '#666';
+      let badgeText = type;
+      if (type === 'blacklist') {
+        badgeColor = '#ff4444';
+        badgeText = 'Blacklist';
+      } else if (type === 'blocklist') {
+        badgeColor = '#ff9500';
+        badgeText = 'Blocklist';
+      }
+
+      const div = document.createElement('div');
+      div.style.cssText = 'display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.1);';
+      div.innerHTML = `
+        <span style="color: #ccc;">
+          ${index + 1}. ${item.domain}
+          <span style="margin-left: 6px; padding: 2px 6px; font-size: 9px; background: ${badgeColor}; border-radius: 3px; font-weight: 600;">${badgeText}</span>
+        </span>
+        <span style="color: #ff4444; font-weight: bold;">${item.count.toLocaleString()}</span>
+      `;
+      container.appendChild(div);
+    });
+  },
+
+  updateTopClients(topClients) {
+    const container = document.getElementById('top-clients-list');
+    if (!container) return;
+    
+    container.innerHTML = '';
+    if (!topClients || topClients.length === 0) {
+      container.innerHTML = '<div style="color: #666; text-align: center; padding: 20px;">No clients yet</div>';
+      return;
+    }
+
+    topClients.forEach((item, index) => {
+      const div = document.createElement('div');
+      div.style.cssText = 'display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.1);';
+      div.innerHTML = `
+        <span style="color: #ccc;">${index + 1}. ${item.ip}</span>
+        <span style="color: #00ff88; font-weight: bold;">${item.count.toLocaleString()}</span>
+      `;
+      container.appendChild(div);
+    });
   },
 
   /**
