@@ -866,7 +866,7 @@
         <div class="grid-layout">
             <div class="panel">
                 <div class="panel-header">
-                    <span class="panel-title">Top 10 Queries</span>
+                    <span class="panel-title">Top 20 Queries</span>
                     <span class="panel-icon">🔍</span>
                 </div>
                 <div class="list-container" id="top-queries-list"></div>
@@ -874,7 +874,7 @@
 
             <div class="panel">
                 <div class="panel-header">
-                    <span class="panel-title">Top 10 Blocked</span>
+                    <span class="panel-title">Top 20 Blocked</span>
                     <span class="panel-icon">🚫</span>
                 </div>
                 <div class="list-container" id="top-blocked-list"></div>
@@ -882,7 +882,7 @@
 
             <div class="panel">
                 <div class="panel-header">
-                    <span class="panel-title">Top 10 Clients</span>
+                    <span class="panel-title">Top 20 Clients</span>
                     <span class="panel-icon">👥</span>
                 </div>
                 <div class="list-container" id="top-clients-list"></div>
@@ -1448,7 +1448,7 @@
             updateStats();
             loadDHCPLeases();
             loadStaticLeases();
-            setInterval(updateStats, 2000);
+            setInterval(updateStats, 5000);
             setInterval(updateChart, 1000);
             setInterval(loadDHCPLeases, 10000); // Refresh leases every 10s
             setInterval(loadStaticLeases, 10000);
@@ -1623,7 +1623,7 @@
             });
         }
 
-        // Update top blocked - FIXED to handle both object and array formats
+        // Update top blocked - FIXED with block type badges
         function updateTopBlocked(topBlocked) {
             const container = document.getElementById('top-blocked-list');
             container.innerHTML = '';
@@ -1636,11 +1636,26 @@
             topBlocked.forEach((item, index) => {
                 const domain = item.domain || item[0] || 'unknown';
                 const count = item.count || item[1] || 0;
+                const type = item.type || 'unknown';
+                
+                // Determine badge color
+                let badgeColor = '#666';
+                let badgeText = type;
+                if (type === 'blacklist') {
+                    badgeColor = '#ff4444';
+                    badgeText = 'Blacklist';
+                } else if (type === 'blocklist') {
+                    badgeColor = '#ff9500';
+                    badgeText = 'Blocklist';
+                }
                 
                 const listItem = document.createElement('div');
                 listItem.className = 'list-item';
                 listItem.innerHTML = `
-                    <span class="list-item-label">${index + 1}. ${domain}</span>
+                    <span class="list-item-label">
+                        ${index + 1}. ${domain}
+                        <span style="margin-left: 8px; padding: 2px 6px; font-size: 10px; background: ${badgeColor}; border-radius: 4px; font-weight: 600;">${badgeText}</span>
+                    </span>
                     <span class="list-item-value">${count.toLocaleString()}</span>
                 `;
                 container.appendChild(listItem);
