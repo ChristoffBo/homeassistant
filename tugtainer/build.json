@@ -1,0 +1,9 @@
+{
+  "build_from": {
+    "aarch64": "docker.io/quenary/tugtainer:latest",
+    "amd64": "docker.io/quenary/tugtainer:latest",
+    "armv7": "docker.io/quenary/tugtainer:latest",
+    "armhf": "docker.io/quenary/tugtainer:latest"
+  },
+  "args": {}
+}
