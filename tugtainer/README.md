@@ -38,7 +38,6 @@ services:
       - TZ=Africa/Johannesburg
       - TUGTAINER_ADMIN_USER=admin
       - TUGTAINER_ADMIN_PASS=changeme
-      - TUGTAINER_APPRISE_URL=gotify://10.0.0.100:2580/ANpD5luBfMScl-t
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /DATA/AppData/tugtainer:/tugtainer
