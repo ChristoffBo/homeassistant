@@ -1,3 +1,7 @@
+## 14.0.0 (2025-11-08 14:43:28)
+- Update from 13.6.0 to 14.0.0
+- Docker Image: [technitium/dns-server:14.0.0](https://hub.docker.com/r/technitium/dns-server/tags)
+
 ## 13.6.0
 - Updated from unknown to 13.6.0
 - Docker: [technitium/dns-server:latest](technitium/pkgs/container/dns-server:latest/tags)

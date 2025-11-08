@@ -1,6 +1,6 @@
 {
   "name": "Technitium DNS & DHCP",
-  "version": "13.6.0",
+  "version": "14.0.0",
   "slug": "technitium-dns-dhcp",
   "description": "Network-wide ads & trackers blocking DNS and DHCP server",
   "url": "https://technitium.com/dns/",
