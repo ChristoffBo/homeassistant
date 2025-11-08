@@ -31,7 +31,7 @@ All container actions are performed through remote Tugtainer agents running on y
 version: "3.9"
 services:
   tugtainer-agent:
-    image: docker.io/quenary/tugtainer:latest
+    image: quenary/tugtainer:latest
     container_name: tugtainer-agent
     restart: unless-stopped
     environment:
