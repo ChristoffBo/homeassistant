@@ -4,7 +4,7 @@
 # Uses the official Docker Hub image as the base.
 #
 
-FROM docker.io/quenary/tugtainer:latest
+FROM quenary/tugtainer:latest
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 WORKDIR /app
