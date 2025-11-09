@@ -1,15 +1,15 @@
 ARG BUILD_FROM
 FROM ${BUILD_FROM}
 
-# Set working directory
-WORKDIR /tugtainer
+# Copy run script
+COPY run /
 
-# Ensure persistent storage directory exists
-RUN mkdir -p /tugtainer
+# Make run script executable
+RUN chmod a+x /run
 
 # Labels
 LABEL \
     io.hass.name="Tugtainer" \
     io.hass.description="Docker container update automation with web UI" \
     io.hass.type="addon" \
-    io.hass.version="1.0.0"
+    io.hass.version="v1.7.0"
