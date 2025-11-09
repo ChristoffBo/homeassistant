@@ -3,30 +3,32 @@
 Jarvis Prime - Analytics & Uptime Monitoring Module
 aiohttp-compatible version for Jarvis Prime
 
-VERSION: 2025-01-19-FINAL-FIX + SPEED TEST INTEGRATION
+VERSION: 2025-11-09-ASYNC-FIX + DOCKER-DISCOVERY
+
+CRITICAL FIXES:
+1. Fixed UI freezing when notifications are sent
+   - process_incoming() now runs in thread executor to prevent blocking
+   - All notifications are now truly async and won't lock the UI
+
+2. Added Docker container auto-discovery
+   - Automatically detects running Docker containers  
+   - Uses SERVICE_FINGERPRINTS to identify services
+   - One-click button to discover and add all services
+   - Updates existing services instead of duplicating
 
 Complete file with Internet Speed Testing integrated
 """
 
-import sqlite3
-import time
-import json
-import asyncio
-import subprocess
-import aiohttp
-from datetime import datetime
-from typing import Dict, List, Optional, Callable
-from dataclasses import dataclass, field
-from aiohttp import web
-from collections import deque
-import logging
-import re
 import socket
 
 logger = logging.getLogger(__name__)
 
 # Print version on import
 logger.info("ðŸ”¥ Analytics Module VERSION: 2025-01-19-FINAL-FIX + SPEED TEST ðŸ”¥")
+
+# Thread executor for running blocking operations (prevents UI freezing)
+_executor = ThreadPoolExecutor(max_workers=4)
+
 
 
 # Service fingerprint database - maps ports to common services
@@ -1939,15 +1941,29 @@ speed_monitor: Optional[SpeedTestMonitor] = None
 # NOTIFICATION HELPER
 # ============================================================================
 
+
 async def analytics_notify(service_name: str, severity: str, message: str):
-    """Send notification via process_incoming (with Gotify fallback)"""
-    # Try process_incoming for fan-out first
+    """
+    Send notification via process_incoming (with Gotify fallback)
+    FIXED: Now runs process_incoming in thread executor to prevent UI blocking
+    """
+    # Try process_incoming for fan-out first (run in executor to prevent blocking)
     try:
         from bot import process_incoming
         title = f'[Analytics] {service_name}'
         priority_map = {'info': 5, 'up': 5, 'warning': 7, 'down': 8, 'critical': 10}
         priority = priority_map.get(severity, 5)
-        process_incoming(title, message, source="analytics", priority=priority)
+        
+        # Run blocking process_incoming in thread executor
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            _executor,
+            process_incoming,
+            title,
+            message,
+            "analytics",
+            priority
+        )
         logger.debug(f"Notification sent via process_incoming: {title}")
         return
     except Exception as e:
@@ -1988,9 +2004,161 @@ async def analytics_notify(service_name: str, severity: str, message: str):
         logger.error(f"Failed to send notification: {e}")
 
 
-# ============================================================================
-# API ROUTES - SERVICE MANAGEMENT
-# ============================================================================
+async def discover_docker_services() -> List[Dict]:
+    """
+    Auto-discover running Docker containers and match them to known services
+    Returns list of discovered services ready to be added
+    """
+    discovered = []
+    
+    try:
+        # Get all running containers
+        result = subprocess.run(
+            ['docker', 'ps', '--format', '{{.Names}}|{{.Ports}}'],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        
+        if result.returncode != 0:
+            logger.error(f"Docker discovery failed: {result.stderr}")
+            return discovered
+        
+        containers = result.stdout.strip().split('\n')
+        
+        for container in containers:
+            if not container.strip():
+                continue
+                
+            parts = container.split('|')
+            if len(parts) < 2:
+                continue
+                
+            name = parts[0]
+            ports_str = parts[1]
+            
+            # Parse exposed ports
+            # Format: "0.0.0.0:8989->8989/tcp, :::8989->8989/tcp"
+            port_matches = re.findall(r':(\d+)->', ports_str)
+            
+            for port_str in port_matches:
+                port = int(port_str)
+                
+                # Check if port matches known service
+                if port in SERVICE_FINGERPRINTS:
+                    fingerprint = SERVICE_FINGERPRINTS[port]
+                    service_name = fingerprint['name']
+                    check_path = fingerprint.get('path', '/')
+                    
+                    # Build endpoint
+                    if check_path:
+                        endpoint = f"http://localhost:{port}{check_path}"
+                        check_type = 'http'
+                    else:
+                        endpoint = f"localhost:{port}"
+                        check_type = 'tcp'
+                    
+                    discovered.append({
+                        'service_name': f"{service_name} ({name})" if service_name != name else service_name,
+                        'container_name': name,
+                        'endpoint': endpoint,
+                        'check_type': check_type,
+                        'port': port,
+                        'category': fingerprint.get('category', 'unknown'),
+                        'expected_status': 200 if check_type == 'http' else None
+                    })
+                    
+                    logger.info(f"Discovered: {service_name} on port {port} (container: {name})")
+        
+        logger.info(f"Docker discovery complete: found {len(discovered)} services")
+        return discovered
+        
+    except subprocess.TimeoutExpired:
+        logger.error("Docker discovery timed out")
+        return discovered
+    except FileNotFoundError:
+        logger.error("Docker not found - is Docker installed?")
+        return discovered
+    except Exception as e:
+        logger.error(f"Docker discovery error: {e}")
+        return discovered
+
+
+async def api_docker_discover(request: web.Request):
+    """API endpoint to discover Docker services"""
+    try:
+        discovered = await discover_docker_services()
+        return _json({
+            'success': True,
+            'discovered': discovered,
+            'count': len(discovered)
+        })
+    except Exception as e:
+        logger.error(f"Docker discovery API error: {e}")
+        return _json({'error': str(e)}, status=500)
+
+
+async def api_docker_import(request: web.Request):
+    """API endpoint to import discovered Docker services"""
+    try:
+        data = await request.json()
+        services_to_import = data.get('services', [])
+        
+        if not services_to_import:
+            return _json({'error': 'No services to import'}, status=400)
+        
+        imported = 0
+        skipped = 0
+        errors = []
+        
+        for svc_data in services_to_import:
+            try:
+                # Check if service already exists
+                existing_services = db.get_services()
+                service_exists = any(s.service_name == svc_data['service_name'] for s in existing_services)
+                
+                service = HealthCheck(
+                    service_name=svc_data['service_name'],
+                    endpoint=svc_data['endpoint'],
+                    check_type=svc_data['check_type'],
+                    expected_status=svc_data.get('expected_status', 200),
+                    timeout=5,
+                    interval=60,
+                    enabled=True,
+                    retries=3,
+                    flap_window=3600,
+                    flap_threshold=5,
+                    suppression_duration=3600
+                )
+                
+                db.add_service(service)
+                
+                # Start monitoring if enabled
+                if service.enabled and monitor:
+                    task = asyncio.create_task(monitor.monitor_service(service))
+                    monitor.monitoring_tasks[service.service_name] = task
+                
+                if service_exists:
+                    skipped += 1
+                    logger.info(f"Updated existing service: {service.service_name}")
+                else:
+                    imported += 1
+                    logger.info(f"Imported new service: {service.service_name}")
+                    
+            except Exception as e:
+                errors.append(f"{svc_data.get('service_name', 'unknown')}: {str(e)}")
+                logger.error(f"Error importing service {svc_data.get('service_name')}: {e}")
+        
+        return _json({
+            'success': True,
+            'imported': imported,
+            'updated': skipped,
+            'errors': errors
+        })
+        
+    except Exception as e:
+        logger.error(f"Docker import API error: {e}")
+        return _json({'error': str(e)}, status=500)
 
 def _json(data: dict, status: int = 200):
     """Helper to return JSON response"""
@@ -2553,6 +2721,10 @@ def register_routes(app: web.Application):
     app.router.add_delete('/api/analytics/services/{service_id}', delete_service)
     app.router.add_get('/api/analytics/uptime/{service_name}', get_uptime)
     app.router.add_get('/api/analytics/incidents', get_incidents)
+    
+    # Docker discovery
+    app.router.add_post('/api/analytics/docker/discover', api_docker_discover)
+    app.router.add_post('/api/analytics/docker/import', api_docker_import)
     
     # Data management
     app.router.add_post('/api/analytics/reset-health', reset_health)
