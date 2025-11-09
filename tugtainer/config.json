@@ -19,8 +19,12 @@
   "panel_icon": "mdi:docker",
   "panel_title": "Tugtainer",
   "map": [
-    "data:rw"
+    "data:rw",
+    "share:rw"
   ],
+  "volumes": {
+    "tugtainer_data": "/tugtainer"
+  },
   "environment": {
     "TZ": "Africa/Johannesburg"
   }
