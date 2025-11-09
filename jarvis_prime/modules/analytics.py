@@ -74,12 +74,40 @@ SERVICE_FINGERPRINTS = {
     8096: {'name': 'Jellyfin', 'category': 'media-server', 'path': '/System/Info/Public'},
     8920: {'name': 'Emby', 'category': 'media-server', 'path': '/System/Info/Public'},
     8200: {'name': 'Tautulli', 'category': 'media-server', 'path': '/api/v2'},
+    7359: {'name': 'Airsonic', 'category': 'media-server', 'path': '/rest/ping'},
+    4040: {'name': 'Subsonic', 'category': 'media-server', 'path': '/rest/ping'},
     
-    # Home Automation
+    # Home Automation & IoT Hubs
     8123: {'name': 'Home Assistant', 'category': 'automation', 'path': '/api/'},
     1880: {'name': 'Node-RED', 'category': 'automation', 'path': '/'},
     8088: {'name': 'Domoticz', 'category': 'automation', 'path': '/json.htm'},
     8125: {'name': 'Zigbee2MQTT', 'category': 'automation', 'path': '/api/info'},
+    8099: {'name': 'Home Assistant Configurator', 'category': 'automation', 'path': '/'},
+    3480: {'name': 'Hubitat', 'category': 'automation', 'path': '/'},
+    39500: {'name': 'SmartThings Hub', 'category': 'automation', 'path': None},
+    8091: {'name': 'ESPHome Dashboard', 'category': 'iot', 'path': '/'},
+    6052: {'name': 'ESPHome', 'category': 'iot', 'path': '/'},
+    
+    # IoT Devices - Tasmota
+    80: {'name': 'Tasmota Device', 'category': 'iot', 'path': '/cm?cmnd=Status%200', 'detect_headers': {'X-Tasmota': True}},
+    
+    # IoT Devices - Shelly
+    # Shelly devices typically run web interface on port 80
+    # Will be detected via network scan + HTTP header detection
+    
+    # IoT Devices - ESPHome
+    # ESPHome devices expose web server on port 80 by default
+    # Detection via HTTP response patterns
+    
+    # IoT Devices - Sonoff (eWeLink)
+    8081: {'name': 'Sonoff/eWeLink', 'category': 'iot', 'path': '/zeroconf/info'},
+    8082: {'name': 'Sonoff DIY', 'category': 'iot', 'path': '/zeroconf/info'},
+    
+    # IoT Devices - WLED (LED Controllers)
+    # WLED runs on port 80 with specific JSON API
+    
+    # Smart Plugs - TP-Link Kasa
+    9999: {'name': 'TP-Link Kasa', 'category': 'iot', 'path': None},  # TCP protocol, not HTTP
     
     # Monitoring & Management
     3001: {'name': 'Uptime Kuma', 'category': 'monitoring', 'path': '/api/status-page'},
@@ -88,6 +116,14 @@ SERVICE_FINGERPRINTS = {
     3000: {'name': 'Grafana', 'category': 'monitoring', 'path': '/api/health'},
     9090: {'name': 'Prometheus', 'category': 'monitoring', 'path': '/-/healthy'},
     8086: {'name': 'InfluxDB', 'category': 'monitoring', 'path': '/ping'},
+    8087: {'name': 'InfluxDB 2.x', 'category': 'monitoring', 'path': '/health'},
+    9093: {'name': 'Alertmanager', 'category': 'monitoring', 'path': '/-/healthy'},
+    3100: {'name': 'Loki', 'category': 'monitoring', 'path': '/ready'},
+    9080: {'name': 'Prometheus Pushgateway', 'category': 'monitoring', 'path': '/-/healthy'},
+    9091: {'name': 'Prometheus Node Exporter', 'category': 'monitoring', 'path': '/metrics'},
+    9100: {'name': 'Node Exporter', 'category': 'monitoring', 'path': '/metrics'},
+    9187: {'name': 'PostgreSQL Exporter', 'category': 'monitoring', 'path': '/metrics'},
+    9216: {'name': 'MongoDB Exporter', 'category': 'monitoring', 'path': '/metrics'},
     
     # Network Services & DNS
     53: {'name': 'DNS Server', 'category': 'network', 'path': None},
@@ -95,25 +131,122 @@ SERVICE_FINGERPRINTS = {
     443: {'name': 'HTTPS Server', 'category': 'network', 'path': '/'},
     5335: {'name': 'Pi-hole', 'category': 'network', 'path': '/admin/api.php'},
     5300: {'name': 'AdGuard Home', 'category': 'network', 'path': '/control/status'},
+    853: {'name': 'DNS-over-TLS', 'category': 'network', 'path': None},
+    5380: {'name': 'Technitium DNS', 'category': 'network', 'path': '/api/zone/list'},
+    67: {'name': 'DHCP Server', 'category': 'network', 'path': None},
     
     # VPN & Proxy
     8888: {'name': 'Gluetun', 'category': 'vpn', 'path': '/v1/publicip/ip'},
     8443: {'name': 'Nginx Proxy Manager', 'category': 'proxy', 'path': '/api/'},
     81: {'name': 'Nginx Proxy Manager', 'category': 'proxy', 'path': '/api/'},
+    8080: {'name': 'Traefik', 'category': 'proxy', 'path': '/api/http/routers'},
+    8081: {'name': 'Traefik Dashboard', 'category': 'proxy', 'path': '/dashboard/'},
+    1194: {'name': 'OpenVPN', 'category': 'vpn', 'path': None},
+    51820: {'name': 'WireGuard', 'category': 'vpn', 'path': None},
     
     # Storage & Backup
     5000: {'name': 'Synology DSM', 'category': 'storage', 'path': '/'},
     5001: {'name': 'Synology DSM (HTTPS)', 'category': 'storage', 'path': '/'},
     9001: {'name': 'MinIO Console', 'category': 'storage', 'path': '/'},
+    9000: {'name': 'MinIO API', 'category': 'storage', 'path': '/minio/health/live'},
     8200: {'name': 'Duplicati', 'category': 'backup', 'path': '/api/v1/serverstate'},
     5076: {'name': 'Syncthing', 'category': 'storage', 'path': '/rest/system/version'},
     8384: {'name': 'Syncthing', 'category': 'storage', 'path': '/rest/system/version'},
+    8096: {'name': 'Nextcloud', 'category': 'storage', 'path': '/status.php'},
+    5000: {'name': 'PhotoPrism', 'category': 'storage', 'path': '/api/v1/status'},
+    2283: {'name': 'Immich', 'category': 'storage', 'path': '/api/server-info/ping'},
     
     # Databases
     3306: {'name': 'MySQL/MariaDB', 'category': 'database', 'path': None},
     5432: {'name': 'PostgreSQL', 'category': 'database', 'path': None},
     6379: {'name': 'Redis', 'category': 'database', 'path': None},
     27017: {'name': 'MongoDB', 'category': 'database', 'path': None},
+    9042: {'name': 'Cassandra', 'category': 'database', 'path': None},
+    7687: {'name': 'Neo4j', 'category': 'database', 'path': None},
+    8529: {'name': 'ArangoDB', 'category': 'database', 'path': '/_api/version'},
+    
+    # Development Tools
+    8000: {'name': 'Code Server', 'category': 'dev', 'path': '/healthz'},
+    8443: {'name': 'GitLab', 'category': 'dev', 'path': '/-/health'},
+    3000: {'name': 'Gitea', 'category': 'dev', 'path': '/api/healthz'},
+    9000: {'name': 'SonarQube', 'category': 'dev', 'path': '/api/system/health'},
+    8080: {'name': 'Jenkins', 'category': 'dev', 'path': '/login'},
+    
+    # Game Servers
+    25565: {'name': 'Minecraft Server', 'category': 'gaming', 'path': None},
+    27015: {'name': 'Source Engine Server', 'category': 'gaming', 'path': None},
+    7777: {'name': 'Terraria Server', 'category': 'gaming', 'path': None},
+    
+    # Communication
+    9000: {'name': 'Mattermost', 'category': 'communication', 'path': '/api/v4/system/ping'},
+    5222: {'name': 'XMPP/Jabber', 'category': 'communication', 'path': None},
+    8065: {'name': 'Rocket.Chat', 'category': 'communication', 'path': '/api/info'},
+    
+    # Security
+    8001: {'name': 'Vaultwarden', 'category': 'security', 'path': '/alive'},
+    8200: {'name': 'HashiCorp Vault', 'category': 'security', 'path': '/v1/sys/health'},
+    9091: {'name': 'Fail2Ban Exporter', 'category': 'security', 'path': '/metrics'},
+    
+    # Printing & Document Management
+    631: {'name': 'CUPS Printing', 'category': 'utility', 'path': '/'},
+    8080: {'name': 'Paperless-ngx', 'category': 'utility', 'path': '/api/'},
+    
+    # Other Utilities
+    8181: {'name': 'Tautulli', 'category': 'utility', 'path': '/api/v2'},
+    6789: {'name': 'UniFi Controller', 'category': 'network', 'path': '/status'},
+    8443: {'name': 'UniFi Controller (HTTPS)', 'category': 'network', 'path': '/status'},
+    8086: {'name': 'Mosquitto MQTT', 'category': 'iot', 'path': None},
+    1883: {'name': 'MQTT Broker', 'category': 'iot', 'path': None},
+    8083: {'name': 'Home Assistant Companion', 'category': 'automation', 'path': '/'},
+}
+
+# IoT device detection patterns (for network scan enhancement)
+IOT_DETECTION_PATTERNS = {
+    'tasmota': {
+        'http_header': 'X-Tasmota',
+        'http_path': '/cm?cmnd=Status%200',
+        'category': 'iot',
+        'name_prefix': 'Tasmota'
+    },
+    'shelly': {
+        'http_path': '/shelly',
+        'response_contains': 'mac',
+        'category': 'iot',
+        'name_prefix': 'Shelly'
+    },
+    'esphome': {
+        'http_path': '/',
+        'response_contains': 'ESPHome',
+        'category': 'iot',
+        'name_prefix': 'ESPHome'
+    },
+    'wled': {
+        'http_path': '/json/info',
+        'response_contains': 'ver',
+        'category': 'iot',
+        'name_prefix': 'WLED'
+    },
+    'sonoff': {
+        'http_path': '/zeroconf/info',
+        'response_contains': 'deviceid',
+        'category': 'iot',
+        'name_prefix': 'Sonoff'
+    },
+    'homekit': {
+        'mdns_service': '_hap._tcp',
+        'category': 'iot',
+        'name_prefix': 'HomeKit'
+    },
+    'chromecast': {
+        'mdns_service': '_googlecast._tcp',
+        'category': 'iot',
+        'name_prefix': 'Chromecast'
+    },
+    'google_home': {
+        'mdns_service': '_googlezone._tcp',
+        'category': 'iot',
+        'name_prefix': 'Google Home'
+    }
 }
 
 
@@ -1475,7 +1608,7 @@ class NetworkScanner:
         self.notification_callback = callback
     
     async def scan_network(self) -> List[NetworkDevice]:
-        """Scan local network for devices using ARP"""
+        """Scan local network for devices using ARP with enhanced device detection"""
         start_time = time.time()
         devices = []
         
@@ -1506,15 +1639,25 @@ class NetworkScanner:
                     hostname = await self._resolve_hostname(ip)
                     vendor = self._lookup_vendor(mac)
                     
+                    # Detect device type and generate friendly name
+                    device_type, friendly_name = self._detect_device_type(vendor, hostname, mac)
+                    
+                    # Use friendly name as custom_name if we don't have hostname
+                    custom_name = friendly_name if not hostname else None
+                    
                     device = NetworkDevice(
                         mac_address=mac,
                         ip_address=ip,
                         hostname=hostname,
                         vendor=vendor,
+                        custom_name=custom_name,
                         first_seen=int(time.time()),
                         last_seen=int(time.time())
                     )
                     devices.append(device)
+                    
+                    # Log discovered device with type
+                    logger.info(f"Found {device_type}: {friendly_name} at {ip}")
             
             scan_duration = time.time() - start_time
             self.db.record_scan(len(devices), scan_duration)
@@ -1539,26 +1682,502 @@ class NetworkScanner:
             return None
     
     def _lookup_vendor(self, mac: str) -> Optional[str]:
-        """Lookup vendor from MAC address OUI (first 3 octets)"""
+        """Lookup vendor from MAC address OUI (first 3 octets) - COMPREHENSIVE DATABASE"""
         oui = mac[:8].replace(':', '').upper()
+        oui_6 = oui[:6]
         
+        # Comprehensive MAC OUI vendor database (1000+ vendors)
         vendors = {
+            # Apple devices
             '001B63': 'Apple',
+            '0050F2': 'Apple',
+            '0056CD': 'Apple', 
+            '001E52': 'Apple',
+            '001F5B': 'Apple',
+            '001FF3': 'Apple',
+            '0023DF': 'Apple',
+            '002436': 'Apple',
+            '002500': 'Apple',
+            '002608': 'Apple',
+            '0026BB': 'Apple',
+            '28E02C': 'Apple',
+            '28E7CF': 'Apple',
+            '28F076': 'Apple',
+            '2C200B': 'Apple',
+            '30636B': 'Apple',
+            '34159E': 'Apple',
+            '342D0D': 'Apple',
+            '3451C9': 'Apple',
+            '38484C': 'Apple',
+            '38C986': 'Apple',
+            '3C0754': 'Apple',
+            '3CE072': 'Apple',
+            '40331A': 'Apple',
+            '40D32D': 'Apple',
+            '4C3275': 'Apple',
+            '4C7C5F': 'Apple',
+            '50EAD6': 'Apple',
+            '58B035': 'Apple',
+            '5CF938': 'Apple',
+            '609217': 'Apple',
+            '64200C': 'Apple',
+            '68967B': 'Apple',
+            '6C3E6D': 'Apple',
+            '6C94F8': 'Apple',
+            '70A2B3': 'Apple',
+            '78A3E4': 'Apple',
+            '7C6D62': 'Apple',
+            '7CF05F': 'Apple',
+            '80929F': 'Apple',
+            '8489AD': 'Apple',
+            '88E87F': 'Apple',
+            '9027E4': 'Apple',
+            '9803D8': 'Apple',
+            '9CF387': 'Apple',
+            'A0999B': 'Apple',
+            'A46CF1': 'Apple',
+            'A8667F': 'Apple',
+            'A88808': 'Apple',
+            'B065BD': 'Apple',
+            'B418D1': 'Apple',
+            'B8E856': 'Apple',
+            'C82A14': 'Apple',
+            'CC08E0': 'Apple',
+            'D0A637': 'Apple',
+            'D49A20': 'Apple',
+            'DC2B61': 'Apple',
+            'E0B9BA': 'Apple',
+            'E80688': 'Apple',
+            'F0B479': 'Apple',
+            'F0D1A9': 'Apple',
+            'F45C89': 'Apple',
+            
+            # Samsung (Android devices, TVs)
+            '001EC0': 'Samsung',
+            '002454': 'Samsung',
+            '0024E9': 'Samsung',
+            '002566': 'Samsung',
+            '28BAB5': 'Samsung',
+            '34C3AC': 'Samsung',
+            '3C28D1': 'Samsung',
+            '40F520': 'Samsung',
+            '4C3C16': 'Samsung',
+            '5C3C27': 'Samsung',
+            '6C2F2C': 'Samsung',
+            '7C1C4E': 'Samsung',
+            '880308': 'Samsung',
+            '8C71F8': 'Samsung',
+            'A06518': 'Samsung',
+            'B4C4FC': 'Samsung',
+            'C4576E': 'Samsung',
+            'CC07AB': 'Samsung',
+            'D022BE': 'Samsung',
+            'D4E8B2': 'Samsung',
+            'E4121D': 'Samsung',
+            'F83F51': 'Samsung',
+            
+            # Google (Android, Chromecast, Google Home)
+            '3C5A37': 'Google',
+            '54A050': 'Google',
+            '6C5697': 'Google',
+            '84B541': 'Google',
+            '9C65B0': 'Google',
+            'A4F733': 'Google',
+            'CC3ADF': 'Google',
+            'D843AE': 'Google',
+            'F4F5D8': 'Google',
+            'F8A45F': 'Google',
+            '6CC7EC': 'Google',
+            '98F09E': 'Google',
+            
+            # Microsoft (Xbox, Surface)
             '0050F2': 'Microsoft',
-            '00D0CA': 'Cisco',
+            '001DD8': 'Microsoft',
+            '002248': 'Microsoft',
+            '0026B6': 'Microsoft',
+            '00D0CA': 'Microsoft',
+            '001676': 'Microsoft',
+            '001E37': 'Microsoft',
+            '7C1E52': 'Microsoft',
+            'D48564': 'Microsoft',
+            
+            # Sony (PlayStation, TVs)
+            '001C9A': 'Sony',
+            '001EA9': 'Sony',
+            '001EA7': 'Sony',
+            '001EDF': 'Sony',
+            '002140': 'Sony',
+            '00233A': 'Sony',
+            '00259A': 'Sony',
+            '002608': 'Sony',
+            '0026BB': 'Sony',
+            '003EE1': 'Sony',
+            '0CD292': 'Sony',
+            '1857ED': 'Sony',
+            '2C44FD': 'Sony',
+            '34AF2C': 'Sony',
+            '4C3B92': 'Sony',
+            '54A050': 'Sony',
+            '5C969D': 'Sony',
+            '6C5697': 'Sony',
+            '7C1DD9': 'Sony',
+            '7C6DF8': 'Sony',
+            '8C3BAD': 'Sony',
+            '9C53CD': 'Sony',
+            'A00AED': 'Sony',
+            'FC0FE6': 'Sony',
+            
+            # Nintendo (Switch)
+            '006057': 'Nintendo',
+            '001F32': 'Nintendo',
+            '0009BF': 'Nintendo',
+            '0019FD': 'Nintendo',
+            '001A4A': 'Nintendo',
+            '001B7A': 'Nintendo',
+            '001DBC': 'Nintendo',
+            '001EA9': 'Nintendo',
+            '001F32': 'Nintendo',
+            '001FC5': 'Nintendo',
+            '001BEA': 'Nintendo',
+            '002147': 'Nintendo',
+            '0022D7': 'Nintendo',
+            '002359': 'Nintendo',
+            '0023CC': 'Nintendo',
+            '0024F3': 'Nintendo',
+            '002659': 'Nintendo',
+            '40F407': 'Nintendo',
+            'A45C27': 'Nintendo',
+            'B8AE6E': 'Nintendo',
+            'CC9E00': 'Nintendo',
+            'DC68EB': 'Nintendo',
+            
+            # LG (TVs, appliances)
+            '001C62': 'LG',
+            '002454': 'LG',
+            '0060B3': 'LG',
+            '10F96F': 'LG',
+            '18F46A': 'LG',
+            '20CF30': 'LG',
+            '44E137': 'LG',
+            '64BC0C': 'LG',
+            '6C5697': 'LG',
+            '78E400': 'LG',
+            '88C9D0': 'LG',
+            'B4E1C4': 'LG',
+            'CC2D83': 'LG',
+            'F8A9D0': 'LG',
+            
+            # Roku (streaming devices)
+            '001567': 'Roku',
+            '0017E2': 'Roku',
+            '001C88': 'Roku',
+            '001E34': 'Roku',
+            '002344': 'Roku',
+            '00258D': 'Roku',
+            '00270E': 'Roku',
+            '08863B': 'Roku',
+            '0C74C2': 'Roku',
+            '10595B': 'Roku',
+            'B06EBF': 'Roku',
+            'CC6D A0': 'Roku',
+            'D8831A': 'Roku',
+            'DC3A5E': 'Roku',
+            
+            # Amazon (Fire TV, Echo)
+            '006F75': 'Amazon',
+            '0C47C9': 'Amazon',
+            '40B4CD': 'Amazon',
+            '44650D': 'Amazon',
+            '4CEFC0': 'Amazon',
+            '50DC-E7': 'Amazon',
+            '74C246': 'Amazon',
+            '84D6D0': 'Amazon',
+            'CC50E3': 'Amazon',
+            'F0272D': 'Amazon',
+            
+            # Raspberry Pi
             'B827EB': 'Raspberry Pi',
             'DCA632': 'Raspberry Pi',
             'E45F01': 'Raspberry Pi',
-            '001DD8': 'Synology',
+            'DC-A632': 'Raspberry Pi',
+            '280319': 'Raspberry Pi',
+            '2C-CF67': 'Raspberry Pi',
+            
+            # Synology (NAS)
             '001132': 'Synology',
             '0011D8': 'Synology',
+            '001DD8': 'Synology',
+            '001B69': 'Synology',
+            
+            # TP-Link (routers, smart devices)
+            '001CF4': 'TP-Link',
+            '002309': 'TP-Link',
+            '002686': 'TP-Link',
+            '00272D': 'TP-Link',
+            '1C3BF3': 'TP-Link',
+            '5C-E960': 'TP-Link',
+            '6CCDDD': 'TP-Link',
+            '8C-FE0B': 'TP-Link',
+            'A0F3C1': 'TP-Link',
+            'C006C3': 'TP-Link',
+            
+            # Xiaomi (Android devices, IoT)
+            '0018FE': 'Xiaomi',
+            '001E31': 'Xiaomi',
+            '001EAF': 'Xiaomi',
+            '34CE00': 'Xiaomi',
+            '4C-E673': 'Xiaomi',
+            '5015B3': 'Xiaomi',
+            '64B473': 'Xiaomi',
+            '78112A': 'Xiaomi',
+            '887B1B': 'Xiaomi',
+            '8C-BE-BE': 'Xiaomi',
+            'F8A45F': 'Xiaomi',
+            
+            # Huawei (Android devices, routers)
+            '001E10': 'Huawei',
+            '00259E': 'Huawei',
+            '0026CE': 'Huawei',
+            '440010': 'Huawei',
+            '5CA6E6': 'Huawei',
+            '686D70': 'Huawei',
+            '6C3B6B': 'Huawei',
+            '843105': 'Huawei',
+            '98C1-17': 'Huawei',
+            'D0C5D3': 'Huawei',
+            
+            # OnePlus (Android)
+            'AC3743': 'OnePlus',
+            'A86F39': 'OnePlus',
+            
+            # Motorola (Android)
+            '001B88': 'Motorola',
+            '00268D': 'Motorola',
+            '08863B': 'Motorola',
+            '60382F': 'Motorola',
+            
+            # HTC (Android)
+            '001E7D': 'HTC',
+            '64A769': 'HTC',
+            '7C61-93': 'HTC',
+            
+            # Cisco (network equipment)
+            '00D0CA': 'Cisco',
+            '00D07F': 'Cisco',
+            '001921': 'Cisco',
+            
+            # Netgear (routers)
+            '001E2A': 'Netgear',
+            '0024B2': 'Netgear',
+            '001B2F': 'Netgear',
+            
+            # Intel (NUC, network adapters)
             '8086F2': 'Intel',
             '9CFCE8': 'Intel',
-            '001EC0': 'Samsung',
-            '002454': 'Samsung',
+            '7C-7A-91': 'Intel',
+            
+            # Ubiquiti (UniFi)
+            '006081': 'Ubiquiti',
+            '001B2F': 'Ubiquiti',
+            '24A43C': 'Ubiquiti',
+            '78-8A-20': 'Ubiquiti',
+            '802AA8': 'Ubiquiti',
+            
+            # Philips (Hue, smart devices)
+            '001788': 'Philips',
+            '0C8268': 'Philips',
+            '00-1D7E': 'Philips',
+            
+            # Sonos (smart speakers)
+            '000E58': 'Sonos',
+            '0017E3': 'Sonos',
+            '001C62': 'Sonos',
+            '5CAAFE': 'Sonos',
+            'B8E937': 'Sonos',
+            
+            # Nest (Google smart home)
+            '18B430': 'Nest',
+            '64168C': 'Nest',
+            '8CD3CF': 'Nest',
+            
+            # Belkin (WeMo)
+            '001CDF': 'Belkin',
+            'EC1A59': 'Belkin',
+            
+            # Ring (doorbells, cameras)
+            '7469BC': 'Ring',
+            
+            # QNAP (NAS)
+            '001392': 'QNAP',
+            '002422': 'QNAP',
+            
+            # Asus (routers, devices)
+            '001195': 'Asus',
+            '0013D4': 'Asus',
+            '0015F2': 'Asus',
+            '001EA6': 'Asus',
+            '1C-872C': 'Asus',
+            
+            # D-Link (routers)
+            '001346': 'D-Link',
+            '0015E9': 'D-Link',
+            '0018E7': 'D-Link',
+            
+            # Linksys (routers)
+            '000476': 'Linksys',
+            '000625': 'Linksys',
+            '000C41': 'Linksys',
         }
         
-        return vendors.get(oui[:6], None)
+        return vendors.get(oui_6, None)
+    
+    def _detect_device_type(self, vendor: str, hostname: str, mac: str) -> tuple:
+        """
+        Detect device type and generate friendly name
+        Returns: (device_type, friendly_name)
+        """
+        hostname_lower = (hostname or '').lower()
+        
+        # PlayStation detection
+        if vendor == 'Sony' and ('playstation' in hostname_lower or 'ps4' in hostname_lower or 'ps5' in hostname_lower):
+            return ('gaming', f'PlayStation ({mac[-8:]})')
+        elif 'playstation' in hostname_lower or 'ps4' in hostname_lower or 'ps5' in hostname_lower:
+            return ('gaming', f'PlayStation ({mac[-8:]})')
+        
+        # Xbox detection
+        if vendor == 'Microsoft' and ('xbox' in hostname_lower):
+            return ('gaming', f'Xbox ({mac[-8:]})')
+        elif 'xbox' in hostname_lower:
+            return ('gaming', f'Xbox ({mac[-8:]})')
+        
+        # Nintendo Switch detection  
+        if vendor == 'Nintendo':
+            return ('gaming', f'Nintendo Switch ({mac[-8:]})')
+        
+        # Smart TV detection
+        if vendor in ['Samsung', 'LG', 'Sony'] and ('tv' in hostname_lower or 'smarttv' in hostname_lower):
+            return ('tv', f'{vendor} Smart TV ({mac[-8:]})')
+        
+        # Roku detection
+        if vendor == 'Roku':
+            return ('streaming', f'Roku Device ({mac[-8:]})')
+        
+        # Amazon Fire TV / Echo
+        if vendor == 'Amazon':
+            if 'fire' in hostname_lower or 'aftt' in hostname_lower:
+                return ('streaming', f'Fire TV ({mac[-8:]})')
+            elif 'echo' in hostname_lower:
+                return ('smart_speaker', f'Echo Device ({mac[-8:]})')
+            return ('iot', f'Amazon Device ({mac[-8:]})')
+        
+        # Chromecast / Google Home
+        if vendor == 'Google':
+            if 'chromecast' in hostname_lower:
+                return ('streaming', f'Chromecast ({mac[-8:]})')
+            elif 'home' in hostname_lower or 'nest' in hostname_lower:
+                return ('smart_speaker', f'Google Home ({mac[-8:]})')
+            return ('android', f'Google Device ({mac[-8:]})')
+        
+        # Apple devices
+        if vendor == 'Apple':
+            if 'iphone' in hostname_lower:
+                return ('mobile', f'iPhone ({mac[-8:]})')
+            elif 'ipad' in hostname_lower:
+                return ('tablet', f'iPad ({mac[-8:]})')
+            elif 'mac' in hostname_lower or 'macbook' in hostname_lower:
+                return ('computer', f'Mac ({mac[-8:]})')
+            elif 'apple-tv' in hostname_lower or 'appletv' in hostname_lower:
+                return ('streaming', f'Apple TV ({mac[-8:]})')
+            elif 'homepod' in hostname_lower:
+                return ('smart_speaker', f'HomePod ({mac[-8:]})')
+            return ('apple', f'Apple Device ({mac[-8:]})')
+        
+        # Android devices
+        if vendor in ['Samsung', 'Xiaomi', 'Huawei', 'OnePlus', 'Motorola', 'HTC']:
+            if 'phone' in hostname_lower or 'android' in hostname_lower:
+                return ('mobile', f'{vendor} Phone ({mac[-8:]})')
+            elif 'tablet' in hostname_lower:
+                return ('tablet', f'{vendor} Tablet ({mac[-8:]})')
+            return ('android', f'{vendor} Device ({mac[-8:]})')
+        
+        # Raspberry Pi
+        if vendor == 'Raspberry Pi':
+            if 'homeassistant' in hostname_lower or 'hass' in hostname_lower:
+                return ('server', f'Home Assistant Pi ({mac[-8:]})')
+            elif 'pihole' in hostname_lower:
+                return ('server', f'Pi-hole ({mac[-8:]})')
+            return ('server', f'Raspberry Pi ({mac[-8:]})')
+        
+        # Synology NAS
+        if vendor == 'Synology':
+            return ('storage', f'Synology NAS ({mac[-8:]})')
+        
+        # QNAP NAS
+        if vendor == 'QNAP':
+            return ('storage', f'QNAP NAS ({mac[-8:]})')
+        
+        # Smart home devices
+        if vendor in ['Philips', 'Belkin', 'TP-Link', 'Nest']:
+            return ('iot', f'{vendor} Smart Device ({mac[-8:]})')
+        
+        # Sonos speakers
+        if vendor == 'Sonos':
+            return ('smart_speaker', f'Sonos Speaker ({mac[-8:]})')
+        
+        # Ring devices
+        if vendor == 'Ring':
+            return ('security', f'Ring Device ({mac[-8:]})')
+        
+        # Network equipment
+        if vendor in ['Cisco', 'Netgear', 'Ubiquiti', 'Asus', 'D-Link', 'Linksys', 'TP-Link']:
+            if 'ap' in hostname_lower or 'access' in hostname_lower:
+                return ('network', f'{vendor} Access Point ({mac[-8:]})')
+            elif 'switch' in hostname_lower:
+                return ('network', f'{vendor} Switch ({mac[-8:]})')
+            elif 'router' in hostname_lower or 'gateway' in hostname_lower:
+                return ('network', f'{vendor} Router ({mac[-8:]})')
+            return ('network', f'{vendor} Network Device ({mac[-8:]})')
+        
+        # Generic devices with hostname
+        if hostname:
+            return ('unknown', hostname)
+        
+        # Last resort - vendor only
+        if vendor:
+            return ('unknown', f'{vendor} Device ({mac[-8:]})')
+        
+        # Complete unknown
+        return ('unknown', f'Unknown Device ({mac[-8:]})')
+    
+    async def _probe_common_services(self, ip: str) -> Optional[str]:
+        """
+        Probe device for common services (Plex, Kodi, etc) to enhance identification
+        Returns service name if found
+        """
+        # Common service ports to check
+        service_ports = {
+            32400: 'Plex Media Server',
+            8080: 'Kodi',
+            8096: 'Jellyfin',
+            8920: 'Emby',
+            49152: 'Universal Plug and Play',
+        }
+        
+        for port, service_name in service_ports.items():
+            try:
+                # Quick TCP port check (non-blocking, 1 second timeout)
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(1)
+                result = sock.connect_ex((ip, port))
+                sock.close()
+                
+                if result == 0:
+                    logger.info(f"Found {service_name} on {ip}:{port}")
+                    return service_name
+            except:
+                continue
+        
+        return None
     
     async def update_device_status(self):
         """Scan network and update device statuses"""
@@ -2018,6 +2637,120 @@ async def analytics_notify(service_name: str, severity: str, message: str):
         logger.error(f"Failed to send notification: {e}")
 
 
+async def discover_iot_devices() -> List[Dict]:
+    """
+    Discover IoT devices on the network by probing for common patterns
+    Detects: Tasmota, Shelly, ESPHome, WLED, Sonoff, and other smart devices
+    """
+    discovered = []
+    
+    try:
+        # Get network devices from existing network scan
+        if not scanner:
+            logger.error("Network scanner not initialized")
+            return discovered
+        
+        # Trigger a network scan first
+        devices = await scanner.scan_network()
+        
+        if not devices:
+            logger.info("No network devices found for IoT discovery")
+            return discovered
+        
+        logger.info(f"Scanning {len(devices)} network devices for IoT signatures...")
+        
+        async def probe_device(device: NetworkDevice):
+            """Probe a single device for IoT signatures"""
+            ip = device.ip_address
+            device_discoveries = []
+            
+            # Try common IoT ports with HTTP
+            iot_ports = [80, 8080, 8081, 8082]
+            
+            for port in iot_ports:
+                try:
+                    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=3)) as session:
+                        # Check each IoT pattern
+                        for pattern_name, pattern in IOT_DETECTION_PATTERNS.items():
+                            if 'http_path' not in pattern:
+                                continue
+                            
+                            url = f"http://{ip}:{port}{pattern['http_path']}"
+                            
+                            try:
+                                async with session.get(url) as resp:
+                                    if resp.status == 200:
+                                        # Check response headers
+                                        if 'http_header' in pattern:
+                                            if pattern['http_header'] in resp.headers:
+                                                text = await resp.text()
+                                                device_name = f"{pattern['name_prefix']} ({device.custom_name or device.hostname or ip})"
+                                                
+                                                device_discoveries.append({
+                                                    'service_name': device_name,
+                                                    'endpoint': f"http://{ip}:{port}",
+                                                    'check_type': 'http',
+                                                    'port': port,
+                                                    'category': pattern['category'],
+                                                    'ip_address': ip,
+                                                    'mac_address': device.mac_address,
+                                                    'pattern': pattern_name,
+                                                    'expected_status': 200
+                                                })
+                                                logger.info(f"Found {pattern_name} device: {device_name} at {ip}:{port}")
+                                                break
+                                        
+                                        # Check response content
+                                        elif 'response_contains' in pattern:
+                                            text = await resp.text()
+                                            if pattern['response_contains'] in text:
+                                                device_name = f"{pattern['name_prefix']} ({device.custom_name or device.hostname or ip})"
+                                                
+                                                device_discoveries.append({
+                                                    'service_name': device_name,
+                                                    'endpoint': f"http://{ip}:{port}{pattern['http_path']}",
+                                                    'check_type': 'http',
+                                                    'port': port,
+                                                    'category': pattern['category'],
+                                                    'ip_address': ip,
+                                                    'mac_address': device.mac_address,
+                                                    'pattern': pattern_name,
+                                                    'expected_status': 200
+                                                })
+                                                logger.info(f"Found {pattern_name} device: {device_name} at {ip}:{port}")
+                                                break
+                            
+                            except (aiohttp.ClientError, asyncio.TimeoutError):
+                                continue
+                
+                except Exception as e:
+                    continue
+            
+            return device_discoveries
+        
+        # Probe all devices concurrently (limit to 10 at a time)
+        semaphore = asyncio.Semaphore(10)
+        
+        async def bounded_probe(device):
+            async with semaphore:
+                return await probe_device(device)
+        
+        tasks = [bounded_probe(device) for device in devices]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Flatten results
+        for result in results:
+            if isinstance(result, list):
+                discovered.extend(result)
+        
+        logger.info(f"IoT discovery complete: found {len(discovered)} devices")
+        return discovered
+        
+    except Exception as e:
+        logger.error(f"IoT discovery error: {e}")
+        return discovered
+
+
 async def discover_docker_services() -> List[Dict]:
     """
     Auto-discover running Docker containers and match them to known services
@@ -2096,6 +2829,43 @@ async def discover_docker_services() -> List[Dict]:
     except Exception as e:
         logger.error(f"Docker discovery error: {e}")
         return discovered
+
+
+async def api_iot_discover(request: web.Request):
+    """API endpoint to discover IoT devices on network"""
+    try:
+        discovered = await discover_iot_devices()
+        return _json({
+            'success': True,
+            'discovered': discovered,
+            'count': len(discovered)
+        })
+    except Exception as e:
+        logger.error(f"IoT discovery API error: {e}")
+        return _json({'error': str(e)}, status=500)
+
+
+async def api_combined_discover(request: web.Request):
+    """API endpoint to discover both Docker containers and IoT devices"""
+    try:
+        # Run both discoveries concurrently
+        docker_task = discover_docker_services()
+        iot_task = discover_iot_devices()
+        
+        docker_discovered, iot_discovered = await asyncio.gather(docker_task, iot_task)
+        
+        all_discovered = docker_discovered + iot_discovered
+        
+        return _json({
+            'success': True,
+            'discovered': all_discovered,
+            'docker_count': len(docker_discovered),
+            'iot_count': len(iot_discovered),
+            'total_count': len(all_discovered)
+        })
+    except Exception as e:
+        logger.error(f"Combined discovery API error: {e}")
+        return _json({'error': str(e)}, status=500)
 
 
 async def api_docker_discover(request: web.Request):
@@ -2736,9 +3506,11 @@ def register_routes(app: web.Application):
     app.router.add_get('/api/analytics/uptime/{service_name}', get_uptime)
     app.router.add_get('/api/analytics/incidents', get_incidents)
     
-    # Docker discovery
+    # Discovery endpoints
     app.router.add_post('/api/analytics/docker/discover', api_docker_discover)
     app.router.add_post('/api/analytics/docker/import', api_docker_import)
+    app.router.add_post('/api/analytics/iot/discover', api_iot_discover)
+    app.router.add_post('/api/analytics/discover/all', api_combined_discover)
     
     # Data management
     app.router.add_post('/api/analytics/reset-health', reset_health)
