@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import os, json, time, socket, requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Tuple, Any, List
 
 def _try_import(name: str):
@@ -220,15 +220,139 @@ def _analytics_summary() -> str:
     return ""
 
 def _orchestrator_summary() -> str:
-    data = _get_json("/orchestrator/history?limit=20")
+    """Get orchestrator job summary for last 24 hours"""
+    data = _get_json("/orchestrator/history?limit=100")
     jobs = data.get("jobs", [])
-    if isinstance(jobs, list):
-        total = len(jobs)
-        success = sum(1 for j in jobs if j.get("status") == "success")
-        failed = sum(1 for j in jobs if j.get("status") == "failed")
-        return f"✅ Jobs: {total} | ✅ Success: {success} | ❌ Failed: {failed}"
-    _log("[orchestrator] summary: no data returned.")
-    return ""
+    
+    if not isinstance(jobs, list) or not jobs:
+        _log("[orchestrator] summary: no data returned.")
+        return ""
+    
+    # Filter to last 24 hours
+    now = datetime.now()
+    yesterday = now - timedelta(hours=24)
+    recent_jobs = []
+    
+    for job in jobs:
+        started = job.get("started_at")
+        if started:
+            try:
+                job_time = datetime.fromisoformat(started.replace('Z', '+00:00'))
+                if job_time >= yesterday:
+                    recent_jobs.append(job)
+            except Exception:
+                pass
+    
+    if not recent_jobs:
+        return "📊 No jobs in last 24h"
+    
+    total = len(recent_jobs)
+    success = sum(1 for j in recent_jobs if j.get("status") == "success")
+    failed = sum(1 for j in recent_jobs if j.get("status") == "failed")
+    running = sum(1 for j in recent_jobs if j.get("status") == "running")
+    pending = sum(1 for j in recent_jobs if j.get("status") == "pending")
+    
+    parts = [f"📊 Jobs (24h): {total}"]
+    if success:
+        parts.append(f"✅ {success}")
+    if failed:
+        parts.append(f"❌ {failed}")
+    if running:
+        parts.append(f"🔄 {running}")
+    if pending:
+        parts.append(f"⏳ {pending}")
+    
+    return " | ".join(parts)
+
+def _backup_summary() -> str:
+    """Get backup job summary for last 24 hours"""
+    try:
+        # Get all backup jobs
+        data = _get_json("/backup/jobs")
+        jobs = data.get("jobs", [])
+        
+        if not isinstance(jobs, list) or not jobs:
+            _log("[backup] summary: no jobs found.")
+            return ""
+        
+        # Get job statuses
+        statuses_data = {}
+        now = datetime.now()
+        yesterday = now - timedelta(hours=24)
+        
+        completed_24h = 0
+        failed_24h = 0
+        running_now = 0
+        last_success = None
+        last_failure = None
+        
+        for job in jobs:
+            job_id = job.get("id")
+            if not job_id:
+                continue
+            
+            # Get status for each job
+            status_data = _get_json(f"/backup/jobs/{job_id}/status")
+            if status_data:
+                status = status_data.get("status", "unknown")
+                started_at = status_data.get("started_at")
+                
+                # Count running jobs
+                if status in ["queued", "running", "extracting", "uploading"]:
+                    running_now += 1
+                
+                # Count completed/failed in last 24h
+                if started_at:
+                    try:
+                        job_time = datetime.fromisoformat(started_at.replace('Z', '+00:00'))
+                        if job_time >= yesterday:
+                            if status == "completed":
+                                completed_24h += 1
+                                if not last_success or job_time > datetime.fromisoformat(last_success.replace('Z', '+00:00')):
+                                    last_success = started_at
+                            elif status == "failed":
+                                failed_24h += 1
+                                if not last_failure or job_time > datetime.fromisoformat(last_failure.replace('Z', '+00:00')):
+                                    last_failure = started_at
+                    except Exception:
+                        pass
+        
+        if completed_24h == 0 and failed_24h == 0 and running_now == 0:
+            return "💾 No backups in last 24h"
+        
+        parts = []
+        if completed_24h or failed_24h:
+            parts.append(f"💾 Backups (24h): {completed_24h + failed_24h}")
+        if completed_24h:
+            parts.append(f"✅ {completed_24h}")
+        if failed_24h:
+            parts.append(f"❌ {failed_24h}")
+        if running_now:
+            parts.append(f"🔄 Running: {running_now}")
+        
+        # Add time since last success/failure
+        if last_success:
+            try:
+                last_time = datetime.fromisoformat(last_success.replace('Z', '+00:00'))
+                hours_ago = int((now - last_time).total_seconds() / 3600)
+                if hours_ago < 24:
+                    parts.append(f"📅 Last OK: {hours_ago}h ago")
+            except Exception:
+                pass
+        elif last_failure:
+            try:
+                last_time = datetime.fromisoformat(last_failure.replace('Z', '+00:00'))
+                hours_ago = int((now - last_time).total_seconds() / 3600)
+                if hours_ago < 24:
+                    parts.append(f"⚠️ Last run: {hours_ago}h ago (failed)")
+            except Exception:
+                pass
+        
+        return " | ".join(parts) if parts else ""
+        
+    except Exception as e:
+        _log(f"[backup] summary error: {e}")
+        return ""
 
 def _sentinel_summary() -> str:
     data = _get_json("/sentinel/dashboard")
@@ -255,6 +379,7 @@ def build_digest(options: Dict[str, Any]) -> Tuple[str, str, int]:
     weather = _weather_today(options)
     analytics = _analytics_summary()
     orchestrator = _orchestrator_summary()
+    backup = _backup_summary()
     sentinel = _sentinel_summary()
 
     parts = [
@@ -263,6 +388,7 @@ def build_digest(options: Dict[str, Any]) -> Tuple[str, str, int]:
         _section("⛅ Weather Today", weather),
         _section("📊 Analytics", analytics),
         _section("⚙️ Orchestrator", orchestrator),
+        _section("💾 Backups", backup),
         _section("🛠 Sentinel", sentinel),
     ]
 
