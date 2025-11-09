@@ -1633,6 +1633,37 @@ class NetworkScanner:
             # Step 3: Get MAC addresses from ARP (after ping sweep fills ARP table)
             mac_map = await self._get_arp_table()
             
+            # Step 3.5: Use nmap as fallback for devices without MAC
+            if len(mac_map) < len(active_ips) * 0.8:  # If we're missing >20% of MACs
+                logger.warning(f"ARP only found {len(mac_map)}/{len(active_ips)} MACs, trying nmap fallback")
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        'nmap', '-sn', subnet,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE
+                    )
+                    stdout, _ = await proc.communicate()
+                    output = stdout.decode()
+                    
+                    # Parse nmap output for MAC addresses
+                    current_ip = None
+                    for line in output.split('\n'):
+                        if 'Nmap scan report for' in line:
+                            match = re.search(r'(\d+\.\d+\.\d+\.\d+)', line)
+                            if match:
+                                current_ip = match.group(1)
+                        elif 'MAC Address:' in line and current_ip:
+                            match = re.search(r'([0-9A-F:]{17})', line, re.IGNORECASE)
+                            if match and current_ip not in mac_map:
+                                mac_map[current_ip] = match.group(1).upper()
+                                logger.info(f"nmap found MAC for {current_ip}: {mac_map[current_ip]}")
+                except FileNotFoundError:
+                    logger.warning("nmap not installed - install with: apt-get install nmap")
+                except Exception as e:
+                    logger.error(f"nmap fallback failed: {e}")
+            
+            logger.info(f"Found {len(mac_map)} MAC addresses from ARP/nmap")
+            
             # Step 4: Process each discovered device
             for ip in active_ips:
                 mac = mac_map.get(ip)
@@ -2338,6 +2369,10 @@ class NetworkScanner:
             8096: 'Jellyfin',
             8920: 'Emby',
             49152: 'Universal Plug and Play',
+            987: 'PlayStation',           # PS5/PS4 Remote Play
+            9295: 'PlayStation',          # PS5
+            9296: 'PlayStation',          # PS5
+            9297: 'PlayStation',          # PS5
         }
         
         for port, service_name in service_ports.items():
@@ -2389,6 +2424,36 @@ class NetworkScanner:
                         self.db.record_network_event('device_offline', known_device.mac_address, known_device.ip_address, known_device.hostname)
                         await self._notify_device_offline(known_device)
     
+    async def cleanup_old_devices(self, days_threshold: int = 2):
+        """
+        Remove unknown/unmonitored devices that haven't been seen for X days
+        Only removes from 'Discovered Devices', never touches 'Monitored Devices'
+        """
+        cutoff_time = int(time.time()) - (days_threshold * 86400)
+        
+        all_devices = self.db.get_devices()
+        removed_count = 0
+        
+        for device in all_devices:
+            # NEVER remove monitored or permanent devices
+            if device.is_monitored or device.is_permanent:
+                continue
+            
+            # Check if old
+            if device.last_seen < cutoff_time:
+                try:
+                    self.db.delete_device(device.mac_address)
+                    removed_count += 1
+                    name = device.custom_name or device.hostname or device.mac_address
+                    logger.info(f"🗑️ Removed old device: {name} (offline {days_threshold}+ days)")
+                except Exception as e:
+                    logger.error(f"Failed to delete device {device.mac_address}: {e}")
+        
+        if removed_count > 0:
+            logger.info(f"✅ Cleanup: Removed {removed_count} old unknown devices")
+        
+        return removed_count
+    
     async def _notify_new_device(self, device: NetworkDevice):
         """Send notification for new device"""
         name = device.custom_name or device.hostname or device.ip_address
@@ -2421,11 +2486,20 @@ class NetworkScanner:
         )
     
     async def monitor_loop(self):
-        """Continuous network monitoring loop"""
+        """Continuous network monitoring loop with auto-cleanup"""
+        cleanup_counter = 0
+        
         while self.monitoring:
             try:
                 await self.update_device_status()
-                await asyncio.sleep(300)  # Scan every 5 minutes
+                
+                # Run cleanup every 15th scan (every 30 minutes if scanning every 2 min)
+                cleanup_counter += 1
+                if cleanup_counter >= 15:
+                    await self.cleanup_old_devices(days_threshold=2)
+                    cleanup_counter = 0
+                
+                await asyncio.sleep(120)  # Scan every 2 minutes
             except asyncio.CancelledError:
                 break
             except Exception as e:
