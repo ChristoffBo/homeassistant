@@ -26,6 +26,7 @@ ingress_port: 80
 panel_icon: mdi:docker
 map:
   - addon_config:rw
+tmpfs: false
 options:
   log_level: info
 schema:
