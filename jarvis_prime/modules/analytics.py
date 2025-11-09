@@ -1608,9 +1608,157 @@ class NetworkScanner:
         self.notification_callback = callback
     
     async def scan_network(self) -> List[NetworkDevice]:
-        """Scan local network for devices using ARP with enhanced device detection"""
+        """
+        COMPLETE network scan with active discovery
+        - Ping sweeps entire subnet to find ALL devices
+        - Port scans for service identification (Plex, PS5, etc)
+        - Enhanced device detection with vendor lookup
+        """
         start_time = time.time()
         devices = []
+        
+        try:
+            # Step 1: Get local network subnet
+            subnet = await self._get_local_subnet()
+            if not subnet:
+                logger.error("Could not determine local subnet")
+                return devices
+            
+            logger.info(f"Starting full network scan on {subnet}")
+            
+            # Step 2: Active ping sweep to discover ALL devices
+            active_ips = await self._ping_sweep(subnet)
+            logger.info(f"Ping sweep found {len(active_ips)} active IPs")
+            
+            # Step 3: Get MAC addresses from ARP (after ping sweep fills ARP table)
+            mac_map = await self._get_arp_table()
+            
+            # Step 4: Process each discovered device
+            for ip in active_ips:
+                mac = mac_map.get(ip)
+                if not mac or mac == 'FF:FF:FF:FF:FF:FF' or mac.startswith('00:00:00'):
+                    continue
+                
+                # Resolve hostname
+                hostname = await self._resolve_hostname(ip)
+                
+                # Vendor lookup from MAC
+                vendor = self._lookup_vendor(mac)
+                
+                # Port scan for service detection (Plex, PS5, etc)
+                detected_service = await self._probe_common_services(ip)
+                
+                # Detect device type
+                device_type, friendly_name = self._detect_device_type(vendor, hostname, mac)
+                
+                # Override friendly name if service detected
+                if detected_service:
+                    friendly_name = f"{detected_service} ({mac[-8:]})"
+                    device_type = 'server'
+                
+                # Use friendly name as custom_name if we don't have hostname
+                custom_name = friendly_name if not hostname else None
+                
+                device = NetworkDevice(
+                    mac_address=mac,
+                    ip_address=ip,
+                    hostname=hostname,
+                    vendor=vendor,
+                    custom_name=custom_name,
+                    first_seen=int(time.time()),
+                    last_seen=int(time.time())
+                )
+                devices.append(device)
+                
+                # Enhanced logging
+                logger.info(f"[SCAN] {device_type}: {friendly_name} | IP: {ip} | Vendor: {vendor or 'Unknown'}")
+            
+            scan_duration = time.time() - start_time
+            self.db.record_scan(len(devices), scan_duration)
+            
+            logger.info(f"✅ Network scan complete: {len(devices)} devices in {scan_duration:.1f}s")
+            
+        except Exception as e:
+            logger.error(f"Network scan error: {e}", exc_info=True)
+        
+        return devices
+    
+    async def _get_local_subnet(self) -> Optional[str]:
+        """Detect local subnet (e.g., 192.168.1.0/24)"""
+        try:
+            # Get default route
+            proc = await asyncio.create_subprocess_exec(
+                'ip', 'route', 'show', 'default',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, _ = await proc.communicate()
+            
+            # Parse: default via 192.168.1.1 dev eth0
+            output = stdout.decode()
+            match = re.search(r'default via ([\d.]+)', output)
+            if match:
+                gateway = match.group(1)
+                # Assume /24 subnet
+                subnet_base = '.'.join(gateway.split('.')[:-1])
+                return f"{subnet_base}.0/24"
+            
+            # Fallback: try to get from hostname -I
+            proc2 = await asyncio.create_subprocess_exec(
+                'hostname', '-I',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout2, _ = await proc2.communicate()
+            first_ip = stdout2.decode().split()[0]
+            subnet_base = '.'.join(first_ip.split('.')[:-1])
+            return f"{subnet_base}.0/24"
+            
+        except Exception as e:
+            logger.error(f"Failed to detect subnet: {e}")
+            return "192.168.1.0/24"  # Default fallback
+    
+    async def _ping_sweep(self, subnet: str) -> List[str]:
+        """
+        Active ping sweep of entire subnet
+        Returns list of responsive IP addresses
+        """
+        active_ips = []
+        
+        # Parse subnet (e.g., "192.168.1.0/24" -> base + range)
+        subnet_base = '.'.join(subnet.split('/')[0].split('.')[:-1])
+        
+        # Ping all IPs in range (1-254) concurrently
+        async def ping_ip(ip):
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    'ping', '-c', '1', '-W', '1', ip,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL
+                )
+                await proc.wait()
+                if proc.returncode == 0:
+                    return ip
+            except:
+                pass
+            return None
+        
+        # Ping 254 IPs concurrently (limited to 50 at a time)
+        semaphore = asyncio.Semaphore(50)
+        
+        async def bounded_ping(host_id):
+            async with semaphore:
+                return await ping_ip(f"{subnet_base}.{host_id}")
+        
+        tasks = [bounded_ping(i) for i in range(1, 255)]
+        results = await asyncio.gather(*tasks)
+        
+        active_ips = [ip for ip in results if ip]
+        return active_ips
+    
+    async def _get_arp_table(self) -> Dict[str, str]:
+        """Get MAC addresses from ARP table (call after ping sweep)"""
+        mac_map = {}
         
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -1618,13 +1766,7 @@ class NetworkScanner:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            
-            stdout, stderr = await proc.communicate()
-            
-            if proc.returncode != 0:
-                logger.error(f"ARP scan failed: {stderr.decode()}")
-                return devices
-            
+            stdout, _ = await proc.communicate()
             output = stdout.decode()
             
             for line in output.split('\n'):
@@ -1632,42 +1774,11 @@ class NetworkScanner:
                 if match:
                     ip = match.group(1)
                     mac = match.group(2).upper()
-                    
-                    if mac == 'FF:FF:FF:FF:FF:FF' or mac.startswith('00:00:00'):
-                        continue
-                    
-                    hostname = await self._resolve_hostname(ip)
-                    vendor = self._lookup_vendor(mac)
-                    
-                    # Detect device type and generate friendly name
-                    device_type, friendly_name = self._detect_device_type(vendor, hostname, mac)
-                    
-                    # Use friendly name as custom_name if we don't have hostname
-                    custom_name = friendly_name if not hostname else None
-                    
-                    device = NetworkDevice(
-                        mac_address=mac,
-                        ip_address=ip,
-                        hostname=hostname,
-                        vendor=vendor,
-                        custom_name=custom_name,
-                        first_seen=int(time.time()),
-                        last_seen=int(time.time())
-                    )
-                    devices.append(device)
-                    
-                    # Log discovered device with type
-                    logger.info(f"Found {device_type}: {friendly_name} at {ip}")
-            
-            scan_duration = time.time() - start_time
-            self.db.record_scan(len(devices), scan_duration)
-            
-            logger.info(f"Network scan complete: {len(devices)} devices found in {scan_duration:.2f}s")
-            
+                    mac_map[ip] = mac
         except Exception as e:
-            logger.error(f"Network scan error: {e}")
+            logger.error(f"ARP table read error: {e}")
         
-        return devices
+        return mac_map
     
     async def _resolve_hostname(self, ip: str) -> Optional[str]:
         """Resolve hostname from IP address"""
@@ -1826,6 +1937,48 @@ class NetworkScanner:
             '9C53CD': 'Sony',
             'A00AED': 'Sony',
             'FC0FE6': 'Sony',
+            '587F57': 'Sony',  # PS5
+            '7CAA87': 'Sony',  # PS5
+            'A0C589': 'Sony',  # PS5/PS4
+            'C4E984': 'Sony',  # PS4
+            'FC0FE6': 'Sony',  # PS4
+            '0418D6': 'Sony',  # PS4
+            '00D9D1': 'Sony',  # PS3
+            '0080C8': 'Sony',  # PS3
+            '001B63': 'Sony',  # Bravia TV
+            
+            # Oppo (Android phones, TV boxes)
+            '08974B': 'Oppo',
+            '1015A3': 'Oppo',
+            '1CB57C': 'Oppo',
+            '20E178': 'Oppo',
+            '2C2997': 'Oppo',
+            '343111': 'Oppo',
+            '50B7C3': 'Oppo',
+            '5CC3C3': 'Oppo',
+            '70E72C': 'Oppo',
+            '788A20': 'Oppo',
+            '7C1DD9': 'Oppo',
+            '8C68C8': 'Oppo',
+            'A45046': 'Oppo',
+            'A86C6D': 'Oppo',
+            'B05CF9': 'Oppo',
+            'C49A02': 'Oppo',
+            'D0B24E': 'Oppo',
+            'EC9B8E': 'Oppo',
+            'F0272D': 'Oppo',
+            
+            # Vivo (Android phones)
+            '1062EB': 'Vivo',
+            '2899CF': 'Vivo',
+            '38E60A': 'Vivo',
+            '5C857E': 'Vivo',
+            '7C2F80': 'Vivo',
+            '80EA07': 'Vivo',
+            '98D46A': 'Vivo',
+            'A01E78': 'Vivo',
+            'C49EFF': 'Vivo',
+            'E0443D': 'Vivo',
             
             # Nintendo (Switch)
             '006057': 'Nintendo',
@@ -1995,6 +2148,24 @@ class NetworkScanner:
             '5CAAFE': 'Sonos',
             'B8E937': 'Sonos',
             
+            # Sonoff/iTead (smart switches, plugs)
+            '60019': 'Sonoff',
+            '680AE2': 'Sonoff',
+            '807D3A': 'Sonoff',
+            '84F3EB': 'Sonoff',
+            'A020A6': 'Sonoff',
+            'B4E62D': 'Sonoff',
+            'DC4F22': 'Sonoff',
+            '60019C': 'iTead/Sonoff',
+            
+            # Tuya (smart devices)
+            '1062EB': 'Tuya',
+            '68C63A': 'Tuya',
+            '807D3A': 'Tuya',
+            '845DD4': 'Tuya',
+            'D81F12': 'Tuya',
+            'DC4F22': 'Tuya',
+            
             # Nest (Google smart home)
             '18B430': 'Nest',
             '64168C': 'Nest',
@@ -2093,11 +2264,13 @@ class NetworkScanner:
             return ('apple', f'Apple Device ({mac[-8:]})')
         
         # Android devices
-        if vendor in ['Samsung', 'Xiaomi', 'Huawei', 'OnePlus', 'Motorola', 'HTC']:
+        if vendor in ['Samsung', 'Xiaomi', 'Huawei', 'OnePlus', 'Motorola', 'HTC', 'Oppo', 'Vivo']:
             if 'phone' in hostname_lower or 'android' in hostname_lower:
                 return ('mobile', f'{vendor} Phone ({mac[-8:]})')
             elif 'tablet' in hostname_lower:
                 return ('tablet', f'{vendor} Tablet ({mac[-8:]})')
+            elif 'box' in hostname_lower or 'tv' in hostname_lower:
+                return ('streaming', f'{vendor} TV Box ({mac[-8:]})')
             return ('android', f'{vendor} Device ({mac[-8:]})')
         
         # Raspberry Pi
@@ -2117,7 +2290,11 @@ class NetworkScanner:
             return ('storage', f'QNAP NAS ({mac[-8:]})')
         
         # Smart home devices
-        if vendor in ['Philips', 'Belkin', 'TP-Link', 'Nest']:
+        if vendor in ['Philips', 'Belkin', 'TP-Link', 'Nest', 'Sonoff', 'iTead/Sonoff', 'Tuya']:
+            if vendor in ['Sonoff', 'iTead/Sonoff']:
+                return ('iot', f'Sonoff Switch ({mac[-8:]})')
+            elif vendor == 'Tuya':
+                return ('iot', f'Tuya Smart Device ({mac[-8:]})')
             return ('iot', f'{vendor} Smart Device ({mac[-8:]})')
         
         # Sonos speakers
