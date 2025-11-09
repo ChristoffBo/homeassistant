@@ -19,7 +19,21 @@ CRITICAL FIXES:
 Complete file with Internet Speed Testing integrated
 """
 
+import sqlite3
+import time
+import json
+import asyncio
+import subprocess
+import aiohttp
+from datetime import datetime
+from typing import Dict, List, Optional, Callable
+from dataclasses import dataclass, field
+from aiohttp import web
+from collections import deque
+import logging
+import re
 import socket
+from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
 
