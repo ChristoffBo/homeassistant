@@ -1,5 +1,5 @@
 name: Tugtainer
-version: "1.7.0"
+version: "v1.7.0"
 slug: tugtainer
 description: Docker container update automation with web UI
 url: https://github.com/Quenary/tugtainer
