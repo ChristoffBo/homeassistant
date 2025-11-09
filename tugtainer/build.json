@@ -1,0 +1,11 @@
+{
+  "build_from": {
+    "aarch64": "quenary/tugtainer:latest",
+    "amd64": "quenary/tugtainer:latest",
+    "armhf": "quenary/tugtainer:latest",
+    "armv7": "quenary/tugtainer:latest",
+    "i386": "quenary/tugtainer:latest"
+  },
+  "squash": false,
+  "args": {}
+}
