@@ -4,87 +4,7 @@ from pathlib import Path
 from aiohttp import web
 import importlib.util
 
-# ============================================================================
-# LLM SAFETY PATCH - Add this before importing llm_client
-# ============================================================================
-def get_safe_llm_config():
-    """
-    Load LLM config with safety overrides applied.
-    Returns: (ctx_tokens, should_load_llm, reason)
-    """
-    config_path = os.getenv("CONFIG_PATH", "/data/options.json")
-    
-    try:
-        with open(config_path) as f:
-            config = json.load(f)
-    except Exception as e:
-        print(f"[LLM Safety] Failed to load config: {e}")
-        return 8192, False, "config_load_failed"
-    
-    llm_enabled = config.get("llm_enabled", False)
-    
-    # Check for emergency disable flag from run.sh
-    if os.getenv("LLM_EMERGENCY_DISABLED") == "true":
-        print("[LLM Safety] Emergency disable flag detected - LLM disabled by crash recovery")
-        return 8192, False, "emergency_disabled"
-    
-    if not llm_enabled:
-        return 8192, False, "disabled_in_config"
-    
-    ctx_tokens = config.get("llm_ctx_tokens", 8192)
-    
-    # Check for safety override from run.sh pre-flight checks
-    safety_override_path = "/tmp/jarvis_safe_ctx"
-    if os.path.exists(safety_override_path):
-        try:
-            with open(safety_override_path) as f:
-                safe_ctx = int(f.read().strip())
-                print(f"[LLM Safety] Pre-flight safety override active: {ctx_tokens} → {safe_ctx}")
-                print(f"[LLM Safety] Reason: Insufficient memory detected during startup")
-                ctx_tokens = safe_ctx
-                # Clean up the override file
-                os.remove(safety_override_path)
-        except Exception as e:
-            print(f"[LLM Safety] Failed to read safety override: {e}")
-    
-    # Hard safety limits regardless of config
-    if ctx_tokens > 32768:
-        print(f"[LLM Safety] Context {ctx_tokens} exceeds hard limit, capping at 32768")
-        ctx_tokens = 32768
-    elif ctx_tokens < 512:
-        print(f"[LLM Safety] Context {ctx_tokens} too small, setting to 2048")
-        ctx_tokens = 2048
-    
-    return ctx_tokens, True, "ok"
-
-# Apply safety config before importing llm_client
-safe_ctx, should_load, reason = get_safe_llm_config()
-if should_load:
-    # Override the config value with safe value
-    try:
-        config_path = os.getenv("CONFIG_PATH", "/data/options.json")
-        if os.path.exists(config_path):
-            with open(config_path) as f:
-                config_data = json.load(f)
-            
-            # Only override if different to show what we did
-            if config_data.get("llm_ctx_tokens") != safe_ctx:
-                original_ctx = config_data.get("llm_ctx_tokens", "unset")
-                print(f"[LLM Safety] Applying safe context: {original_ctx} → {safe_ctx}")
-                # Set environment variable for llm_client to use
-                os.environ["JARVIS_SAFE_CTX"] = str(safe_ctx)
-    except Exception as e:
-        print(f"[LLM Safety] Warning: Could not apply context override: {e}")
-        # Continue anyway with defaults
-else:
-    print(f"[LLM Safety] LLM disabled: {reason}")
-    os.environ["LLM_EMERGENCY_DISABLED"] = "true"
-
-# ============================================================================
-# END LLM SAFETY PATCH
-# ============================================================================
-
-# Import LLM client (it will read JARVIS_SAFE_CTX if set)
+# Import LLM client
 import llm_client
 import auth
 
@@ -303,120 +223,116 @@ async def api_list_messages(request: web.Request):
     except Exception:
         offset = 0
     saved = request.rel_url.query.get("saved")
-    if saved:
-        msgs = storage.list_saved_messages(limit, offset)  # type: ignore
-        total = len(msgs) if msgs else 0  # Fallback if count_messages not available
-    elif q:
-        msgs = storage.search_messages(q, limit, offset)  # type: ignore
-        total = len(msgs) if msgs else 0  # Fallback if count_messages not available
-    else:
-        msgs = storage.list_messages(limit, offset)  # type: ignore
-        total = len(msgs) if msgs else 0  # Fallback if count_messages not available
-    
-    # Try to use count_messages if available for accurate totals
-    try:
-        if hasattr(storage, 'count_messages'):
-            if saved:
-                total = storage.count_messages(saved=True)  # type: ignore
-            elif q:
-                total = storage.count_messages(search_query=q)  # type: ignore
-            else:
-                total = storage.count_messages()  # type: ignore
-    except Exception:
-        pass  # Use fallback total from len(msgs)
-    
-    return _json({"messages": msgs, "total": total, "limit": limit, "offset": offset})
+    saved_bool = None
+    if saved is not None:
+        try:
+            saved_bool = bool(int(saved))
+        except Exception:
+            saved_bool = saved.lower() in ('1','true','yes')
+    items = storage.list_messages(limit=limit, q=q, offset=offset, saved=saved_bool)  # type: ignore
+    return _json({"items": items})
 
 async def api_get_message(request: web.Request):
-    mid = request.match_info["id"]
-    msg = storage.get_message(int(mid))  # type: ignore
-    if not msg:
+    mid = int(request.match_info["id"])
+    m = storage.get_message(mid)  # type: ignore
+    if not m:
         return _json({"error": "not found"}, status=404)
-    return _json(msg)
+    return _json(m)
 
 async def api_delete_message(request: web.Request):
-    mid = request.match_info["id"]
-    storage.delete_message(int(mid))  # type: ignore
+    mid = int(request.match_info["id"])
+    ok = storage.delete_message(mid)  # type: ignore
     _broadcast("deleted", id=int(mid))
-    return _json({"ok": True})
+    return _json({"ok": bool(ok)})
 
 async def api_delete_all(request: web.Request):
-    storage.delete_all_messages()  # type: ignore
-    _broadcast("cleared")
-    return _json({"ok": True})
+    keep = request.rel_url.query.get('keep_saved')
+    keep_saved = False
+    if keep is not None:
+        try:
+            keep_saved = bool(int(keep))
+        except Exception:
+            keep_saved = keep.lower() in ('1','true','yes')
+    n = storage.delete_all(keep_saved=keep_saved)  # type: ignore
+    _broadcast("deleted_all", count=int(n), keep_saved=bool(keep_saved))
+    return _json({"deleted": int(n), "kept_saved": bool(keep_saved)})
 
 async def api_mark_read(request: web.Request):
-    mid = request.match_info["id"]
-    storage.mark_read(int(mid))  # type: ignore
+    mid = int(request.match_info["id"])
+    storage.mark_read(mid)  # type: ignore
     _broadcast("updated", id=int(mid))
     return _json({"ok": True})
 
 async def api_toggle_saved(request: web.Request):
-    mid = request.match_info["id"]
-    storage.toggle_saved(int(mid))  # type: ignore
+    mid = int(request.match_info["id"])
+    storage.toggle_saved(mid)  # type: ignore
     _broadcast("updated", id=int(mid))
     return _json({"ok": True})
 
 async def api_get_settings(request: web.Request):
-    s = storage.get_settings()  # type: ignore
-    return _json(s)
+    settings = storage.load_inbox_settings()  # type: ignore
+    return _json(settings)
 
 async def api_save_settings(request: web.Request):
     try:
-        body = await request.json()
+        data = await request.json()
     except Exception:
-        return _json({"error": "bad json"}, status=400)
-    storage.save_settings(body)  # type: ignore
-    return _json({"ok": True})
+        return _json({"error":"bad json"}, status=400)
+    # Settings are loaded from options.json / config.json
+    # This endpoint exists for compatibility but settings are managed via config
+    return _json({"ok": True, "message": "Settings managed via config file"})
 
 async def api_purge(request: web.Request):
     try:
-        body = await request.json()
+        data = await request.json()
     except Exception:
-        return _json({"error": "bad json"}, status=400)
-    hours = int(body.get("hours", 72))
-    deleted_count = storage.purge_old_messages(hours)  # type: ignore
-    _broadcast("purged")
-    return _json({"ok": True, "deleted": deleted_count})
+        data = {}
+    hours = int(data.get("hours", 24))
+    keep_saved = bool(data.get("keep_saved", False))
+    n = storage.purge_old_messages(hours, keep_saved)  # type: ignore
+    _broadcast("purged", count=int(n))
+    return _json({"deleted": int(n)})
 
 async def api_wake(request: web.Request):
-    """POST /api/wake - wake orchestrator or trigger manual inbox run"""
-    _broadcast("wake")
-    return _json({"ok": True})
-
-async def api_emit(request: web.Request):
-    """POST /internal/emit - broadcast SSE event for internal modules"""
     try:
         data = await request.json()
     except Exception:
-        return _json({"error": "bad json"}, status=400)
-    
-    event = str(data.get("event", "custom"))
-    payload = data.get("payload", {})
-    _broadcast(event, **payload)
-    
-    return _json({"ok": True})
+        return _json({"error":"bad json"}, status=400)
+    title = str(data.get("title","") or "Wake")
+    msg = str(data.get("message","") or "")
+    priority = int(data.get("priority", 5))
+    mid = storage.save_message(title, msg, "wake", priority, {})  # type: ignore
+    _broadcast("created", id=int(mid))
+    return _json({"id": int(mid)})
 
+async def api_emit(request: web.Request):
+    try:
+        data = await request.json()
+    except Exception:
+        return _json({"error":"bad json"}, status=400)
+    title = str(data.get("title") or "")
+    body = str(data.get("body") or "")
+    source = str(data.get("source") or "internal")
+    priority = int(data.get("priority", 5))
+    extras = data.get("extras") or {}
+    mid = storage.save_message(title, body, source, priority, extras)  # type: ignore
+    _broadcast("created", id=int(mid))
+    return _json({"id": int(mid)})
+
+# ---- CONFIG API ----
 async def api_get_config(request: web.Request):
-    """GET /api/config - returns current config"""
+    """GET /api/config - returns current merged config"""
     is_hassio = bool(os.getenv("HASSIO_TOKEN"))
     
-    if is_hassio:
-        # Read from supervisor /data/options.json
-        config_path = Path("/data/options.json")
-    else:
-        # Docker: Use JARVIS_CONFIG_PATH or default to /data/config.json
-        config_path = Path(os.getenv("JARVIS_CONFIG_PATH", "/data/config.json"))
+    # Use JARVIS_CONFIG_PATH if set, otherwise default based on HA mode
+    config_path = Path(os.getenv("JARVIS_CONFIG_PATH", "/data/options.json" if is_hassio else "/data/config.json"))
     
     config = {}
-    
-    if config_path.exists():
-        try:
+    try:
+        if config_path.exists():
             config = json.loads(config_path.read_text())
-        except Exception as e:
-            print(f"[config] Failed to read config from {config_path}: {e}")
-    else:
-        print(f"[config] Config file not found at {config_path}")
+    except Exception as e:
+        print(f"[config] Failed to load config from {config_path}: {e}")
     
     return _json({
         "config": config,
