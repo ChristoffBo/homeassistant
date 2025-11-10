@@ -25,155 +25,6 @@ apt-get install -y --no-install-recommends ca-certificates curl python3-requests
 update-ca-certificates >/dev/null 2>&1 || true
 echo "[init] HTTPS stack ready."
 
-############################################
-# LLM Safety Pre-Flight Checks
-############################################
-llm_preflight_check() {
-  local ctx_tokens="$1"
-  local model_path="$2"
-  
-  # Check if LLM is even enabled
-  local llm_enabled=$(jq -r '.llm_enabled // false' "$CONFIG_PATH")
-  if [ "$llm_enabled" != "true" ]; then
-    echo "[LLM] Disabled - skipping checks"
-    return 0
-  fi
-  
-  # Get available memory in MB
-  local available_mem_mb=0
-  if [ -f /proc/meminfo ]; then
-    available_mem_mb=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo)
-  fi
-  
-  echo "[LLM] Pre-flight safety checks..."
-  echo "[LLM]   → Available memory: ${available_mem_mb}MB"
-  echo "[LLM]   → Context tokens: $ctx_tokens"
-  echo "[LLM]   → Model path: $model_path"
-  
-  # Validate model file exists
-  if [ ! -f "$model_path" ]; then
-    echo "[LLM] ⚠️  WARNING: Model file not found at $model_path"
-    echo "[LLM] LLM features will be disabled"
-    return 1
-  fi
-  
-  # Get model size in MB
-  local model_size_mb=$(du -m "$model_path" | cut -f1)
-  echo "[LLM]   → Model size: ${model_size_mb}MB"
-  
-  # Estimate KV cache size (rough approximation: ctx * 2 bytes * layers / 1MB)
-  # For Phi-3/Phi-4 with 32 layers: ctx * 2 * 32 / 1000000
-  local estimated_kv_mb=$((ctx_tokens * 64 / 1000000))
-  local total_needed=$((model_size_mb + estimated_kv_mb + 500))  # +500MB for overhead
-  
-  echo "[LLM]   → Estimated KV cache: ~${estimated_kv_mb}MB"
-  echo "[LLM]   → Total memory needed: ~${total_needed}MB"
-  
-  # Safety checks with automatic context reduction
-  if [ $ctx_tokens -gt 16384 ]; then
-    echo "[LLM] ⚠️  WARNING: Context window $ctx_tokens is very large"
-    echo "[LLM]   Large contexts can cause segfaults on limited hardware"
-    
-    if [ $available_mem_mb -lt $total_needed ] && [ $available_mem_mb -gt 0 ]; then
-      local safe_ctx=8192
-      echo "[LLM] ⚠️  CRITICAL: Insufficient memory detected"
-      echo "[LLM]   Auto-reducing context from $ctx_tokens to $safe_ctx"
-      echo "[LLM]   Override in config if you have more RAM"
-      # Write safety override to temp file that Python can read
-      echo "$safe_ctx" > /tmp/jarvis_safe_ctx
-    fi
-  fi
-  
-  if [ $available_mem_mb -gt 0 ] && [ $available_mem_mb -lt 3000 ]; then
-    echo "[LLM] ⚠️  WARNING: Low available memory (${available_mem_mb}MB)"
-    echo "[LLM]   Recommend at least 4GB free for stable LLM operation"
-  fi
-  
-  echo "[LLM] ✓ Pre-flight checks complete"
-  return 0
-}
-
-############################################
-# Safe API Launch with Crash Recovery
-############################################
-launch_api_with_recovery() {
-  local max_crashes=3
-  local crash_count=0
-  local crash_window=300  # 5 minute window
-  local last_crash_time=0
-  
-  while true; do
-    local start_time=$(date +%s)
-    
-    echo "[API] Starting api_messages.py (attempt $((crash_count + 1)))"
-    
-    # Launch with memory limit if ulimit is available
-    if command -v ulimit >/dev/null 2>&1; then
-      # Limit virtual memory to 6GB to prevent runaway allocation
-      ulimit -v 6291456 2>/dev/null || true
-    fi
-    
-    python3 /app/api_messages.py &
-    local api_pid=$!
-    
-    # Wait for process to exit
-    wait $api_pid
-    local exit_code=$?
-    local end_time=$(date +%s)
-    local runtime=$((end_time - start_time))
-    
-    echo "[API] Process exited with code $exit_code after ${runtime}s"
-    
-    # If it ran for more than 5 minutes, reset crash counter
-    if [ $runtime -gt $crash_window ]; then
-      crash_count=0
-      echo "[API] Long runtime detected - resetting crash counter"
-    fi
-    
-    # Check for segfault (exit code 139 = 128 + SIGSEGV(11))
-    if [ $exit_code -eq 139 ] || [ $exit_code -eq 134 ]; then
-      crash_count=$((crash_count + 1))
-      echo "[API] ⚠️  SEGFAULT DETECTED (crash $crash_count/$max_crashes)"
-      
-      if [ $crash_count -ge $max_crashes ]; then
-        echo "[API] ❌ CRITICAL: Too many crashes in short period"
-        echo "[API] Possible causes:"
-        echo "[API]   1. Context window (llm_ctx_tokens) too large for available RAM"
-        echo "[API]   2. Model file corrupted - try re-downloading"
-        echo "[API]   3. Insufficient system memory - need 4GB+ free"
-        echo "[API]"
-        echo "[API] Emergency fallback: Disabling LLM and continuing with other services"
-        
-        # Create emergency disable flag
-        export LLM_ENABLED=false
-        export LLM_EMERGENCY_DISABLED=true
-        
-        # Launch without LLM features
-        python3 /app/api_messages.py &
-        return $!
-      fi
-      
-      # Exponential backoff before retry
-      local backoff=$((5 * crash_count))
-      echo "[API] Waiting ${backoff}s before retry..."
-      sleep $backoff
-      
-    elif [ $exit_code -eq 0 ]; then
-      echo "[API] Clean exit - not restarting"
-      return 0
-    else
-      echo "[API] Unexpected exit code $exit_code"
-      
-      # Don't restart immediately on unknown errors
-      if [ $runtime -lt 30 ]; then
-        echo "[API] Process crashed too quickly - waiting 10s"
-        sleep 10
-      fi
-    fi
-    
-  done
-}
-
 banner() {
   local llm="$1"
   local engine="$2"
@@ -317,21 +168,12 @@ export push_smtp_to=$(jq -r '.push_smtp_to // ""' "$CONFIG_PATH")
 # Personalities
 export CHAT_MOOD=$(jq -r '.personality_mood // "serious"' "$CONFIG_PATH")
 
-# ===== LLM controls with safety checks =====
+# ===== LLM controls =====
 LLM_ENABLED=$(jq -r '.llm_enabled // false' "$CONFIG_PATH")
 ENGINE="disabled"; LLM_STATUS="Disabled"; ACTIVE_PATH=""
 if [ "$LLM_ENABLED" = "true" ]; then
   ENGINE="phi3"; LLM_STATUS="Phi-3"; ACTIVE_PATH="/share/jarvis_prime/models/phi3.gguf"
-  
-  # Run pre-flight checks
-  LLM_CTX=$(jq -r '.llm_ctx_tokens // 8192' "$CONFIG_PATH")
-  llm_preflight_check "$LLM_CTX" "$ACTIVE_PATH" || {
-    echo "[LLM] Pre-flight check failed - LLM will be disabled"
-    LLM_ENABLED=false
-    LLM_STATUS="Disabled (preflight failed)"
-  }
 fi
-export LLM_ENABLED
 
 # ===== RAG bootstrap =====
 mkdir -p /share/jarvis_prime/memory /share/jarvis_prime || true
@@ -352,9 +194,8 @@ BANNER_LLM="$( [ "$LLM_ENABLED" = "true" ] && echo "$LLM_STATUS" || echo "Disabl
 BANNER_WS="$( [ "$WS_ENABLED" = "true" ] && echo "Enabled (port $WS_PORT)" || echo "Disabled" )"
 banner "$BANNER_LLM" "$ENGINE" "${ACTIVE_PATH:-}" "$BANNER_WS"
 
-# ===== Launch services with crash protection =====
-launch_api_with_recovery
-API_PID=$!
+# ===== Launch services =====
+python3 /app/api_messages.py & API_PID=$!
 
 if [[ "${SMTP_ENABLED}" == "true" ]]; then
   python3 /app/smtp_server.py & SMTP_PID=$! || true
