@@ -305,13 +305,26 @@ async def api_list_messages(request: web.Request):
     saved = request.rel_url.query.get("saved")
     if saved:
         msgs = storage.list_saved_messages(limit, offset)  # type: ignore
-        total = storage.count_messages(saved=True)  # type: ignore
+        total = len(msgs) if msgs else 0  # Fallback if count_messages not available
     elif q:
         msgs = storage.search_messages(q, limit, offset)  # type: ignore
-        total = storage.count_messages(search_query=q)  # type: ignore
+        total = len(msgs) if msgs else 0  # Fallback if count_messages not available
     else:
         msgs = storage.list_messages(limit, offset)  # type: ignore
-        total = storage.count_messages()  # type: ignore
+        total = len(msgs) if msgs else 0  # Fallback if count_messages not available
+    
+    # Try to use count_messages if available for accurate totals
+    try:
+        if hasattr(storage, 'count_messages'):
+            if saved:
+                total = storage.count_messages(saved=True)  # type: ignore
+            elif q:
+                total = storage.count_messages(search_query=q)  # type: ignore
+            else:
+                total = storage.count_messages()  # type: ignore
+    except Exception:
+        pass  # Use fallback total from len(msgs)
+    
     return _json({"messages": msgs, "total": total, "limit": limit, "offset": offset})
 
 async def api_get_message(request: web.Request):
