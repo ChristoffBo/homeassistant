@@ -185,7 +185,7 @@ def _stop_worker_process():
 
 def _check_worker_alive() -> bool:
     """Check if worker is still alive"""
-    global _WORKER_PROCESS, _LLM_CRASHED, _CRASH_COUNT, _CRASH_TIMESTAMPS
+    global _WORKER_PROCESS, _WORKER_RESTART_COUNT, _WORKER_RESTART_TIMES
     
     if _WORKER_PROCESS is None:
         return False
@@ -196,18 +196,34 @@ def _check_worker_alive() -> bool:
         
         _log("="*60)
         _log(f"WORKER PROCESS DIED (exit code: {exit_code})")
-        _log("LLM disabled - falling back to Lexicon")
-        _log("All other Jarvis services continue normally")
+        
+        # Check if we can restart
+        now = time.time()
+        _WORKER_RESTART_TIMES.append(now)
+        
+        # Count recent restarts (within restart window)
+        recent_restarts = sum(1 for t in _WORKER_RESTART_TIMES if now - t < _WORKER_RESTART_WINDOW)
+        
+        if recent_restarts > _WORKER_MAX_RESTARTS:
+            _log(f"Worker crashed {recent_restarts} times in {_WORKER_RESTART_WINDOW}s")
+            _log("Max restarts exceeded - disabling LLM permanently")
+            _log("="*60)
+            
+            # Mark as permanently crashed
+            global _LLM_CRASHED, _CRASH_COUNT, _CRASH_TIMESTAMPS
+            _LLM_CRASHED = True
+            _CRASH_COUNT += 1
+            _CRASH_TIMESTAMPS.append(time.time())
+            _WORKER_PROCESS = None
+            
+            os.environ["LLM_EMERGENCY_DISABLED"] = "true"
+            os.environ["LLM_ENABLED"] = "false"
+            return False
+        
+        _log(f"Worker will auto-restart on next LLM request ({recent_restarts}/{_WORKER_MAX_RESTARTS} restarts)")
         _log("="*60)
         
-        _LLM_CRASHED = True
-        _CRASH_COUNT += 1
-        _CRASH_TIMESTAMPS.append(time.time())
         _WORKER_PROCESS = None
-        
-        os.environ["LLM_EMERGENCY_DISABLED"] = "true"
-        os.environ["LLM_ENABLED"] = "false"
-        
         return False
     
     return True
@@ -305,6 +321,10 @@ _GEN_LOCK = threading.RLock()
 _WORKER_PROCESS: Optional[subprocess.Popen] = None
 _WORKER_LOCK = threading.Lock()
 _WORKER_AVAILABLE = os.path.exists("/app/llm_worker.py")
+_WORKER_RESTART_COUNT = 0
+_WORKER_MAX_RESTARTS = 3  # Max restarts before giving up
+_WORKER_RESTART_WINDOW = 300  # 5 minutes
+_WORKER_RESTART_TIMES: deque = deque(maxlen=10)
 
 # ============================
 # Async Task Queue (NEW)
@@ -830,19 +850,26 @@ def _should_use_grammar_auto() -> bool:
     return False
 
 def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
-    global LLM_MODE, LLM, LOADED_MODEL_PATH, _LLM_CRASHED
+    global LLM_MODE, LLM, LOADED_MODEL_PATH, _LLM_CRASHED, _WORKER_PROCESS
     
-    # Check if already crashed
+    # Check if permanently crashed (too many restarts)
     if _is_llm_crashed():
-        _log("_load_llama: blocked - previous crash detected")
+        _log("_load_llama: blocked - LLM permanently disabled after too many crashes")
         return False
     
     threads = _threads_from_cpu_limit(cpu_limit)
     
     # Try worker process first (safest - crash isolation)
     if _WORKER_AVAILABLE:
-        _log("Attempting worker process (isolated)")
         with _WORKER_LOCK:
+            # Check if worker already loaded this model
+            if LLM_MODE == "worker" and LOADED_MODEL_PATH == model_path and _WORKER_PROCESS is not None:
+                if _check_worker_alive():
+                    _log("Worker already has model loaded")
+                    return True
+            
+            # Start or restart worker
+            _log("Attempting worker process (isolated)")
             if _start_worker_process(model_path, ctx_tokens, threads):
                 return True
             _log("Worker process failed - falling back to in-process")
