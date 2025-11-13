@@ -108,7 +108,7 @@ print("[LLM] Crash protection installed (SIGSEGV, SIGBUS, SIGABRT)", file=sys.st
 # Worker Process Management
 # ============================
 def _start_worker_process(model_path: str, ctx_tokens: int, threads: int) -> bool:
-    """Start isolated worker process for LLM"""
+    """Start isolated worker process for LLM - MUST be called with _WORKER_LOCK held"""
     global _WORKER_PROCESS, LLM_MODE, LOADED_MODEL_PATH
     
     if _is_llm_crashed():
@@ -121,7 +121,7 @@ def _start_worker_process(model_path: str, ctx_tokens: int, threads: int) -> boo
         return False
     
     try:
-        _log(f"Starting LLM worker process")
+        _log(f"Spawning NEW worker process")
         _WORKER_PROCESS = subprocess.Popen(
             [sys.executable, worker_path],
             stdin=subprocess.PIPE,
@@ -861,6 +861,7 @@ def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
     
     # Try worker process first (safest - crash isolation)
     if _WORKER_AVAILABLE:
+        # CRITICAL: Lock MUST be held for entire check+spawn sequence
         with _WORKER_LOCK:
             # Check if worker already loaded this model
             if LLM_MODE == "worker" and LOADED_MODEL_PATH == model_path and _WORKER_PROCESS is not None:
@@ -868,7 +869,24 @@ def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
                     _log("Worker already has model loaded")
                     return True
             
-            # Start or restart worker
+            # Check if any worker exists (even if different model)
+            if _WORKER_PROCESS is not None and _check_worker_alive():
+                _log("Worker already running - reusing")
+                # Model might be different, send load command
+                try:
+                    response = _call_worker("load", {
+                        "model_path": model_path,
+                        "ctx_tokens": ctx_tokens,
+                        "threads": threads
+                    }, timeout=60.0)
+                    if response and response.get("success"):
+                        LLM_MODE = "worker"
+                        LOADED_MODEL_PATH = model_path
+                        return True
+                except Exception:
+                    pass
+            
+            # Start new worker (no existing worker)
             _log("Attempting worker process (isolated)")
             if _start_worker_process(model_path, ctx_tokens, threads):
                 return True
