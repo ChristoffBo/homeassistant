@@ -1378,7 +1378,7 @@ def persona_riff(
                 _log("persona_riff: LLM load failed → fallback to Lexi")
                 return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
 
-        if LLM_MODE not in ("llama", "ollama"):
+        if LLM_MODE not in ("llama", "ollama", "worker"):
             _log("persona_riff: LLM_MODE invalid → fallback to Lexi")
             return _lexicon_fallback_lines(persona, subj, max_lines, allow_profanity)
 
