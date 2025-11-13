@@ -587,6 +587,11 @@ def _update_model_metadata():
         pass
 
 def _is_phi3_family() -> bool:
+    # If using worker mode, check model path for phi
+    if LLM_MODE == "worker" and LOADED_MODEL_PATH:
+        if "phi" in LOADED_MODEL_PATH.lower():
+            return True
+    
     s = " ".join([_MODEL_ARCH, _CHAT_TEMPLATE]).lower()
     return ("phi3" in s) or ("<|user|>" in s and "<|assistant|>" in s and "<|end|>" in s)
 
