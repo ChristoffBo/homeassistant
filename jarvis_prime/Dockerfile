@@ -90,6 +90,8 @@ COPY /modules/chatbot.py /app/chatbot.py
 COPY /llm/rag.py /app/rag.py
 COPY /llm/rag_facts.json /app/rag_facts.json
 COPY /llm/llm_worker.py /app/llm_worker.py
+COPY /llm/worker_manager.py /app/worker_manager.py
+
 
 
 # Inbox server + UI + storage + fan-out clients
