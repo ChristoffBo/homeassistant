@@ -30,6 +30,234 @@ import uuid
 from typing import Optional, Dict, Any, Tuple, List
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+import signal
+import traceback
+import subprocess
+import select
+
+# ============================
+# CRASH PROTECTION - Install signal handlers FIRST
+# ============================
+_LLM_CRASHED = False
+_CRASH_COUNT = 0
+_CRASH_TIMESTAMPS = deque(maxlen=10)
+
+def _handle_segfault(signum, frame):
+    """Catch segfault and disable LLM instead of dying"""
+    global _LLM_CRASHED, _CRASH_COUNT
+    _LLM_CRASHED = True
+    _CRASH_COUNT += 1
+    _CRASH_TIMESTAMPS.append(time.time())
+    
+    print("\n" + "="*60, file=sys.stderr)
+    print("[LLM CRASH PROTECTION] Segmentation fault caught!", file=sys.stderr)
+    print(f"[LLM CRASH PROTECTION] Crash #{_CRASH_COUNT} detected", file=sys.stderr)
+    print("[LLM CRASH PROTECTION] LLM disabled - falling back to Lexicon", file=sys.stderr)
+    print("[LLM CRASH PROTECTION] All other Jarvis services continue normally", file=sys.stderr)
+    print("="*60 + "\n", file=sys.stderr)
+    
+    # Set environment flag so all modules know LLM is dead
+    os.environ["LLM_EMERGENCY_DISABLED"] = "true"
+    os.environ["LLM_ENABLED"] = "false"
+    
+    # Don't exit - let Python exception handling take over
+    raise RuntimeError("LLM segmentation fault - emergency disabled")
+
+def _handle_sigbus(signum, frame):
+    """Catch bus error (memory alignment issues)"""
+    global _LLM_CRASHED, _CRASH_COUNT
+    _LLM_CRASHED = True
+    _CRASH_COUNT += 1
+    _CRASH_TIMESTAMPS.append(time.time())
+    
+    print("\n" + "="*60, file=sys.stderr)
+    print("[LLM CRASH PROTECTION] Bus error caught!", file=sys.stderr)
+    print(f"[LLM CRASH PROTECTION] Crash #{_CRASH_COUNT} detected", file=sys.stderr)
+    print("[LLM CRASH PROTECTION] LLM disabled - falling back to Lexicon", file=sys.stderr)
+    print("="*60 + "\n", file=sys.stderr)
+    
+    os.environ["LLM_EMERGENCY_DISABLED"] = "true"
+    os.environ["LLM_ENABLED"] = "false"
+    raise RuntimeError("LLM bus error - emergency disabled")
+
+def _handle_sigabrt(signum, frame):
+    """Catch abort signal (out of memory, etc)"""
+    global _LLM_CRASHED, _CRASH_COUNT
+    _LLM_CRASHED = True
+    _CRASH_COUNT += 1
+    _CRASH_TIMESTAMPS.append(time.time())
+    
+    print("\n" + "="*60, file=sys.stderr)
+    print("[LLM CRASH PROTECTION] Abort signal caught!", file=sys.stderr)
+    print(f"[LLM CRASH PROTECTION] Crash #{_CRASH_COUNT} detected", file=sys.stderr)
+    print("[LLM CRASH PROTECTION] LLM disabled - falling back to Lexicon", file=sys.stderr)
+    print("="*60 + "\n", file=sys.stderr)
+    
+    os.environ["LLM_EMERGENCY_DISABLED"] = "true"
+    os.environ["LLM_ENABLED"] = "false"
+    raise RuntimeError("LLM abort - emergency disabled")
+
+# Install handlers
+signal.signal(signal.SIGSEGV, _handle_segfault)
+signal.signal(signal.SIGBUS, _handle_sigbus)
+signal.signal(signal.SIGABRT, _handle_sigabrt)
+
+print("[LLM] Crash protection installed (SIGSEGV, SIGBUS, SIGABRT)", file=sys.stderr)
+
+# ============================
+# Worker Process Management
+# ============================
+def _start_worker_process(model_path: str, ctx_tokens: int, threads: int) -> bool:
+    """Start isolated worker process for LLM"""
+    global _WORKER_PROCESS, LLM_MODE, LOADED_MODEL_PATH
+    
+    if _is_llm_crashed():
+        _log("Worker start blocked - previous crash")
+        return False
+    
+    worker_path = "/app/llm_worker.py"
+    if not os.path.exists(worker_path):
+        _log(f"Worker not found at {worker_path}")
+        return False
+    
+    try:
+        _log(f"Starting LLM worker process")
+        _WORKER_PROCESS = subprocess.Popen(
+            [sys.executable, worker_path],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=sys.stderr,  # Worker logs go to main stderr
+            bufsize=1,
+            universal_newlines=True
+        )
+        
+        _log(f"Worker started (PID: {_WORKER_PROCESS.pid})")
+        
+        # Test with ping
+        response = _call_worker("ping", {}, timeout=5.0)
+        if not response or not response.get("success"):
+            _log("Worker ping failed")
+            _stop_worker_process()
+            return False
+        
+        # Load model
+        _log(f"Loading model in worker: {model_path}")
+        response = _call_worker("load", {
+            "model_path": model_path,
+            "ctx_tokens": ctx_tokens,
+            "threads": threads
+        }, timeout=60.0)
+        
+        if not response or not response.get("success"):
+            error = response.get("error") if response else "No response"
+            _log(f"Worker model load failed: {error}")
+            _stop_worker_process()
+            return False
+        
+        LLM_MODE = "worker"
+        LOADED_MODEL_PATH = model_path
+        _log(f"Worker loaded model successfully")
+        return True
+        
+    except Exception as e:
+        _log(f"Failed to start worker: {e}")
+        _stop_worker_process()
+        return False
+
+def _stop_worker_process():
+    """Stop worker process"""
+    global _WORKER_PROCESS
+    
+    if _WORKER_PROCESS is None:
+        return
+    
+    try:
+        _WORKER_PROCESS.terminate()
+        _WORKER_PROCESS.wait(timeout=5)
+    except Exception:
+        try:
+            _WORKER_PROCESS.kill()
+        except Exception:
+            pass
+    
+    _WORKER_PROCESS = None
+    _log("Worker stopped")
+
+def _check_worker_alive() -> bool:
+    """Check if worker is still alive"""
+    global _WORKER_PROCESS, _LLM_CRASHED, _CRASH_COUNT, _CRASH_TIMESTAMPS
+    
+    if _WORKER_PROCESS is None:
+        return False
+    
+    # Check if died
+    if _WORKER_PROCESS.poll() is not None:
+        exit_code = _WORKER_PROCESS.returncode
+        
+        _log("="*60)
+        _log(f"WORKER PROCESS DIED (exit code: {exit_code})")
+        _log("LLM disabled - falling back to Lexicon")
+        _log("All other Jarvis services continue normally")
+        _log("="*60)
+        
+        _LLM_CRASHED = True
+        _CRASH_COUNT += 1
+        _CRASH_TIMESTAMPS.append(time.time())
+        _WORKER_PROCESS = None
+        
+        os.environ["LLM_EMERGENCY_DISABLED"] = "true"
+        os.environ["LLM_ENABLED"] = "false"
+        
+        return False
+    
+    return True
+
+def _call_worker(method: str, params: Dict[str, Any], timeout: float = 30.0) -> Optional[Dict[str, Any]]:
+    """Call worker with JSON-RPC"""
+    global _WORKER_PROCESS
+    
+    if not _check_worker_alive():
+        return None
+    
+    try:
+        # Send request
+        request = json.dumps({"method": method, "params": params})
+        _WORKER_PROCESS.stdin.write(request + "\n")
+        _WORKER_PROCESS.stdin.flush()
+        
+        # Read response with timeout
+        start = time.time()
+        while time.time() - start < timeout:
+            if not _check_worker_alive():
+                return None
+            
+            # Non-blocking read
+            ready, _, _ = select.select([_WORKER_PROCESS.stdout], [], [], 0.1)
+            
+            if ready:
+                line = _WORKER_PROCESS.stdout.readline()
+                if line:
+                    return json.loads(line.strip())
+        
+        _log(f"Worker call timeout: {method}")
+        return None
+        
+    except Exception as e:
+        _log(f"Worker call failed: {e}")
+        return None
+
+def _worker_generate(prompt: str, max_tokens: int, temperature: float, stops: List[str]) -> Optional[str]:
+    """Generate text via worker process"""
+    response = _call_worker("generate", {
+        "prompt": prompt,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "stops": stops
+    }, timeout=max(30.0, max_tokens * 0.5))
+    
+    if response and response.get("success"):
+        return response.get("text")
+    return None
 
 # ---------------------------
 # EnviroGuard safety sync
@@ -55,7 +283,7 @@ except Exception:
 # ============================
 # Globals
 # ============================
-LLM_MODE = "none"        # "none" | "llama" | "ollama"
+LLM_MODE = "none"        # "none" | "llama" | "ollama" | "worker"
 LLM = None               # llama_cpp.Llama instance if LLM_MODE == "llama"
 LOADED_MODEL_PATH = None
 OLLAMA_URL = ""          # base url if using ollama (e.g., http://127.0.0.1:11434)
@@ -70,6 +298,13 @@ _MODEL_NAME_HINT = ""
 
 # Global reentrant lock so multiple incoming messages don't collide
 _GEN_LOCK = threading.RLock()
+
+# ============================
+# Worker Process State
+# ============================
+_WORKER_PROCESS: Optional[subprocess.Popen] = None
+_WORKER_LOCK = threading.Lock()
+_WORKER_AVAILABLE = os.path.exists("/app/llm_worker.py")
 
 # ============================
 # Async Task Queue (NEW)
@@ -233,6 +468,11 @@ def _read_options() -> Dict[str, Any]:
     except Exception as e:
         _log(f"options read failed ({OPTIONS_PATH}): {e}")
         return {}
+
+def _is_llm_crashed() -> bool:
+    """Check if LLM has crashed and should be disabled"""
+    global _LLM_CRASHED
+    return _LLM_CRASHED or os.getenv("LLM_EMERGENCY_DISABLED") == "true"
 
 def _get_int_opt(opts: Dict[str, Any], key: str, default: int) -> int:
     try:
@@ -590,13 +830,45 @@ def _should_use_grammar_auto() -> bool:
     return False
 
 def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
-    global LLM_MODE, LLM, LOADED_MODEL_PATH
+    global LLM_MODE, LLM, LOADED_MODEL_PATH, _LLM_CRASHED
+    
+    # Check if already crashed
+    if _is_llm_crashed():
+        _log("_load_llama: blocked - previous crash detected")
+        return False
+    
+    threads = _threads_from_cpu_limit(cpu_limit)
+    
+    # Try worker process first (safest - crash isolation)
+    if _WORKER_AVAILABLE:
+        _log("Attempting worker process (isolated)")
+        with _WORKER_LOCK:
+            if _start_worker_process(model_path, ctx_tokens, threads):
+                return True
+            _log("Worker process failed - falling back to in-process")
+    
+    # Fallback to in-process (old behavior - no crash protection)
+    _log("Loading model in-process (NOT crash-protected)")
     llama_cpp = _try_import_llama_cpp()
     if not llama_cpp:
         return False
+    
+    # Check memory before load
     try:
-        threads = _threads_from_cpu_limit(cpu_limit)
-
+        with open('/proc/meminfo') as f:
+            meminfo = dict((line.split()[0].rstrip(':'), int(line.split()[1])) 
+                          for line in f.readlines() if len(line.split()) > 1)
+            available_mb = meminfo.get('MemAvailable', 0) // 1024
+            required_mb = 3000  # Minimum for Phi-4
+            
+            if available_mb < required_mb:
+                _log(f"WARNING: Low memory ({available_mb}MB < {required_mb}MB required)")
+                _log("Reducing context window to save memory")
+                ctx_tokens = min(ctx_tokens, 4096)  # Emergency reduction
+    except Exception as e:
+        _log(f"Memory check failed: {e}")
+    
+    try:
         # HARD caps & pinning to prevent oversubscription
         pinned = _pin_affinity(threads)  # may be [] if unsupported
         os.environ["OMP_NUM_THREADS"] = str(threads)
@@ -623,13 +895,23 @@ def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
         _update_model_metadata()
         LOADED_MODEL_PATH = model_path
         LLM_MODE = "llama"
-        _log(f"loaded GGUF model: {model_path} (ctx={ctx_tokens}, threads={threads})")
+        _log(f"loaded GGUF model (in-process): {model_path} (ctx={ctx_tokens}, threads={threads})")
         return True
+        
     except Exception as e:
-        _log(f"llama load failed: {e}")
+        _log(f"llama load FAILED: {e}")
+        _log(f"Traceback: {traceback.format_exc()}")
+        
+        # Mark as crashed and disable
+        _LLM_CRASHED = True
+        os.environ["LLM_EMERGENCY_DISABLED"] = "true"
+        os.environ["LLM_ENABLED"] = "false"
+        
         LLM = None
         LOADED_MODEL_PATH = None
         LLM_MODE = "none"
+        
+        _log("LLM permanently disabled - falling back to Lexicon")
         return False
 
 # ============================
@@ -984,6 +1266,15 @@ def _do_generate(prompt: str, *, timeout: int, base_url: str, model_url: str, mo
         cand = (model_name_hint or "").strip()
         name = cand if (cand and "/" not in cand and not cand.endswith(".gguf")) else _model_name_from_url(model_url)
         return _ollama_generate(OLLAMA_URL, name, prompt, timeout=max(4, int(timeout)), max_tokens=max_tokens, stops=_stops_for_model())
+
+    if LLM_MODE == "worker":
+        result = _worker_generate(
+            prompt=prompt,
+            max_tokens=max_tokens,
+            temperature=0.35,
+            stops=_stops_for_model()
+        )
+        return result or ""
 
     if LLM_MODE == "llama" and LLM is not None:
         return _llama_generate(prompt, timeout=max(4, int(timeout)), max_tokens=max_tokens, with_grammar=use_grammar)
