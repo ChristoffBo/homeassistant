@@ -1,3 +1,5 @@
+## latest (2025-11-13 15:21:00)
+Added an LLM worker will guard against segfaults, wil retry three times.
 ## latest (2025-11-07 15:21:00)
 All tested seems fine. Jarvis Completed. V1.0.0
 ## latest (2025-10-31 5:21:00)
