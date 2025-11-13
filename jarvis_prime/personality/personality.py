@@ -91,28 +91,187 @@ def _extract_smart_context(subject: str = "", body: str = "") -> Dict:
         text = f"{subject} {body}".lower()
         
         services = {
+            # Media automation (*arr stack)
             "sonarr": "sonarr" in text,
             "radarr": "radarr" in text,
-            "plex": "plex" in text or "jellyfin" in text or "emby" in text,
+            "lidarr": "lidarr" in text,
+            "bazarr": "bazarr" in text,
+            "prowlarr": "prowlarr" in text,
+            "readarr": "readarr" in text,
+            "whisparr": "whisparr" in text,
+            "cleanuperr": "cleanuperr" in text,
+            "huntarr": "huntarr" in text,
+            "overseerr": "overseerr" in text or "jellyseerr" in text,
+            "requestrr": "requestrr" in text,
+            "tautulli": "tautulli" in text,
+            
+            # Media servers & players
+            "plex": "plex" in text,
+            "emby": "emby" in text,
+            "jellyfin": "jellyfin" in text,
+            "kodi": "kodi" in text,
+            
+            # Download clients
+            "qbittorrent": "qbittorrent" in text or "qbit" in text,
+            "deluge": "deluge" in text,
+            "transmission": "transmission" in text,
+            "rtorrent": "rtorrent" in text or "rutorrent" in text,
+            "sabnzbd": "sabnzbd" in text or "sabnzb" in text or "sab" in text,
+            "nzbget": "nzbget" in text,
+            
+            # Reverse proxies & web servers
+            "nginx": "nginx" in text,
+            "traefik": "traefik" in text,
+            "caddy": "caddy" in text,
+            "haproxy": "haproxy" in text,
+            "apache": "apache" in text or "httpd" in text,
+            "swag": "swag" in text or "nginx proxy manager" in text or "npm" in text,
+            
+            # Dashboards & management
+            "homepage": "homepage" in text,
+            "homarr": "homarr" in text,
+            "heimdall": "heimdall" in text,
+            "organizr": "organizr" in text,
+            "flame": "flame" in text,
+            "dashy": "dashy" in text,
+            "portainer": "portainer" in text,
+            "yacht": "yacht" in text,
+            "dockge": "dockge" in text,
+            "cockpit": "cockpit" in text,
+            
+            # DNS & network
+            "pihole": "pihole" in text or "pi-hole" in text,
+            "adguard": "adguard" in text,
+            "unbound": "unbound" in text,
+            "technitium": "technitium" in text,
+            "cloudflared": "cloudflared" in text or "cloudflare tunnel" in text,
+            
+            # VPN & remote access
+            "wireguard": "wireguard" in text or "wg-easy" in text,
+            "openvpn": "openvpn" in text,
+            "tailscale": "tailscale" in text,
+            "zerotier": "zerotier" in text,
+            "netbird": "netbird" in text,
+            "guacamole": "guacamole" in text,
+            "meshcentral": "meshcentral" in text,
+            
+            # Monitoring & observability
+            "grafana": "grafana" in text,
+            "prometheus": "prometheus" in text,
+            "uptime-kuma": "uptime kuma" in text or "kuma" in text or "uptime-kuma" in text,
+            "netdata": "netdata" in text,
+            "glances": "glances" in text,
+            "scrutiny": "scrutiny" in text,
+            "healthchecks": "healthchecks" in text or "healthcheck" in text,
+            "changedetection": "changedetection" in text or "change detection" in text,
+            "speedtest-tracker": "speedtest tracker" in text or "speedtest-tracker" in text,
+            
+            # Notifications
+            "gotify": "gotify" in text,
+            "ntfy": "ntfy" in text,
+            "pushover": "pushover" in text,
+            "apprise": "apprise" in text,
+            
+            # Git & code
+            "gitea": "gitea" in text,
+            "forgejo": "forgejo" in text,
+            "gitlab": "gitlab" in text,
+            "gogs": "gogs" in text,
+            "code-server": "code-server" in text or "vscode server" in text,
+            
+            # CI/CD
+            "drone": "drone" in text,
+            "woodpecker": "woodpecker" in text,
+            "jenkins": "jenkins" in text,
+            "semaphore": "semaphore" in text,
+            
+            # Databases
+            "postgresql": "postgresql" in text or "postgres" in text,
+            "mysql": "mysql" in text or "mariadb" in text,
+            "mongodb": "mongodb" in text or "mongo" in text,
+            "redis": "redis" in text,
+            "influxdb": "influxdb" in text or "influx" in text,
+            
+            # Password managers
+            "vaultwarden": "vaultwarden" in text or "bitwarden" in text,
+            "passbolt": "passbolt" in text,
+            "psono": "psono" in text,
+            
+            # File sync & storage
+            "nextcloud": "nextcloud" in text,
+            "syncthing": "syncthing" in text,
+            "seafile": "seafile" in text,
+            "filebrowser": "filebrowser" in text or "file browser" in text,
+            "miniserve": "miniserve" in text,
+            "alist": "alist" in text,
+            
+            # Photos
+            "immich": "immich" in text,
+            "photoprism": "photoprism" in text,
+            "lychee": "lychee" in text,
+            "piwigo": "piwigo" in text,
+            
+            # Documents & notes
+            "paperless": "paperless" in text or "paperless-ngx" in text,
+            "bookstack": "bookstack" in text,
+            "outline": "outline" in text,
+            "trilium": "trilium" in text,
+            "hedgedoc": "hedgedoc" in text or "codimd" in text,
+            "joplin": "joplin" in text,
+            "obsidian": "obsidian" in text,
+            
+            # RSS & reading
+            "freshrss": "freshrss" in text or "fresh rss" in text,
+            "miniflux": "miniflux" in text,
+            "tt-rss": "tt-rss" in text or "tiny tiny rss" in text,
+            "wallabag": "wallabag" in text,
+            "linkwarden": "linkwarden" in text,
+            
+            # Bookmarks
+            "linkding": "linkding" in text,
+            "shiori": "shiori" in text,
+            "shlink": "shlink" in text,
+            
+            # Home automation
             "homeassistant": "home assistant" in text or "homeassistant" in text or "hass" in text,
-            "docker": "docker" in text or "container" in text or "pod" in text or "kubernetes" in text,
-            "database": any(db in text for db in ["mysql", "postgres", "mariadb", "mongodb", "sql", "database", "redis", "influx"]),
-            "backup": "backup" in text or "snapshot" in text or "archive" in text or "restic" in text or "borg" in text,
-            "network": any(net in text for net in ["network", "dns", "proxy", "nginx", "firewall", "vpn", "traefik", "caddy"]),
-            "storage": any(stor in text for stor in ["disk", "storage", "mount", "volume", "raid", "zfs", "btrfs", "nfs", "smb"]),
-            "monitoring": any(mon in text for mon in ["uptime", "monitor", "health", "check", "analytics", "grafana", "prometheus", "kuma"]),
-            "certificate": "certificate" in text or "cert" in text or "ssl" in text or "tls" in text or "acme" in text,
+            "nodered": "node-red" in text or "nodered" in text,
+            "zigbee2mqtt": "zigbee2mqtt" in text or "z2m" in text,
+            "mosquitto": "mosquitto" in text or "mqtt" in text,
+            
+            # Infrastructure
+            "docker": "docker" in text or "container" in text or "compose" in text,
+            "kubernetes": "kubernetes" in text or "k8s" in text or "k3s" in text,
+            "proxmox": "proxmox" in text or "pve" in text or "qemu" in text or "kvm" in text,
+            "unraid": "unraid" in text or "array" in text or "parity" in text or "godzilla" in text,
+            "lxc": "lxc" in text or "lxd" in text or "incus" in text,
+            "truenas": "truenas" in text,
+            
+            # Testing
+            "speedtest": "speedtest" in text or "speed test" in text or "bandwidth test" in text,
+            
+            # Generic categories
+            "database": any(db in text for db in ["sql", "database"]),
+            "backup": "backup" in text or "snapshot" in text or "archive" in text or "restic" in text or "borg" in text or "duplicati" in text,
+            "network": "network" in text or "dns" in text or "proxy" in text or "firewall" in text,
+            "storage": any(stor in text for stor in ["disk", "storage", "mount", "volume", "raid", "zfs", "btrfs", "nfs", "smb", "cifs"]),
+            "monitoring": "monitor" in text or "health" in text or "check" in text or "analytics" in text,
+            "certificate": "certificate" in text or "cert" in text or "ssl" in text or "tls" in text or "acme" in text or "letsencrypt" in text,
             "email": any(e in text for e in ["email", "smtp", "imap", "mail", "postfix", "sendmail"]),
-            "notification": any(n in text for n in ["notification", "alert", "gotify", "ntfy", "pushover", "telegram"]),
-            "vpn": any(v in text for v in ["vpn", "wireguard", "openvpn", "netbird", "zerotier", "tailscale"]),
-            "media": any(m in text for m in ["media", "movie", "tv", "episode", "download", "torrent", "usenet"]),
-            "automation": any(a in text for a in ["automation", "script", "cron", "scheduled", "workflow", "ansible"]),
-            "security": any(s in text for s in ["security", "auth", "oauth", "ldap", "fail2ban", "crowdsec"]),
+            "notification": "notification" in text or "alert" in text,
+            "vpn": "vpn" in text,
+            "media": any(m in text for m in ["media", "movie", "tv", "episode", "download", "torrent", "usenet", "music", "album", "artist", "subtitle"]),
+            "automation": any(a in text for a in ["automation", "script", "cron", "scheduled", "workflow", "ansible", "apt", "update", "upgrade", "patch", "yum", "dnf", "pacman"]),
+            "security": any(s in text for s in ["security", "auth", "oauth", "ldap", "fail2ban", "crowdsec", "authelia", "authentik"]),
+            
+            # Jarvis modules
+            "orchestrator": "orchestrator" in text or "playbook" in text,
+            "sentinel": "sentinel" in text or "service monitor" in text or "watchdog" in text,
+            "jarvis": "jarvis" in text or "llm" in text or "ai" in text,
         }
         active_services = [k for k, v in services.items() if v]
         
         actions = {
-            "completed": any(w in text for w in ["completed", "finished", "done", "success", "passed", "ok", "resolved", "fixed"]),
+            "completed": any(w in text for w in ["completed", "finished", "done", "success", "passed", "ok", "resolved", "fixed", "downloaded", "grabbed", "imported", "renamed"]),
             "started": any(w in text for w in ["started", "beginning", "initiated", "launching", "starting", "deploying"]),
             "failed": any(w in text for w in ["failed", "error", "failure", "crashed", "down", "broken", "dead"]),
             "warning": any(w in text for w in ["warning", "caution", "degraded", "slow", "timeout", "latency"]),
@@ -808,6 +967,579 @@ _SERVICE_RESPONSES = {
         "tappit": ["Certificate kak bru", "SSL broken hey", "Cert failed né", "Security not lekker"],
         "comedian": ["Certificate dramatically expired", "SSL plot twist", "Cert unexpectedly invalid", "Security ironically insecure"],
         "action": ["Certificate compromised", "SSL breach detected", "Cert mission failed", "Security threat active"],
+    },
+    
+    # Media/Radarr/Sonarr responses
+    ("media", "completed"): {
+        "jarvis": ["Media acquisition complete", "Download successfully archived", "Content delivery finished", "Media file processed"],
+        "dude": ["Download cruising done", "Media vibing smooth", "Content flowing in nice", "Download all good"],
+        "chick": ["Download completed beautifully", "Media looking perfect", "Content arrived gorgeously", "Download fab"],
+        "nerd": ["Download checksum verified", "Media codec validated", "File integrity confirmed", "Metadata parsed successfully"],
+        "rager": ["Download finally done", "Media downloaded", "Content arrived", "Download finished"],
+        "ops": ["Download complete", "Media acquired", "Content delivered", "File received"],
+        "tappit": ["Download done bru", "Media sorted hey", "Content lekker né", "Download sharp"],
+        "comedian": ["Download surprisingly successful", "Media unexpectedly arrived", "Content miraculously complete", "Download shockingly worked"],
+        "action": ["Media secured", "Download mission complete", "Content acquisition successful", "File extracted"],
+    },
+    ("radarr", "completed"): {
+        "jarvis": ["Movie acquisition complete", "Film download successful", "Cinema content delivered", "Movie file archived"],
+        "dude": ["Movie downloaded smooth", "Film vibing in nice", "Cinema content flowing", "Movie all good"],
+        "chick": ["Movie downloaded beautifully", "Film arrived perfectly", "Cinema content gorgeous", "Movie fab"],
+        "nerd": ["Movie metadata parsed", "Film quality verified", "Video codec validated", "Movie file integrity confirmed"],
+        "rager": ["Movie finally downloaded", "Film arrived", "Cinema content done", "Movie downloaded"],
+        "ops": ["Movie download complete", "Film acquired", "Cinema content delivered", "Movie received"],
+        "tappit": ["Movie downloaded bru", "Film sorted hey", "Cinema content lekker", "Movie sharp né"],
+        "comedian": ["Movie surprisingly downloaded", "Film unexpectedly arrived", "Cinema content miraculously complete", "Movie shockingly successful"],
+        "action": ["Movie secured", "Film acquisition complete", "Cinema content mission successful", "Movie extracted"],
+    },
+    ("sonarr", "completed"): {
+        "jarvis": ["Episode acquisition complete", "TV download successful", "Series content delivered", "Episode file archived"],
+        "dude": ["Episode downloaded smooth", "TV vibing in nice", "Series content flowing", "Episode all good"],
+        "chick": ["Episode downloaded beautifully", "TV arrived perfectly", "Series content gorgeous", "Episode fab"],
+        "nerd": ["Episode metadata parsed", "TV quality verified", "Video codec validated", "Episode file integrity confirmed"],
+        "rager": ["Episode finally downloaded", "TV arrived", "Series content done", "Episode downloaded"],
+        "ops": ["Episode download complete", "TV acquired", "Series content delivered", "Episode received"],
+        "tappit": ["Episode downloaded bru", "TV sorted hey", "Series content lekker", "Episode sharp né"],
+        "comedian": ["Episode surprisingly downloaded", "TV unexpectedly arrived", "Series content miraculously complete", "Episode shockingly successful"],
+        "action": ["Episode secured", "TV acquisition complete", "Series content mission successful", "Episode extracted"],
+    },
+    ("lidarr", "completed"): {
+        "jarvis": ["Music acquisition complete", "Album download successful", "Audio content delivered", "Track file archived"],
+        "dude": ["Album downloaded smooth", "Music vibing in nice", "Tracks flowing good", "Album all set"],
+        "chick": ["Album downloaded beautifully", "Music arrived perfectly", "Tracks gorgeous", "Album fab"],
+        "nerd": ["Music metadata parsed", "Audio codec validated", "Track integrity confirmed", "Album checksum verified"],
+        "rager": ["Album finally downloaded", "Music arrived", "Tracks done", "Album downloaded"],
+        "ops": ["Album download complete", "Music acquired", "Audio delivered", "Track received"],
+        "tappit": ["Album downloaded bru", "Music sorted hey", "Tracks lekker né", "Album sharp"],
+        "comedian": ["Album surprisingly downloaded", "Music unexpectedly arrived", "Tracks miraculously complete", "Album shockingly successful"],
+        "action": ["Album secured", "Music acquisition complete", "Audio mission successful", "Track extracted"],
+    },
+    ("orchestrator", "completed"): {
+        "jarvis": ["Orchestration task complete", "Playbook execution successful", "Automation workflow finished", "Job sequence completed"],
+        "dude": ["Playbook ran smooth", "Automation flowing nice", "Job done easy", "Workflow cruising complete"],
+        "chick": ["Playbook ran beautifully", "Automation executed perfectly", "Job finished gorgeously", "Workflow completed fab"],
+        "nerd": ["Playbook state convergence achieved", "Ansible execution nominal", "Task dependency resolved", "Job exit code zero"],
+        "rager": ["Playbook finally done", "Automation finished", "Job completed", "Workflow done"],
+        "ops": ["Playbook complete", "Automation executed", "Job finished", "Workflow done"],
+        "tappit": ["Playbook done bru", "Automation sorted hey", "Job lekker né", "Workflow sharp"],
+        "comedian": ["Playbook surprisingly successful", "Automation unexpectedly worked", "Job miraculously complete", "Workflow shockingly finished"],
+        "action": ["Playbook mission complete", "Automation deployed", "Job executed", "Workflow secured"],
+    },
+    ("orchestrator", "failed"): {
+        "jarvis": ["Orchestration task failed", "Playbook execution error", "Automation workflow interrupted", "Job sequence failed"],
+        "dude": ["Playbook hit issues", "Automation stuck", "Job failed", "Workflow problems"],
+        "chick": ["Playbook needs attention", "Automation failed", "Job struggling", "Workflow not working"],
+        "nerd": ["Playbook state divergence", "Ansible execution error", "Task dependency failed", "Job non-zero exit"],
+        "rager": ["Playbook is fucked", "Automation broken", "Job failed hard", "Workflow shit the bed"],
+        "ops": ["Playbook failed", "Automation error", "Job failed", "Workflow incomplete"],
+        "tappit": ["Playbook kak bru", "Automation broken hey", "Job failed né", "Workflow not lekker"],
+        "comedian": ["Playbook dramatically failed", "Automation plot twist", "Job gave up", "Workflow unexpectedly dead"],
+        "action": ["Playbook compromised", "Automation failed", "Job mission critical", "Workflow breach"],
+    },
+    ("sentinel", "warning"): {
+        "jarvis": ["Service health degraded", "Monitoring alert triggered", "Watchdog concern detected", "Service status warning"],
+        "dude": ["Service health concerning", "Monitor seeing issues", "Watchdog worried", "Service not flowing"],
+        "chick": ["Service needs attention", "Monitor alerting", "Watchdog concerned", "Service struggling"],
+        "nerd": ["Service health metric deviation", "Monitoring threshold exceeded", "Watchdog condition triggered", "Service anomaly detected"],
+        "rager": ["Service health problems", "Monitor showing shit", "Watchdog alerts", "Service degraded"],
+        "ops": ["Service warning", "Monitor alert", "Watchdog triggered", "Service degraded"],
+        "tappit": ["Service warning bru", "Monitor alert hey", "Watchdog concerned né", "Service not lekker"],
+        "comedian": ["Service dramatically concerning", "Monitor unexpectedly alarmed", "Watchdog surprisingly worried", "Service ironically degraded"],
+        "action": ["Service threat detected", "Monitor alert issued", "Watchdog condition active", "Service warning status"],
+    },
+    ("sentinel", "failed"): {
+        "jarvis": ["Service failure detected", "Critical monitoring alert", "Watchdog service down", "Service offline"],
+        "dude": ["Service down man", "Monitor seeing failure", "Watchdog detected outage", "Service offline"],
+        "chick": ["Service needs immediate attention", "Monitor critical alert", "Watchdog service down", "Service offline"],
+        "nerd": ["Service health check failed", "Monitoring critical threshold", "Watchdog timeout exceeded", "Service process terminated"],
+        "rager": ["Service is fucked", "Monitor critical failure", "Watchdog service dead", "Service down"],
+        "ops": ["Service failed", "Monitor critical", "Watchdog service down", "Service offline"],
+        "tappit": ["Service down bru", "Monitor critical hey", "Watchdog failed né", "Service kak"],
+        "comedian": ["Service dramatically failed", "Monitor critically concerned", "Watchdog unexpectedly panicked", "Service ironically dead"],
+        "action": ["Service threat critical", "Monitor breach detected", "Watchdog failure confirmed", "Service down"],
+    },
+    ("sentinel", "completed"): {
+        "jarvis": ["Service recovery complete", "Health check restored", "Watchdog service operational", "Service monitoring resumed"],
+        "dude": ["Service back up smooth", "Health check flowing", "Watchdog happy", "Service vibing again"],
+        "chick": ["Service restored beautifully", "Health check perfect", "Watchdog happy", "Service running fab"],
+        "nerd": ["Service health nominal", "Monitoring metrics restored", "Watchdog condition cleared", "Service process healthy"],
+        "rager": ["Service back up finally", "Health check ok", "Watchdog cleared", "Service running"],
+        "ops": ["Service restored", "Health check passed", "Watchdog operational", "Service online"],
+        "tappit": ["Service back bru", "Health check lekker", "Watchdog sorted hey", "Service sharp né"],
+        "comedian": ["Service surprisingly recovered", "Health check unexpectedly passed", "Watchdog miraculously calm", "Service shockingly operational"],
+        "action": ["Service secured", "Health check green", "Watchdog operational", "Service mission complete"],
+    },
+    ("jarvis", "completed"): {
+        "jarvis": ["AI processing complete", "LLM generation successful", "Intelligence task finished", "Analysis complete"],
+        "dude": ["AI processing smooth", "LLM generated nice", "Intelligence task easy", "Analysis flowing done"],
+        "chick": ["AI processed beautifully", "LLM generated perfectly", "Intelligence task gorgeous", "Analysis fab"],
+        "nerd": ["LLM inference complete", "Token generation nominal", "Model execution successful", "Neural processing done"],
+        "rager": ["AI finally done", "LLM generated", "Intelligence task finished", "Analysis complete"],
+        "ops": ["AI complete", "LLM generated", "Intelligence done", "Analysis finished"],
+        "tappit": ["AI done bru", "LLM sorted hey", "Intelligence lekker", "Analysis sharp né"],
+        "comedian": ["AI surprisingly intelligent", "LLM unexpectedly coherent", "Intelligence miraculously complete", "Analysis shockingly useful"],
+        "action": ["AI mission complete", "LLM deployed", "Intelligence secured", "Analysis operational"],
+    },
+    ("jarvis", "failed"): {
+        "jarvis": ["AI processing error", "LLM generation failed", "Intelligence task interrupted", "Analysis error"],
+        "dude": ["AI hit issues", "LLM generation stuck", "Intelligence task problems", "Analysis failed"],
+        "chick": ["AI needs attention", "LLM generation failed", "Intelligence task struggling", "Analysis not working"],
+        "nerd": ["LLM inference timeout", "Token generation error", "Model execution failed", "Neural processing crashed"],
+        "rager": ["AI is fucked", "LLM generation broken", "Intelligence task failed", "Analysis shit"],
+        "ops": ["AI failed", "LLM error", "Intelligence incomplete", "Analysis failed"],
+        "tappit": ["AI kak bru", "LLM broken hey", "Intelligence failed né", "Analysis not lekker"],
+        "comedian": ["AI dramatically failed", "LLM plot twist", "Intelligence ironically stupid", "Analysis unexpectedly useless"],
+        "action": ["AI compromised", "LLM breach", "Intelligence mission failed", "Analysis critical"],
+    },
+    
+    # Storage responses
+    ("storage", "completed"): {
+        "jarvis": ["Storage operations complete", "Volume management successful", "Disk operations finished", "Storage pool synchronized"],
+        "dude": ["Storage cruising smooth", "Volumes flowing nice", "Disks all good", "Storage vibing well"],
+        "chick": ["Storage running beautifully", "Volumes looking perfect", "Disks gorgeous", "Storage fab"],
+        "nerd": ["Filesystem mounted successfully", "RAID array synchronized", "Volume integrity verified", "Disk I/O nominal"],
+        "rager": ["Storage finally done", "Volumes working", "Disks operational", "Storage complete"],
+        "ops": ["Storage operational", "Volumes mounted", "Disk operations complete", "Storage ready"],
+        "tappit": ["Storage lekker bru", "Volumes sorted hey", "Disks sharp né", "Storage all good"],
+        "comedian": ["Storage surprisingly functional", "Volumes unexpectedly stable", "Disks shockingly reliable", "Storage miraculously working"],
+        "action": ["Storage secured", "Volume mission complete", "Disk operations successful", "Storage tactical green"],
+    },
+    ("storage", "warning"): {
+        "jarvis": ["Storage capacity warning", "Disk space threshold exceeded", "Volume usage high", "Storage degradation detected"],
+        "dude": ["Storage getting tight", "Disk space low man", "Volumes filling up", "Storage concerning"],
+        "chick": ["Storage needs attention", "Disk space running low", "Volumes getting full", "Storage warning"],
+        "nerd": ["Filesystem utilization high", "RAID degradation detected", "Disk SMART warning", "Storage threshold breach"],
+        "rager": ["Storage filling up", "Disk space low", "Volumes getting full", "Storage problems"],
+        "ops": ["Storage warning", "Disk space low", "Volume usage high", "Storage threshold exceeded"],
+        "tappit": ["Storage warning bru", "Disk space low hey", "Volumes filling né", "Storage concerning"],
+        "comedian": ["Storage dramatically filling", "Disk space ironically limited", "Volumes surprisingly full", "Storage predictably concerning"],
+        "action": ["Storage threat detected", "Disk capacity warning", "Volume alert issued", "Storage caution advised"],
+    },
+    ("storage", "failed"): {
+        "jarvis": ["Storage failure detected", "Volume mount error", "Disk operation failed", "Storage pool offline"],
+        "dude": ["Storage hit issues", "Volume mount problems", "Disks not flowing", "Storage down"],
+        "chick": ["Storage needs immediate attention", "Volume failed", "Disks struggling", "Storage critical"],
+        "nerd": ["Filesystem corruption detected", "RAID array failed", "Disk hardware failure", "Mount point unavailable"],
+        "rager": ["Storage is fucked", "Volume mount broken", "Disks dead", "Storage shit the bed"],
+        "ops": ["Storage failed", "Volume error", "Disk failure", "Storage offline"],
+        "tappit": ["Storage kak bru", "Volume broken hey", "Disks failed né", "Storage down"],
+        "comedian": ["Storage dramatically failed", "Volume plot twist", "Disks unexpectedly dead", "Storage ironically unavailable"],
+        "action": ["Storage compromised", "Volume breach", "Disk mission critical", "Storage threat active"],
+    },
+    
+    # System update/apt responses
+    ("automation", "updated"): {
+        "jarvis": ["System updates installed", "Package upgrades complete", "Security patches applied", "System refresh finished"],
+        "dude": ["System updated smooth", "Packages upgraded easy", "Updates flowing done", "System refreshed nice"],
+        "chick": ["System updated beautifully", "Packages upgraded perfectly", "Updates gorgeous", "System refreshed fab"],
+        "nerd": ["APT cache updated", "Package dependencies resolved", "System kernel patched", "Repository metadata synced"],
+        "rager": ["System finally updated", "Packages upgraded", "Updates done", "System patched"],
+        "ops": ["System updated", "Packages upgraded", "Updates applied", "System current"],
+        "tappit": ["System updated bru", "Packages sorted hey", "Updates lekker né", "System fresh"],
+        "comedian": ["System surprisingly updated", "Packages unexpectedly current", "Updates miraculously applied", "System shockingly patched"],
+        "action": ["System secured", "Packages deployed", "Updates executed", "System hardened"],
+    },
+    
+    # Proxmox responses
+    ("proxmox", "completed"): {
+        "jarvis": ["Proxmox operations complete", "Hypervisor tasks finished", "VM management successful", "Cluster operations nominal"],
+        "dude": ["Proxmox cruising smooth", "VMs vibing nice", "Hypervisor flowing easy", "Cluster all good"],
+        "chick": ["Proxmox running beautifully", "VMs looking perfect", "Hypervisor gorgeous", "Cluster fab"],
+        "nerd": ["VM state synchronized", "QEMU processes nominal", "Cluster quorum achieved", "ZFS pool healthy"],
+        "rager": ["Proxmox finally done", "VMs working", "Hypervisor operational", "Cluster running"],
+        "ops": ["Proxmox operational", "VMs running", "Hypervisor active", "Cluster stable"],
+        "tappit": ["Proxmox lekker bru", "VMs sorted hey", "Hypervisor sharp né", "Cluster good"],
+        "comedian": ["Proxmox surprisingly functional", "VMs unexpectedly stable", "Hypervisor shockingly working", "Cluster miraculously synchronized"],
+        "action": ["Proxmox secured", "VM mission complete", "Hypervisor operational", "Cluster tactical green"],
+    },
+    ("proxmox", "failed"): {
+        "jarvis": ["Proxmox error detected", "Hypervisor failure", "VM management error", "Cluster node offline"],
+        "dude": ["Proxmox hit issues", "VMs having problems", "Hypervisor not flowing", "Cluster down"],
+        "chick": ["Proxmox needs attention", "VMs struggling", "Hypervisor failed", "Cluster offline"],
+        "nerd": ["VM migration failed", "QEMU process crashed", "Cluster quorum lost", "Storage backend timeout"],
+        "rager": ["Proxmox is fucked", "VMs broken", "Hypervisor dead", "Cluster shit the bed"],
+        "ops": ["Proxmox error", "VM failure", "Hypervisor down", "Cluster offline"],
+        "tappit": ["Proxmox kak bru", "VMs broken hey", "Hypervisor failed né", "Cluster down"],
+        "comedian": ["Proxmox dramatically failed", "VMs plot twist", "Hypervisor unexpectedly dead", "Cluster ironically offline"],
+        "action": ["Proxmox compromised", "VM threat detected", "Hypervisor breach", "Cluster mission critical"],
+    },
+    
+    # Unraid responses
+    ("unraid", "completed"): {
+        "jarvis": ["Unraid operations complete", "Array management successful", "Parity check finished", "Storage pool operational"],
+        "dude": ["Unraid cruising smooth", "Array vibing nice", "Parity flowing good", "Storage all set"],
+        "chick": ["Unraid running beautifully", "Array looking perfect", "Parity gorgeous", "Storage fab"],
+        "nerd": ["Array state synchronized", "Parity verification successful", "Disk spin-up complete", "Cache pool healthy"],
+        "rager": ["Unraid finally done", "Array working", "Parity complete", "Storage operational"],
+        "ops": ["Unraid operational", "Array running", "Parity verified", "Storage ready"],
+        "tappit": ["Unraid lekker bru", "Array sorted hey", "Parity sharp né", "Storage good"],
+        "comedian": ["Unraid surprisingly functional", "Array unexpectedly stable", "Parity shockingly valid", "Storage miraculously working"],
+        "action": ["Unraid secured", "Array mission complete", "Parity verified", "Storage tactical green"],
+    },
+    ("unraid", "warning"): {
+        "jarvis": ["Unraid warning detected", "Array status degraded", "Parity concern noted", "Disk health warning"],
+        "dude": ["Unraid showing concerns", "Array not perfect", "Parity issues", "Disk warning"],
+        "chick": ["Unraid needs attention", "Array warning", "Parity concerns", "Disk health alert"],
+        "nerd": ["Array disk SMART warning", "Parity sync errors detected", "Cache pool degraded", "Temperature threshold exceeded"],
+        "rager": ["Unraid showing problems", "Array warnings", "Parity issues", "Disk alerts"],
+        "ops": ["Unraid warning", "Array degraded", "Parity alert", "Disk warning"],
+        "tappit": ["Unraid warning bru", "Array concerning hey", "Parity alert né", "Disk warning"],
+        "comedian": ["Unraid dramatically warning", "Array ironically degraded", "Parity surprisingly concerned", "Disk predictably alerting"],
+        "action": ["Unraid threat detected", "Array caution advised", "Parity alert issued", "Disk warning active"],
+    },
+    ("unraid", "failed"): {
+        "jarvis": ["Unraid failure detected", "Array offline", "Parity check failed", "Disk failure critical"],
+        "dude": ["Unraid hit problems", "Array down", "Parity failed", "Disk issues"],
+        "chick": ["Unraid needs immediate attention", "Array failed", "Parity error", "Disk failure"],
+        "nerd": ["Array mount failure", "Parity validation error", "Disk hardware failure detected", "Filesystem corruption"],
+        "rager": ["Unraid is fucked", "Array dead", "Parity failed hard", "Disk shit the bed"],
+        "ops": ["Unraid failed", "Array offline", "Parity error", "Disk failure"],
+        "tappit": ["Unraid kak bru", "Array down hey", "Parity failed né", "Disk broken"],
+        "comedian": ["Unraid dramatically failed", "Array plot twist", "Parity unexpectedly invalid", "Disk ironically dead"],
+        "action": ["Unraid compromised", "Array breach detected", "Parity mission critical", "Disk failure confirmed"],
+    },
+    
+    # LXC responses
+    ("lxc", "completed"): {
+        "jarvis": ["Container operations complete", "LXC management successful", "Container deployment finished", "System container operational"],
+        "dude": ["LXC cruising smooth", "Containers vibing nice", "Deployment flowing easy", "LXC all good"],
+        "chick": ["LXC running beautifully", "Containers looking perfect", "Deployment gorgeous", "LXC fab"],
+        "nerd": ["Container state nominal", "LXC namespace isolated", "Cgroups configured correctly", "Container networking active"],
+        "rager": ["LXC finally done", "Containers working", "Deployment complete", "LXC operational"],
+        "ops": ["LXC operational", "Containers running", "Deployment complete", "LXC ready"],
+        "tappit": ["LXC lekker bru", "Containers sorted hey", "Deployment sharp né", "LXC good"],
+        "comedian": ["LXC surprisingly functional", "Containers unexpectedly stable", "Deployment shockingly successful", "LXC miraculously working"],
+        "action": ["LXC secured", "Container mission complete", "Deployment successful", "LXC tactical green"],
+    },
+    ("lxc", "failed"): {
+        "jarvis": ["Container failure detected", "LXC management error", "Container deployment failed", "System container offline"],
+        "dude": ["LXC hit issues", "Containers having problems", "Deployment stuck", "LXC down"],
+        "chick": ["LXC needs attention", "Containers struggling", "Deployment failed", "LXC offline"],
+        "nerd": ["Container start failure", "LXC namespace conflict", "Cgroup resource exhausted", "Container network timeout"],
+        "rager": ["LXC is fucked", "Containers broken", "Deployment failed", "LXC dead"],
+        "ops": ["LXC error", "Container failure", "Deployment failed", "LXC offline"],
+        "tappit": ["LXC kak bru", "Containers broken hey", "Deployment failed né", "LXC down"],
+        "comedian": ["LXC dramatically failed", "Containers plot twist", "Deployment unexpectedly broken", "LXC ironically dead"],
+        "action": ["LXC compromised", "Container threat detected", "Deployment breach", "LXC mission critical"],
+    },
+    
+    # Bazarr responses
+    ("bazarr", "completed"): {
+        "jarvis": ["Subtitle acquisition complete", "Caption download successful", "Subtitle sync finished", "Language track added"],
+        "dude": ["Subtitles downloaded smooth", "Captions vibing in nice", "Subs flowing good", "Subtitles all set"],
+        "chick": ["Subtitles downloaded beautifully", "Captions arrived perfectly", "Subs looking gorgeous", "Subtitles fab"],
+        "nerd": ["Subtitle metadata parsed", "Caption timing validated", "SRT format verified", "Subtitle encoding confirmed"],
+        "rager": ["Subtitles finally downloaded", "Captions arrived", "Subs done", "Subtitles downloaded"],
+        "ops": ["Subtitle download complete", "Captions acquired", "Subs delivered", "Subtitle received"],
+        "tappit": ["Subtitles downloaded bru", "Captions sorted hey", "Subs lekker né", "Subtitles sharp"],
+        "comedian": ["Subtitles surprisingly downloaded", "Captions unexpectedly arrived", "Subs miraculously synced", "Subtitles shockingly accurate"],
+        "action": ["Subtitles secured", "Caption mission complete", "Subs acquired", "Subtitle extracted"],
+    },
+    
+    # Cleanuperr responses
+    ("cleanuperr", "completed"): {
+        "jarvis": ["Media cleanup complete", "File organization successful", "Library maintenance finished", "Cleanup operation done"],
+        "dude": ["Cleanup cruising done", "Files organized smooth", "Library flowing clean", "Cleanup all good"],
+        "chick": ["Cleanup completed beautifully", "Files organized perfectly", "Library looking gorgeous", "Cleanup fab"],
+        "nerd": ["File system optimization complete", "Duplicate detection nominal", "Cleanup algorithm successful", "Library indexed"],
+        "rager": ["Cleanup finally done", "Files organized", "Library cleaned", "Cleanup finished"],
+        "ops": ["Cleanup complete", "Files organized", "Library maintained", "Cleanup done"],
+        "tappit": ["Cleanup done bru", "Files sorted hey", "Library lekker né", "Cleanup sharp"],
+        "comedian": ["Cleanup surprisingly thorough", "Files unexpectedly organized", "Library miraculously clean", "Cleanup shockingly successful"],
+        "action": ["Cleanup secured", "File organization complete", "Library mission successful", "Cleanup executed"],
+    },
+    
+    # Huntarr responses
+    ("huntarr", "completed"): {
+        "jarvis": ["Content search complete", "Media discovery successful", "Search operation finished", "Content located"],
+        "dude": ["Search cruising done", "Content found smooth", "Discovery flowing nice", "Search all good"],
+        "chick": ["Search completed beautifully", "Content found perfectly", "Discovery gorgeous", "Search fab"],
+        "nerd": ["Search algorithm complete", "Content metadata indexed", "Discovery query successful", "Search results validated"],
+        "rager": ["Search finally done", "Content found", "Discovery complete", "Search finished"],
+        "ops": ["Search complete", "Content discovered", "Search finished", "Content located"],
+        "tappit": ["Search done bru", "Content found hey", "Discovery lekker né", "Search sharp"],
+        "comedian": ["Search surprisingly successful", "Content unexpectedly found", "Discovery miraculously complete", "Search shockingly effective"],
+        "action": ["Search mission complete", "Content located", "Discovery successful", "Search secured"],
+    },
+    
+    # qBittorrent responses
+    ("qbittorrent", "completed"): {
+        "jarvis": ["Torrent download complete", "P2P transfer successful", "Seeding commenced", "Download finalized"],
+        "dude": ["Torrent downloaded smooth", "P2P flowing done", "Seeding vibing nice", "Download all good"],
+        "chick": ["Torrent completed beautifully", "P2P transfer perfect", "Seeding gorgeous", "Download fab"],
+        "nerd": ["Torrent hash verified", "Peer swarm optimal", "Download ratio maintained", "Seed ratio nominal"],
+        "rager": ["Torrent finally done", "P2P finished", "Seeding started", "Download complete"],
+        "ops": ["Torrent complete", "P2P transfer done", "Seeding active", "Download finished"],
+        "tappit": ["Torrent done bru", "P2P sorted hey", "Seeding lekker né", "Download sharp"],
+        "comedian": ["Torrent surprisingly complete", "P2P unexpectedly successful", "Seeding miraculously active", "Download shockingly done"],
+        "action": ["Torrent secured", "P2P mission complete", "Seeding operational", "Download extracted"],
+    },
+    ("qbittorrent", "failed"): {
+        "jarvis": ["Torrent download failed", "P2P transfer error", "Seeding interrupted", "Download incomplete"],
+        "dude": ["Torrent hit issues", "P2P stuck", "Seeding problems", "Download failed"],
+        "chick": ["Torrent needs attention", "P2P struggling", "Seeding failed", "Download incomplete"],
+        "nerd": ["Torrent tracker timeout", "Peer connection failed", "Download stalled", "Seed ratio insufficient"],
+        "rager": ["Torrent is fucked", "P2P broken", "Seeding dead", "Download failed"],
+        "ops": ["Torrent failed", "P2P error", "Seeding stopped", "Download incomplete"],
+        "tappit": ["Torrent kak bru", "P2P broken hey", "Seeding failed né", "Download not lekker"],
+        "comedian": ["Torrent dramatically failed", "P2P plot twist", "Seeding unexpectedly dead", "Download ironically incomplete"],
+        "action": ["Torrent compromised", "P2P breach", "Seeding mission failed", "Download critical"],
+    },
+    
+    # Deluge responses
+    ("deluge", "completed"): {
+        "jarvis": ["Torrent download complete", "Transfer successful", "Seeding active", "Download finalized"],
+        "dude": ["Deluge downloaded smooth", "Transfer flowing done", "Seeding vibing", "Download all good"],
+        "chick": ["Deluge completed beautifully", "Transfer perfect", "Seeding gorgeous", "Download fab"],
+        "nerd": ["Torrent verification complete", "Peer swarm connected", "Download bandwidth optimal", "Seed queue active"],
+        "rager": ["Deluge finally done", "Transfer finished", "Seeding started", "Download complete"],
+        "ops": ["Deluge complete", "Transfer done", "Seeding active", "Download finished"],
+        "tappit": ["Deluge done bru", "Transfer sorted hey", "Seeding lekker né", "Download sharp"],
+        "comedian": ["Deluge surprisingly complete", "Transfer unexpectedly done", "Seeding miraculously active", "Download shockingly successful"],
+        "action": ["Deluge secured", "Transfer complete", "Seeding operational", "Download mission done"],
+    },
+    
+    # SABnzbd responses
+    ("sabnzbd", "completed"): {
+        "jarvis": ["Usenet download complete", "NZB processing successful", "Article extraction finished", "Download verified"],
+        "dude": ["SAB downloaded smooth", "NZB flowing done", "Usenet vibing complete", "Download all good"],
+        "chick": ["SAB completed beautifully", "NZB processed perfectly", "Usenet gorgeous", "Download fab"],
+        "nerd": ["NZB par2 verified", "Article assembly complete", "Usenet connection optimal", "Download CRC validated"],
+        "rager": ["SAB finally done", "NZB finished", "Usenet complete", "Download done"],
+        "ops": ["SAB complete", "NZB processed", "Usenet finished", "Download done"],
+        "tappit": ["SAB done bru", "NZB sorted hey", "Usenet lekker né", "Download sharp"],
+        "comedian": ["SAB surprisingly complete", "NZB unexpectedly processed", "Usenet miraculously done", "Download shockingly verified"],
+        "action": ["SAB secured", "NZB mission complete", "Usenet extracted", "Download operational"],
+    },
+    ("sabnzbd", "failed"): {
+        "jarvis": ["Usenet download failed", "NZB processing error", "Article extraction incomplete", "Download failed verification"],
+        "dude": ["SAB hit issues", "NZB stuck", "Usenet problems", "Download failed"],
+        "chick": ["SAB needs attention", "NZB struggling", "Usenet failed", "Download incomplete"],
+        "nerd": ["NZB par2 repair failed", "Article incomplete", "Usenet connection timeout", "Download CRC mismatch"],
+        "rager": ["SAB is fucked", "NZB broken", "Usenet failed", "Download dead"],
+        "ops": ["SAB failed", "NZB error", "Usenet incomplete", "Download failed"],
+        "tappit": ["SAB kak bru", "NZB broken hey", "Usenet failed né", "Download not lekker"],
+        "comedian": ["SAB dramatically failed", "NZB plot twist", "Usenet unexpectedly incomplete", "Download ironically broken"],
+        "action": ["SAB compromised", "NZB breach", "Usenet mission failed", "Download critical"],
+    },
+    
+    # Speedtest responses
+    ("speedtest", "completed"): {
+        "jarvis": ["Speed test complete", "Bandwidth measurement successful", "Network performance assessed", "Connection speed verified"],
+        "dude": ["Speedtest cruising done", "Bandwidth flowing measured", "Speed check smooth", "Connection tested good"],
+        "chick": ["Speedtest completed beautifully", "Bandwidth measured perfectly", "Speed check gorgeous", "Connection fab"],
+        "nerd": ["Throughput metrics nominal", "Latency within tolerances", "Jitter minimal", "Packet loss zero percent"],
+        "rager": ["Speedtest finally done", "Bandwidth measured", "Speed checked", "Connection tested"],
+        "ops": ["Speedtest complete", "Bandwidth measured", "Speed verified", "Connection tested"],
+        "tappit": ["Speedtest done bru", "Bandwidth sorted hey", "Speed lekker né", "Connection sharp"],
+        "comedian": ["Speedtest surprisingly accurate", "Bandwidth unexpectedly measured", "Speed miraculously tested", "Connection shockingly fast"],
+        "action": ["Speedtest secured", "Bandwidth mission complete", "Speed verified", "Connection operational"],
+    },
+    
+    # Plex responses
+    ("plex", "completed"): {
+        "jarvis": ["Plex operation complete", "Media server synchronized", "Library scan finished", "Streaming ready"],
+        "dude": ["Plex cruising smooth", "Media server vibing", "Library flowing done", "Streaming all good"],
+        "chick": ["Plex running beautifully", "Media server perfect", "Library gorgeous", "Streaming fab"],
+        "nerd": ["Plex database indexed", "Metadata agents complete", "Transcoding profiles optimal", "Stream bandwidth allocated"],
+        "rager": ["Plex finally done", "Media server working", "Library scanned", "Streaming ready"],
+        "ops": ["Plex operational", "Media server ready", "Library updated", "Streaming active"],
+        "tappit": ["Plex lekker bru", "Media server sorted hey", "Library sharp né", "Streaming good"],
+        "comedian": ["Plex surprisingly functional", "Media server unexpectedly working", "Library miraculously complete", "Streaming shockingly smooth"],
+        "action": ["Plex secured", "Media server operational", "Library mission complete", "Streaming deployed"],
+    },
+    
+    # Emby responses
+    ("emby", "completed"): {
+        "jarvis": ["Emby operation complete", "Media server synchronized", "Library scan finished", "Streaming ready"],
+        "dude": ["Emby cruising smooth", "Media server vibing", "Library flowing done", "Streaming all good"],
+        "chick": ["Emby running beautifully", "Media server perfect", "Library gorgeous", "Streaming fab"],
+        "nerd": ["Emby database indexed", "Metadata providers complete", "Transcoding optimal", "Stream delivery ready"],
+        "rager": ["Emby finally done", "Media server working", "Library scanned", "Streaming ready"],
+        "ops": ["Emby operational", "Media server ready", "Library updated", "Streaming active"],
+        "tappit": ["Emby lekker bru", "Media server sorted hey", "Library sharp né", "Streaming good"],
+        "comedian": ["Emby surprisingly functional", "Media server unexpectedly working", "Library miraculously complete", "Streaming shockingly smooth"],
+        "action": ["Emby secured", "Media server operational", "Library mission complete", "Streaming deployed"],
+    },
+    
+    # Jellyfin responses
+    ("jellyfin", "completed"): {
+        "jarvis": ["Jellyfin operation complete", "Media server synchronized", "Library scan finished", "Streaming ready"],
+        "dude": ["Jellyfin cruising smooth", "Media server vibing", "Library flowing done", "Streaming all good"],
+        "chick": ["Jellyfin running beautifully", "Media server perfect", "Library gorgeous", "Streaming fab"],
+        "nerd": ["Jellyfin database indexed", "Metadata scrapers complete", "Transcoding profiles active", "Stream protocols ready"],
+        "rager": ["Jellyfin finally done", "Media server working", "Library scanned", "Streaming ready"],
+        "ops": ["Jellyfin operational", "Media server ready", "Library updated", "Streaming active"],
+        "tappit": ["Jellyfin lekker bru", "Media server sorted hey", "Library sharp né", "Streaming good"],
+        "comedian": ["Jellyfin surprisingly functional", "Media server unexpectedly working", "Library miraculously complete", "Streaming shockingly smooth"],
+        "action": ["Jellyfin secured", "Media server operational", "Library mission complete", "Streaming deployed"],
+    },
+    
+    # Traefik responses
+    ("traefik", "completed"): {
+        "jarvis": ["Traefik routing operational", "Reverse proxy configured", "Load balancing active", "SSL termination ready"],
+        "dude": ["Traefik routing smooth", "Proxy flowing nice", "Load balancing good", "SSL cruising"],
+        "chick": ["Traefik running beautifully", "Proxy configured perfectly", "Load balancing gorgeous", "SSL fab"],
+        "nerd": ["Traefik middleware applied", "Dynamic routing active", "Certificate resolver operational", "Backend health optimal"],
+        "rager": ["Traefik finally working", "Proxy configured", "Load balancing active", "SSL ready"],
+        "ops": ["Traefik operational", "Proxy configured", "Load balancing active", "SSL ready"],
+        "tappit": ["Traefik lekker bru", "Proxy sorted hey", "Load balancing sharp né", "SSL good"],
+        "comedian": ["Traefik surprisingly routing", "Proxy unexpectedly working", "Load balancing miraculously balanced", "SSL shockingly secure"],
+        "action": ["Traefik secured", "Proxy mission complete", "Load balancing deployed", "SSL operational"],
+    },
+    ("traefik", "failed"): {
+        "jarvis": ["Traefik routing failure", "Reverse proxy error", "Load balancing failed", "SSL termination error"],
+        "dude": ["Traefik having issues", "Proxy stuck", "Load balancing problems", "SSL failed"],
+        "chick": ["Traefik needs attention", "Proxy struggling", "Load balancing failed", "SSL error"],
+        "nerd": ["Traefik middleware error", "Dynamic routing failed", "Certificate resolver timeout", "Backend unreachable"],
+        "rager": ["Traefik is fucked", "Proxy broken", "Load balancing dead", "SSL failed"],
+        "ops": ["Traefik error", "Proxy failed", "Load balancing down", "SSL error"],
+        "tappit": ["Traefik kak bru", "Proxy broken hey", "Load balancing failed né", "SSL not lekker"],
+        "comedian": ["Traefik dramatically failed", "Proxy plot twist", "Load balancing ironically unbalanced", "SSL unexpectedly insecure"],
+        "action": ["Traefik compromised", "Proxy breach", "Load balancing mission failed", "SSL threat"],
+    },
+    
+    # Nginx responses
+    ("nginx", "completed"): {
+        "jarvis": ["Nginx configuration applied", "Web server operational", "Proxy pass active", "SSL certificates loaded"],
+        "dude": ["Nginx cruising smooth", "Web server vibing", "Proxy flowing nice", "SSL all good"],
+        "chick": ["Nginx running beautifully", "Web server perfect", "Proxy gorgeous", "SSL fab"],
+        "nerd": ["Nginx worker processes spawned", "Configuration syntax valid", "Upstream servers healthy", "SSL session cache optimal"],
+        "rager": ["Nginx finally working", "Web server running", "Proxy active", "SSL loaded"],
+        "ops": ["Nginx operational", "Web server running", "Proxy active", "SSL configured"],
+        "tappit": ["Nginx lekker bru", "Web server sorted hey", "Proxy sharp né", "SSL good"],
+        "comedian": ["Nginx surprisingly stable", "Web server unexpectedly fast", "Proxy miraculously working", "SSL shockingly valid"],
+        "action": ["Nginx secured", "Web server deployed", "Proxy operational", "SSL mission complete"],
+    },
+    
+    # Portainer responses
+    ("portainer", "completed"): {
+        "jarvis": ["Container management operational", "Docker orchestration ready", "Stack deployment successful", "Container monitoring active"],
+        "dude": ["Portainer cruising smooth", "Containers managed nice", "Stack deployed easy", "Monitoring vibing"],
+        "chick": ["Portainer running beautifully", "Containers managed perfectly", "Stack gorgeous", "Monitoring fab"],
+        "nerd": ["Portainer API responsive", "Container state synchronized", "Stack compose validated", "Resource metrics collected"],
+        "rager": ["Portainer finally working", "Containers managed", "Stack deployed", "Monitoring active"],
+        "ops": ["Portainer operational", "Container management ready", "Stack deployed", "Monitoring active"],
+        "tappit": ["Portainer lekker bru", "Containers sorted hey", "Stack sharp né", "Monitoring good"],
+        "comedian": ["Portainer surprisingly functional", "Containers unexpectedly managed", "Stack miraculously deployed", "Monitoring shockingly useful"],
+        "action": ["Portainer secured", "Container management operational", "Stack mission complete", "Monitoring deployed"],
+    },
+    
+    # Uptime Kuma responses
+    ("uptime-kuma", "warning"): {
+        "jarvis": ["Uptime monitoring alert", "Service availability degraded", "Health check warning", "Monitoring threshold exceeded"],
+        "dude": ["Kuma seeing issues", "Service having problems", "Health check concerned", "Monitoring worried"],
+        "chick": ["Kuma alerting", "Service needs attention", "Health check warning", "Monitoring concerned"],
+        "nerd": ["Uptime SLA breach detected", "Ping response degraded", "HTTP status code anomaly", "Certificate expiration warning"],
+        "rager": ["Kuma showing problems", "Service degraded", "Health check warnings", "Monitoring alerts"],
+        "ops": ["Uptime alert", "Service degraded", "Health warning", "Monitoring threshold exceeded"],
+        "tappit": ["Kuma warning bru", "Service not lekker", "Health check concerned hey", "Monitoring alert né"],
+        "comedian": ["Kuma dramatically concerned", "Service ironically down", "Health check surprisingly worried", "Monitoring unexpectedly alarmed"],
+        "action": ["Uptime threat detected", "Service degradation confirmed", "Health check warning issued", "Monitoring alert active"],
+    },
+    
+    # Vaultwarden responses
+    ("vaultwarden", "completed"): {
+        "jarvis": ["Password vault synchronized", "Credential storage secure", "Vault backup complete", "Encryption operational"],
+        "dude": ["Vault synced smooth", "Passwords flowing secure", "Backup cruising done", "Encryption vibing"],
+        "chick": ["Vault synced beautifully", "Passwords secured perfectly", "Backup gorgeous", "Encryption fab"],
+        "nerd": ["Vault database encrypted", "AES-256 encryption active", "PBKDF2 iterations nominal", "Two-factor authentication enabled"],
+        "rager": ["Vault finally synced", "Passwords secured", "Backup done", "Encryption active"],
+        "ops": ["Vault synchronized", "Passwords secure", "Backup complete", "Encryption active"],
+        "tappit": ["Vault synced bru", "Passwords sorted hey", "Backup lekker né", "Encryption sharp"],
+        "comedian": ["Vault surprisingly secure", "Passwords unexpectedly encrypted", "Backup miraculously complete", "Encryption shockingly strong"],
+        "action": ["Vault secured", "Password mission complete", "Backup operational", "Encryption deployed"],
+    },
+    
+    # Nextcloud responses
+    ("nextcloud", "completed"): {
+        "jarvis": ["File synchronization complete", "Cloud storage operational", "Sync client connected", "File sharing active"],
+        "dude": ["Nextcloud synced smooth", "Files flowing nice", "Storage vibing good", "Sharing all set"],
+        "chick": ["Nextcloud synced beautifully", "Files perfect", "Storage gorgeous", "Sharing fab"],
+        "nerd": ["File delta sync complete", "WebDAV protocol active", "Chunked upload successful", "Database maintenance done"],
+        "rager": ["Nextcloud finally synced", "Files uploaded", "Storage working", "Sharing active"],
+        "ops": ["Nextcloud synchronized", "Files synced", "Storage operational", "Sharing ready"],
+        "tappit": ["Nextcloud synced bru", "Files sorted hey", "Storage lekker né", "Sharing sharp"],
+        "comedian": ["Nextcloud surprisingly synced", "Files unexpectedly uploaded", "Storage miraculously working", "Sharing shockingly functional"],
+        "action": ["Nextcloud secured", "File sync complete", "Storage operational", "Sharing deployed"],
+    },
+    
+    # Immich responses
+    ("immich", "completed"): {
+        "jarvis": ["Photo synchronization complete", "Image library indexed", "ML processing finished", "Backup operational"],
+        "dude": ["Immich synced smooth", "Photos flowing nice", "Library vibing indexed", "Backup cruising"],
+        "chick": ["Immich synced beautifully", "Photos gorgeous", "Library perfect", "Backup fab"],
+        "nerd": ["Photo EXIF parsed", "Machine learning inference complete", "Face recognition indexed", "Timeline generated"],
+        "rager": ["Immich finally synced", "Photos uploaded", "Library indexed", "Backup done"],
+        "ops": ["Immich synchronized", "Photos indexed", "Library ready", "Backup complete"],
+        "tappit": ["Immich synced bru", "Photos sorted hey", "Library lekker né", "Backup sharp"],
+        "comedian": ["Immich surprisingly fast", "Photos unexpectedly organized", "Library miraculously indexed", "Backup shockingly complete"],
+        "action": ["Immich secured", "Photo sync complete", "Library operational", "Backup deployed"],
+    },
+    
+    # Paperless responses
+    ("paperless", "completed"): {
+        "jarvis": ["Document ingestion complete", "OCR processing successful", "Document indexed", "Archive operational"],
+        "dude": ["Paperless processed smooth", "Docs flowing indexed", "OCR vibing done", "Archive cruising"],
+        "chick": ["Paperless processed beautifully", "Docs indexed perfectly", "OCR gorgeous", "Archive fab"],
+        "nerd": ["OCR accuracy optimal", "Document metadata extracted", "Full-text search indexed", "Tags auto-assigned"],
+        "rager": ["Paperless finally done", "Docs processed", "OCR complete", "Archive ready"],
+        "ops": ["Paperless complete", "Documents indexed", "OCR done", "Archive ready"],
+        "tappit": ["Paperless done bru", "Docs sorted hey", "OCR lekker né", "Archive sharp"],
+        "comedian": ["Paperless surprisingly paperless", "Docs unexpectedly digital", "OCR miraculously accurate", "Archive shockingly organized"],
+        "action": ["Paperless secured", "Document processing complete", "OCR operational", "Archive deployed"],
+    },
+    
+    # Pi-hole responses
+    ("pihole", "completed"): {
+        "jarvis": ["DNS filtering operational", "Ad blocking active", "Blocklist updated", "Query logging enabled"],
+        "dude": ["Pi-hole cruising smooth", "Ads blocked nice", "DNS flowing clean", "Blocklist vibing"],
+        "chick": ["Pi-hole running beautifully", "Ads blocked perfectly", "DNS gorgeous", "Blocklist fab"],
+        "nerd": ["DNS cache hit ratio optimal", "Gravity database updated", "FTLDNS operational", "Blocklist domains parsed"],
+        "rager": ["Pi-hole finally working", "Ads blocked", "DNS filtering active", "Blocklist updated"],
+        "ops": ["Pi-hole operational", "Ad blocking active", "DNS filtering ready", "Blocklist current"],
+        "tappit": ["Pi-hole lekker bru", "Ads blocked hey", "DNS sorted né", "Blocklist sharp"],
+        "comedian": ["Pi-hole surprisingly effective", "Ads unexpectedly blocked", "DNS miraculously clean", "Blocklist shockingly comprehensive"],
+        "action": ["Pi-hole secured", "Ad blocking deployed", "DNS filtering operational", "Blocklist mission complete"],
+    },
+    
+    # Grafana responses
+    ("grafana", "completed"): {
+        "jarvis": ["Dashboard rendering complete", "Data visualization operational", "Metrics displayed", "Alerts configured"],
+        "dude": ["Grafana cruising smooth", "Dashboards vibing nice", "Metrics flowing good", "Alerts all set"],
+        "chick": ["Grafana running beautifully", "Dashboards gorgeous", "Metrics perfect", "Alerts fab"],
+        "nerd": ["Time series query executed", "Panel rendering optimal", "Data source connected", "Alert threshold configured"],
+        "rager": ["Grafana finally working", "Dashboards rendered", "Metrics displayed", "Alerts set"],
+        "ops": ["Grafana operational", "Dashboards ready", "Metrics active", "Alerts configured"],
+        "tappit": ["Grafana lekker bru", "Dashboards sorted hey", "Metrics sharp né", "Alerts good"],
+        "comedian": ["Grafana surprisingly pretty", "Dashboards unexpectedly useful", "Metrics miraculously accurate", "Alerts shockingly functional"],
+        "action": ["Grafana secured", "Dashboard deployment complete", "Metrics operational", "Alerts deployed"],
+    },
+    
+    # Homepage/Dashboard responses
+    ("homepage", "completed"): {
+        "jarvis": ["Dashboard operational", "Services indexed", "Widgets configured", "Status monitoring active"],
+        "dude": ["Dashboard cruising smooth", "Services vibing displayed", "Widgets flowing nice", "Status all good"],
+        "chick": ["Dashboard running beautifully", "Services displayed perfectly", "Widgets gorgeous", "Status fab"],
+        "nerd": ["Service discovery complete", "API endpoints validated", "Widget refresh rate optimal", "Status checks nominal"],
+        "rager": ["Dashboard finally working", "Services displayed", "Widgets configured", "Status active"],
+        "ops": ["Dashboard operational", "Services indexed", "Widgets ready", "Status monitoring active"],
+        "tappit": ["Dashboard lekker bru", "Services sorted hey", "Widgets sharp né", "Status good"],
+        "comedian": ["Dashboard surprisingly organized", "Services unexpectedly accessible", "Widgets miraculously configured", "Status shockingly useful"],
+        "action": ["Dashboard secured", "Service indexing complete", "Widgets deployed", "Status operational"],
+    },
+    
+    # Authentik responses  
+    ("authentik", "completed"): {
+        "jarvis": ["Authentication service operational", "SSO configuration active", "User provisioning complete", "OAuth flows enabled"],
+        "dude": ["Authentik cruising smooth", "SSO flowing nice", "Users vibing provisioned", "OAuth all set"],
+        "chick": ["Authentik running beautifully", "SSO perfect", "Users provisioned gorgeous", "OAuth fab"],
+        "nerd": ["LDAP sync complete", "SAML assertions validated", "OAuth2 tokens issued", "User directory indexed"],
+        "rager": ["Authentik finally working", "SSO active", "Users provisioned", "OAuth enabled"],
+        "ops": ["Authentik operational", "SSO configured", "Users provisioned", "OAuth ready"],
+        "tappit": ["Authentik lekker bru", "SSO sorted hey", "Users sharp né", "OAuth good"],
+        "comedian": ["Authentik surprisingly authentic", "SSO unexpectedly single", "Users miraculously provisioned", "OAuth shockingly authorized"],
+        "action": ["Authentik secured", "SSO deployed", "User provisioning complete", "OAuth operational"],
     },
 }
 
