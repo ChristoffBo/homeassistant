@@ -1330,6 +1330,14 @@ def ensure_loaded(
     DEFAULT_CTX = max(1024, int(ctx_tokens or 4096))
     _log(f"ensure_loaded using profile='{prof_name}' ctx={ctx_tokens} cpu_limit%={cpu_limit}")
 
+    # CRITICAL: If worker already has model loaded, don't reload
+    if LLM_MODE == "worker" and LOADED_MODEL_PATH is not None:
+        if _check_worker_alive():
+            _log("Worker already has model loaded - skipping reload")
+            return True
+        else:
+            _log("Worker died - will attempt restart")
+
     with _GenCritical():
         base_url = (base_url or "").strip()
         if base_url:
@@ -1344,10 +1352,12 @@ def ensure_loaded(
             else:
                 _log(f"Ollama not reachable at {base_url}; falling back to local mode")
 
-        LLM_MODE = "none"
-        OLLAMA_URL = ""
-        LLM = None
-        LOADED_MODEL_PATH = None
+        # Only reset if not already in worker mode with model loaded
+        if LLM_MODE != "worker":
+            LLM_MODE = "none"
+            OLLAMA_URL = ""
+            LLM = None
+            LOADED_MODEL_PATH = None
 
         # Resolve model from options if not provided
         model_url, model_path, hf_token = _resolve_model_from_options(model_url, model_path, hf_token)
