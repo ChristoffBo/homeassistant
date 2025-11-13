@@ -2,7 +2,7 @@
 """
 LLM Worker Process - Isolated from main Jarvis
 If this crashes, only this process dies - Jarvis stays alive
-Communicates with llm_client.py via JSON-RPC on stdin/stdout
+Communicates with worker_manager.py via JSON-RPC on stdin/stdout
 """
 import os
 import sys
@@ -28,7 +28,7 @@ def load_model(model_path: str, ctx_tokens: int, threads: int) -> Dict[str, Any]
     global LLM, LLM_MODE, LOADED_MODEL_PATH
     
     try:
-        # CRITICAL: Don't reload if already loaded
+        # Don't reload if already loaded
         if LOADED_MODEL_PATH == model_path and LLM is not None:
             log(f"Model already loaded: {model_path}")
             return {"success": True, "message": "Model already loaded"}

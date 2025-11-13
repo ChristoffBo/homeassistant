@@ -31,6 +31,19 @@ from typing import Optional, Dict, Any, Tuple, List
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 
+# ============================
+# Singleton Worker Manager
+# ============================
+try:
+    from worker_manager import get_worker
+    _WORKER_MANAGER = get_worker()
+    _WORKER_AVAILABLE = True
+    print("[llm] Using singleton worker manager", file=sys.stderr, flush=True)
+except Exception as e:
+    print(f"[llm] Worker manager unavailable: {e}", file=sys.stderr, flush=True)
+    _WORKER_AVAILABLE = False
+    _WORKER_MANAGER = None
+
 # ---------------------------
 # EnviroGuard safety sync
 # ---------------------------
@@ -591,12 +604,25 @@ def _should_use_grammar_auto() -> bool:
 
 def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
     global LLM_MODE, LLM, LOADED_MODEL_PATH
+    
+    threads = _threads_from_cpu_limit(cpu_limit)
+    
+    # Try singleton worker first (crash protected)
+    if _WORKER_AVAILABLE and _WORKER_MANAGER is not None:
+        _log("Attempting singleton worker (crash protected)")
+        if _WORKER_MANAGER.start(model_path, ctx_tokens, threads):
+            LLM_MODE = "worker"
+            LLM = None
+            LOADED_MODEL_PATH = model_path
+            _log("Singleton worker ready")
+            return True
+        _log("Singleton worker failed - falling back to in-process")
+    
+    # Fallback to in-process (no crash protection)
     llama_cpp = _try_import_llama_cpp()
     if not llama_cpp:
         return False
     try:
-        threads = _threads_from_cpu_limit(cpu_limit)
-
         # HARD caps & pinning to prevent oversubscription
         pinned = _pin_affinity(threads)  # may be [] if unsupported
         os.environ["OMP_NUM_THREADS"] = str(threads)
@@ -623,7 +649,7 @@ def _load_llama(model_path: str, ctx_tokens: int, cpu_limit: int) -> bool:
         _update_model_metadata()
         LOADED_MODEL_PATH = model_path
         LLM_MODE = "llama"
-        _log(f"loaded GGUF model: {model_path} (ctx={ctx_tokens}, threads={threads})")
+        _log(f"loaded GGUF model (in-process): {model_path} (ctx={ctx_tokens}, threads={threads})")
         return True
     except Exception as e:
         _log(f"llama load failed: {e}")
@@ -984,6 +1010,17 @@ def _do_generate(prompt: str, *, timeout: int, base_url: str, model_url: str, mo
         cand = (model_name_hint or "").strip()
         name = cand if (cand and "/" not in cand and not cand.endswith(".gguf")) else _model_name_from_url(model_url)
         return _ollama_generate(OLLAMA_URL, name, prompt, timeout=max(4, int(timeout)), max_tokens=max_tokens, stops=_stops_for_model())
+
+    if LLM_MODE == "worker" and _WORKER_MANAGER is not None:
+        response = _WORKER_MANAGER.call("generate", {
+            "prompt": prompt,
+            "max_tokens": max_tokens,
+            "temperature": 0.35,
+            "stops": _stops_for_model()
+        }, timeout=max(30.0, max_tokens * 0.5))
+        if response and response.get("success"):
+            return response.get("text", "")
+        return ""
 
     if LLM_MODE == "llama" and LLM is not None:
         return _llama_generate(prompt, timeout=max(4, int(timeout)), max_tokens=max_tokens, with_grammar=use_grammar)
