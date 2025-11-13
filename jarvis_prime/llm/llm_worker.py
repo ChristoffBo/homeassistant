@@ -28,10 +28,12 @@ def load_model(model_path: str, ctx_tokens: int, threads: int) -> Dict[str, Any]
     global LLM, LLM_MODE, LOADED_MODEL_PATH
     
     try:
-        import llama_cpp
-        
+        # CRITICAL: Don't reload if already loaded
         if LOADED_MODEL_PATH == model_path and LLM is not None:
+            log(f"Model already loaded: {model_path}")
             return {"success": True, "message": "Model already loaded"}
+        
+        import llama_cpp
         
         log(f"Loading model: {model_path}")
         log(f"Context: {ctx_tokens}, Threads: {threads}")
