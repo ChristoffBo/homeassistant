@@ -109,18 +109,28 @@ print("[LLM] Crash protection installed (SIGSEGV, SIGBUS, SIGABRT)", file=sys.st
 # ============================
 def _start_worker_process(model_path: str, ctx_tokens: int, threads: int) -> bool:
     """Start isolated worker process for LLM - MUST be called with _WORKER_LOCK held"""
-    global _WORKER_PROCESS, LLM_MODE, LOADED_MODEL_PATH
+    global _WORKER_PROCESS, LLM_MODE, LOADED_MODEL_PATH, _WORKER_LOADING
     
     if _is_llm_crashed():
         _log("Worker start blocked - previous crash")
         return False
     
-    worker_path = "/app/llm_worker.py"
-    if not os.path.exists(worker_path):
-        _log(f"Worker not found at {worker_path}")
+    # CRITICAL: Check if another thread is already loading
+    if _WORKER_LOADING:
+        _log("Worker load already in progress - waiting")
+        time.sleep(0.2)
+        # Check if it succeeded
+        if _WORKER_PROCESS is not None and _check_worker_alive():
+            return True
         return False
     
+    _WORKER_LOADING = True
     try:
+        worker_path = "/app/llm_worker.py"
+        if not os.path.exists(worker_path):
+            _log(f"Worker not found at {worker_path}")
+            return False
+        
         _log(f"Spawning NEW worker process")
         _WORKER_PROCESS = subprocess.Popen(
             [sys.executable, worker_path],
@@ -132,6 +142,12 @@ def _start_worker_process(model_path: str, ctx_tokens: int, threads: int) -> boo
         )
         
         _log(f"Worker started (PID: {_WORKER_PROCESS.pid})")
+        
+        # Confirm alive
+        if not _check_worker_alive():
+            _log("Worker failed to start")
+            _WORKER_PROCESS = None
+            return False
         
         # Test with ping
         response = _call_worker("ping", {}, timeout=5.0)
@@ -163,6 +179,9 @@ def _start_worker_process(model_path: str, ctx_tokens: int, threads: int) -> boo
         _log(f"Failed to start worker: {e}")
         _stop_worker_process()
         return False
+    
+    finally:
+        _WORKER_LOADING = False
 
 def _stop_worker_process():
     """Stop worker process"""
@@ -325,6 +344,7 @@ _WORKER_RESTART_COUNT = 0
 _WORKER_MAX_RESTARTS = 3  # Max restarts before giving up
 _WORKER_RESTART_WINDOW = 300  # 5 minutes
 _WORKER_RESTART_TIMES: deque = deque(maxlen=10)
+_WORKER_LOADING = False  # Prevent concurrent loads
 
 # ============================
 # Async Task Queue (NEW)
