@@ -85,6 +85,17 @@ def _canon(name: str) -> str:
     except:
         return "ops"
 
+def _detect_download_state(text):
+    if "seeding" in text or "uploading" in text: return "seeding"
+    if "leeching" in text: return "leeching"  
+    if "unpacking" in text or "extracting" in text: return "extracting"
+    if "repairing" in text or "par2" in text: return "repairing"
+    if "queued" in text: return "queued"
+    if "downloading" in text: return "downloading"
+    if "completed" in text: return "completed"
+    if "failed" in text: return "failed"
+    return None
+
 def _extract_smart_context(subject: str = "", body: str = "") -> Dict:
     """Extract context from message with enhanced intelligence"""
     try:
