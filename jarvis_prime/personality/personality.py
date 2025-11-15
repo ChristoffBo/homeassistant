@@ -315,6 +315,9 @@ def _extract_smart_context(subject: str = "", body: str = "") -> Dict:
             urgency = 3
         elif any(w in text for w in ["info", "notice", "update", "completed", "success"]):
             urgency = 1
+            "download_state": _detect_download_state(text),
+            "is_torrent": any(w in text for w in ["torrent","seed","leech","peer","swarm","ratio"]),
+            "is_usenet": any(w in text for w in ["nzb","usenet","sabnzbd","par2","unpack","segment"]),
         
         return {
             "services": active_services,
