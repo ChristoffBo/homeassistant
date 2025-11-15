@@ -4285,15 +4285,6 @@ _GENERIC_RESPONSES = {
         "action": ["Pull mission active", "Download operation underway", "Fetch tactical", "Pull secured"],
     },
 }
-        "chick": ["Scaling beautifully", "Capacity adjusting perfectly", "Resizing elegantly", "Scaling gorgeously"],
-        "nerd": ["Horizontal scaling executed", "Resource allocation modified", "Instance count adjusted", "Capacity parameters changed"],
-        "rager": ["Scaling this shit", "Adjusting capacity now", "Resizing goddammit", "Scaling finally"],
-        "ops": ["Scaling initiated", "Capacity adjusting", "Resources modified", "Instance count changing"],
-        "tappit": ["Scaling bru", "Adjusting sharp", "Resizing né", "Scaling lekker"],
-        "comedian": ["Ironically scaling", "Surprisingly resizing", "Predictably adjusting", "Absurdly scaling"],
-        "action": ["Scaling operation", "Capacity tactical adjustment", "Resource deployment", "Scaling mission active"],
-    },
-    "migrating": {
         "jarvis": ["Migration process initiated", "Data transfer underway", "System relocation active", "Migration commenced"],
         "dude": ["Migration flowing", "Moving data smooth", "Transferring easy", "Migrating vibes"],
         "chick": ["Migrating beautifully", "Transfer running perfectly", "Moving elegantly", "Migration gorgeous"],
