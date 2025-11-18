@@ -1,3 +1,7 @@
+## v1.2.2-ls213 (2025-11-18 04:00:21)
+- Update from v1.2.2-ls212 to v1.2.2-ls213
+- Docker Image: [linuxserver/apprise-api:v1.2.2-ls213](https://fleet.linuxserver.io/image?name=)
+
 ## v1.2.2-ls212 (2025-11-11 00:02:53)
 - Update from v1.2.2-ls211 to v1.2.2-ls212
 - Docker Image: [linuxserver/apprise-api:v1.2.2-ls212](https://fleet.linuxserver.io/image?name=)
