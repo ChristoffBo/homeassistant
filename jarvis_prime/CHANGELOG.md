@@ -1,3 +1,5 @@
+## latest (2025-11-19 15:21:00)
+uncommented some Calls in run.sh Jarvis dosent need internet access for startup anymore.
 ## latest (2025-11-13 15:21:00)
 Added an LLM worker will guard against segfaults, wil retry three times.
 ## latest (2025-11-07 15:21:00)
