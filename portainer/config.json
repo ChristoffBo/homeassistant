@@ -1,6 +1,6 @@
 {
   "name": "Portainer",
-  "version": "2.36.0-alpine",
+  "version": "2.37.0-alpine",
   "slug": "portainer",
   "description": "Portainer CE - Manage your Docker containers and hosts easily via UI.",
   "url": "https://www.portainer.io",
