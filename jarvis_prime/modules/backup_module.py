@@ -953,6 +953,15 @@ def perform_full_backup(source_conn, dest_conn, source_paths, dest_path, compres
         duration = time.time() - job_config['start_time']
         create_archive_record(archive_id, job_id, job_config, duration, archive_path, size_mb, data_dir)
         shutil.rmtree(temp_data_dir, ignore_errors=True)
+        
+        # CLEANUP: Delete local backup after successful upload to remote
+        try:
+            logger.info(f"Cleaning up local backup folder: {job_subfolder}")
+            shutil.rmtree(job_subfolder, ignore_errors=True)
+            logger.info(f"Local backup cleaned up successfully")
+        except Exception as e:
+            logger.warning(f"Failed to clean up local backup: {e}")
+        
         return True
     except Exception as e:
         raise Exception(f"Full backup failed: {str(e)}") from e
