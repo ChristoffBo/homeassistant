@@ -1,3 +1,7 @@
+## v1.3.0-ls218 (2025-12-23 04:00:16)
+- Update from v1.3.0-ls217 to v1.3.0-ls218
+- Docker Image: [linuxserver/apprise-api:v1.3.0-ls218](https://fleet.linuxserver.io/image?name=)
+
 ## v1.3.0-ls217 (2025-12-14 04:00:27)
 - Update from v1.2.6-ls216 to v1.3.0-ls217
 - Docker Image: [linuxserver/apprise-api:v1.3.0-ls217](https://fleet.linuxserver.io/image?name=)
