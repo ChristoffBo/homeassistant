@@ -1,3 +1,7 @@
+## 2025.12.25 (2025-12-26 04:00:38)
+- Update from 2025.12.14 to 2025.12.25
+- Docker Image: [alexta69/metube:2025.12.25](https://hub.docker.com/r/alexta69/metube/tags)
+
 ## 2025.12.14 (2025-12-15 04:00:45)
 - Update from 2025.12.09 to 2025.12.14
 - Docker Image: [alexta69/metube:2025.12.14](https://hub.docker.com/r/alexta69/metube/tags)
