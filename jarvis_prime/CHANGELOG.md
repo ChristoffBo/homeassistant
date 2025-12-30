@@ -1,3 +1,5 @@
+## latest (2025-12-30 15:30:00)
+reworked backup retention slice.
 ## latest (2025-11-19 15:21:00)
 uncommented some Calls in run.sh Jarvis dosent need internet access for startup anymore.
 ## latest (2025-11-13 15:21:00)
