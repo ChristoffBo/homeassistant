@@ -414,19 +414,27 @@ def apply_retention(data_dir: Path, job_name: str, retention_days: int, retentio
         # Sort by modification time (newest first)
         timestamp_folders.sort(key=lambda x: x['mtime'], reverse=True)
        
-        cutoff = datetime.now() - timedelta(days=retention_days)
-       
         to_delete = []
+       
+        # If both retention policies are disabled (0), keep everything
+        if retention_days == 0 and retention_count == 0:
+            logger.info(f"Retention disabled for {job_name} (both policies set to 0)")
+            return
        
         # Delete by age (if retention_days > 0)
         if retention_days > 0:
+            cutoff = datetime.now() - timedelta(days=retention_days)
             for folder in timestamp_folders:
                 if datetime.fromtimestamp(folder['mtime']) < cutoff:
                     to_delete.append(folder)
        
         # Delete by count (keep latest N) - if retention_count > 0
+        # This slice ensures we only look at folders beyond the retention count threshold
         if retention_count > 0 and len(timestamp_folders) > retention_count:
-            for folder in timestamp_folders[retention_count:]:
+            # Get only the older folders that exceed our retention count
+            folders_beyond_retention = timestamp_folders[retention_count:]
+            for folder in folders_beyond_retention:
+                # Only add if not already marked by age policy
                 if folder not in to_delete:
                     to_delete.append(folder)
        
