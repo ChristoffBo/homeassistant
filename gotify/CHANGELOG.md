@@ -1,3 +1,7 @@
+## 2.8.0 (2026-01-02 16:43:08)
+- Update from 2.7.3 to 2.8.0
+- Docker Image: [gotify/server:2.8.0](https://hub.docker.com/r/gotify/server/tags)
+
 ## 2.7.3 (2025-09-22 04:00:39)
 - Update from 2.7.2 to 2.7.3
 - Docker Image: [gotify/server:2.7.3](https://hub.docker.com/r/gotify/server/tags)

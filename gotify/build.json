@@ -3,5 +3,5 @@
     "aarch64": "gotify/server:latest",
     "amd64": "gotify/server:latest"
   },
-  "version": "2.7.3"
+  "version": "2.8.0"
 }
