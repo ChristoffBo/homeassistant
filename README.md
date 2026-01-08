@@ -1,4 +1,4 @@
-# 🧩 Home Assistant Add-ons Repository by ChristoffBo
+# 🧩 Home Assistant Add-ons Repository by ChristoffBo bo
 
 A curated collection of custom Home Assistant add-ons designed to extend your setup with powerful tools, dashboards, proxies, and automation utilities.
 
