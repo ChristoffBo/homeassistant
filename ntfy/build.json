@@ -5,5 +5,5 @@
     "armv7": "binwiederhier/ntfy:latest",
     "armhf": "binwiederhier/ntfy:latest"
   },
-  "version": "v2.15.0-armv7"
+  "version": "v2.16.0-armv7"
 }
