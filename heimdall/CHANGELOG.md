@@ -1,3 +1,7 @@
+## v2.7.6-ls334 (2026-01-24 04:33:58)
+- Update from v2.7.6-ls333 to v2.7.6-ls334
+- Docker Image: [linuxserver/heimdall:v2.7.6-ls334](https://fleet.linuxserver.io/image?name=)
+
 ## v2.7.6-ls333 (2026-01-03 04:00:47)
 - Update from v2.7.6-ls332 to v2.7.6-ls333
 - Docker Image: [linuxserver/heimdall:v2.7.6-ls333](https://fleet.linuxserver.io/image?name=)
