@@ -1,3 +1,7 @@
+## v1.3.1-ls224 (2026-02-02 15:30:53)
+- Update from v1.3.1-ls223 to v1.3.1-ls224
+- Docker Image: [linuxserver/apprise-api:v1.3.1-ls224](https://fleet.linuxserver.io/image?name=)
+
 ## v1.3.1-ls223 (2026-01-27 04:01:27)
 - Update from v1.3.1-ls222 to v1.3.1-ls223
 - Docker Image: [linuxserver/apprise-api:v1.3.1-ls223](https://fleet.linuxserver.io/image?name=)
