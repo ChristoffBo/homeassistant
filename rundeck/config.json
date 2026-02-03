@@ -1,6 +1,6 @@
 {
   "name": "Rundeck",
-  "version": "5.18.0-20251216",
+  "version": "5.19.0-20260202",
   "slug": "rundeck",
   "description": "Rundeck Automation with Web UI",
   "arch": [

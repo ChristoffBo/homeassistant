@@ -1,3 +1,7 @@
+## 5.19.0-20260202 (2026-02-03 04:01:44)
+- Update from 5.18.0-20251216 to 5.19.0-20260202
+- Docker Image: [rundeck/rundeck:5.19.0-20260202](https://hub.docker.com/r/rundeck/rundeck/tags)
+
 ## 5.18.0-20251216 (2025-12-17 04:00:57)
 - Update from 5.17.0-20251103 to 5.18.0-20251216
 - Docker Image: [rundeck/rundeck:5.18.0-20251216](https://hub.docker.com/r/rundeck/rundeck/tags)
