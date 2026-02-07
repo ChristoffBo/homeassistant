@@ -6,7 +6,7 @@
     "i386"
   ],
   "name": "Uptime Kuma",
-  "version": "2.0.2-slim",
+  "version": "2.1.0-slim",
   "slug": "uptime_kuma",
   "description": "Self-hosted monitoring tool with a clean web UI. Monitors HTTP(S), TCP, DNS, ICMP and more. Uses official image.",
   "url": "https://github.com/louislam/uptime-kuma",
