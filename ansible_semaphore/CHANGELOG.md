@@ -1,3 +1,7 @@
+## v2.17.15 (2026-02-28 05:00:07)
+- Update from v2.17.14 to v2.17.15
+- Docker Image: [semaphoreui/semaphore:v2.17.15](https://hub.docker.com/r/semaphoreui/semaphore/tags)
+
 ## v2.17.14 (2026-02-21 05:00:08)
 - Update from v2.17.10 to v2.17.14
 - Docker Image: [semaphoreui/semaphore:v2.17.14](https://hub.docker.com/r/semaphoreui/semaphore/tags)
