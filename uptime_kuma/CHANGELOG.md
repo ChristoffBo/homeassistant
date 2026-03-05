@@ -1,3 +1,7 @@
+## 2.2.0-slim (2026-03-05 05:01:08)
+- Update from 2.1.3-slim to 2.2.0-slim
+- Docker Image: [louislam/uptime-kuma:2.2.0-slim](https://hub.docker.com/r/louislam/uptime-kuma/tags)
+
 ## 2.1.3-slim (2026-02-20 05:00:55)
 - Update from 2.1.1-slim to 2.1.3-slim
 - Docker Image: [louislam/uptime-kuma:2.1.3-slim](https://hub.docker.com/r/louislam/uptime-kuma/tags)
