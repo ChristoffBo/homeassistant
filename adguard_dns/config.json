@@ -1,6 +1,6 @@
 {
   "name": "AdGuard DNS",
-  "version": "v0.107.72",
+  "version": "v0.107.73",
   "slug": "adguard_dns",
   "description": "Self-hosted DNS server with ad-blocking powered by AdGuard Home.",
   "url": "https://github.com/AdguardTeam/AdGuardHome",
