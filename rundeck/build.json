@@ -4,5 +4,5 @@
     "aarch64": "rundeck/rundeck:latest",
     "armv7": "rundeck/rundeck:latest"
   },
-  "version": "5.19.0-20260202"
+  "version": "5.20.0-20260402"
 }
