@@ -1,3 +1,7 @@
+## v1.4.0-ls237 (2026-04-28 05:00:26)
+- Update from v1.4.0-ls236 to v1.4.0-ls237
+- Docker Image: [linuxserver/apprise-api:v1.4.0-ls237](https://fleet.linuxserver.io/image?name=)
+
 ## v1.4.0-ls236 (2026-04-27 05:00:15)
 - Update from v1.3.3-ls235 to v1.4.0-ls236
 - Docker Image: [linuxserver/apprise-api:v1.4.0-ls236](https://fleet.linuxserver.io/image?name=)
