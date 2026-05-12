@@ -5,5 +5,5 @@
     "aarch64": "linuxserver/apprise-api",
     "i386": "linuxserver/apprise-api"
   },
-  "version": "v1.4.1-ls239"
+  "version": "v1.4.1-ls240"
 }
