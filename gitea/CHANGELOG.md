@@ -1,3 +1,7 @@
+## 1.26.2 (2026-05-23 05:00:21)
+- Update from 1.26.1 to 1.26.2
+- Docker Image: [ghcr.io/alexbelgium/gitea-{arch}:1.26.2](https://github.com/orgs/alexbelgium/gitea-{arch}/packages)
+
 ## 1.26.1 (2026-04-25 05:00:19)
 - Update from 1.26.0 to 1.26.1
 - Docker Image: [ghcr.io/alexbelgium/gitea-{arch}:1.26.1](https://github.com/orgs/alexbelgium/gitea-{arch}/packages)
