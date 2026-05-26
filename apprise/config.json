@@ -1,6 +1,6 @@
 {
   "name": "Apprise Notification Gateway",
-  "version": "v1.4.1-ls241",
+  "version": "v1.4.1-ls242",
   "slug": "apprise",
   "description": "Self-hosted notification gateway using Apprise API with official web UI.",
   "startup": "services",
