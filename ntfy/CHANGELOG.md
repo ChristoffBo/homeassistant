@@ -1,3 +1,7 @@
+## v2.27.0-armv7 (2026-08-05 05:00:49)
+- Update from v2.26.3-armv7 to v2.27.0-armv7
+- Docker Image: [binwiederhier/ntfy:v2.27.0-armv7](https://hub.docker.com/r/binwiederhier/ntfy/tags)
+
 ## v2.26.3-armv7 (2026-07-21 05:00:48)
 - Update from v2.26.0-armv7 to v2.26.3-armv7
 - Docker Image: [binwiederhier/ntfy:v2.26.3-armv7](https://hub.docker.com/r/binwiederhier/ntfy/tags)
