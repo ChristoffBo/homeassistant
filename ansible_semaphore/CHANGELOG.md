@@ -1,3 +1,7 @@
+## v2.19.7 (2026-08-06 05:00:13)
+- Update from v2.19.1-alpha2 to v2.19.7
+- Docker Image: [semaphoreui/semaphore:v2.19.7](https://hub.docker.com/r/semaphoreui/semaphore/tags)
+
 ## v2.19.1-alpha2 (2026-06-09 05:00:12)
 - Update from v2.18.10 to v2.19.1-alpha2
 - Docker Image: [semaphoreui/semaphore:v2.19.1-alpha2](https://hub.docker.com/r/semaphoreui/semaphore/tags)
