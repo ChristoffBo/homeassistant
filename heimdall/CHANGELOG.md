@@ -1,3 +1,7 @@
+## v2.8.2-ls361 (2026-08-22 05:00:26)
+- Update from v2.8.2-ls360 to v2.8.2-ls361
+- Docker Image: [linuxserver/heimdall:v2.8.2-ls361](https://fleet.linuxserver.io/image?name=)
+
 ## v2.8.2-ls360 (2026-08-17 05:00:27)
 - Update from v2.8.2-ls359 to v2.8.2-ls360
 - Docker Image: [linuxserver/heimdall:v2.8.2-ls360](https://fleet.linuxserver.io/image?name=)
