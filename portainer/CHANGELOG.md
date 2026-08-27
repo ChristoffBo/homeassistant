@@ -1,3 +1,7 @@
+## 2.45.0-alpine (2026-08-27 05:00:36)
+- Update from 2.44.0-alpine to 2.45.0-alpine
+- Docker Image: [portainer/portainer-ce:2.45.0-alpine](https://hub.docker.com/r/portainer/portainer-ce/tags)
+
 ## 2.44.0-alpine (2026-07-30 05:00:54)
 - Update from 2.43.0-alpine to 2.44.0-alpine
 - Docker Image: [portainer/portainer-ce:2.44.0-alpine](https://hub.docker.com/r/portainer/portainer-ce/tags)
