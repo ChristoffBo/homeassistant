@@ -1,3 +1,7 @@
+## 3.1.0 (2026-08-28 05:00:22)
+- Update from 3.0.0 to 3.1.0
+- Docker Image: [gotify/server:3.1.0](https://hub.docker.com/r/gotify/server/tags)
+
 ## 3.0.0 (2026-07-19 05:00:21)
 - Update from 2.9.1 to 3.0.0
 - Docker Image: [gotify/server:3.0.0](https://hub.docker.com/r/gotify/server/tags)
