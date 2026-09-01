@@ -1,3 +1,7 @@
+## v1.5.3-ls257 (2026-09-01 05:00:20)
+- Update from v1.5.2-ls256 to v1.5.3-ls257
+- Docker Image: [linuxserver/apprise-api:v1.5.3-ls257](https://fleet.linuxserver.io/image?name=)
+
 ## v1.5.2-ls256 (2026-08-21 05:00:16)
 - Update from v1.5.1-ls255 to v1.5.2-ls256
 - Docker Image: [linuxserver/apprise-api:v1.5.2-ls256](https://fleet.linuxserver.io/image?name=)
