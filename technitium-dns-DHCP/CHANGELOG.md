@@ -1,3 +1,7 @@
+## 15.6.0 (2026-10-04 05:00:38)
+- Update from 15.5.1 to 15.6.0
+- Docker Image: [technitium/dns-server:15.6.0](https://hub.docker.com/r/technitium/dns-server/tags)
+
 ## 15.5.1 (2026-09-27 05:00:39)
 - Update from 15.5.0 to 15.5.1
 - Docker Image: [technitium/dns-server:15.5.1](https://hub.docker.com/r/technitium/dns-server/tags)
