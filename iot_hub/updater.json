@@ -1,0 +1,8 @@
+{
+  "slug": "iot_hub",
+  "image": "cbothma/iot-hub:latest",
+  "upstream_version": "1.5.0",
+  "last_update": "12-10-2026",
+  "version": "tags",
+  "last_updated": "2026-10-12 19:00:00 SAST"
+}

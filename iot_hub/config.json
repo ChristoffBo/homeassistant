@@ -1,0 +1,23 @@
+{
+  "name": "IOT Hub",
+  "version": "1.5.0",
+  "slug": "iot_hub",
+  "description": "Local control centre for Sonoff (eWeLink) and Tuya / Smart Life devices - LAN first, cloud as backup",
+  "url": "https://github.com/ChristoffBo/homeassistant",
+  "startup": "services",
+  "boot": "auto",
+  "init": false,
+  "arch": [
+    "aarch64",
+    "amd64"
+  ],
+  "host_network": true,
+  "homeassistant_api": true,
+  "webui": "http://[HOST]:[PORT:3000]",
+  "panel_icon": "mdi:lightbulb-group",
+  "ports": {
+    "3000/tcp": 3000
+  },
+  "options": {},
+  "schema": {}
+}

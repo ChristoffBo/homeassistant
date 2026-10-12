@@ -1,0 +1,7 @@
+{
+  "build_from": {
+    "aarch64": "cbothma/iot-hub:latest",
+    "amd64": "cbothma/iot-hub:latest"
+  },
+  "version": "1.5.0"
+}

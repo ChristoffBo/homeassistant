@@ -10,6 +10,7 @@
     "gitea",
     "gotify",
     "heimdall",
+    "iot_hub",
     "github_uploader",
     "portainer",
     "mailrise",

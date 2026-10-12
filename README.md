@@ -11,6 +11,7 @@ A curated collection of custom Home Assistant add-ons designed to extend your se
 📁 Contents:  
 - Fully working add-ons like:  
   - Gotify — Push notifications server  
+  - IOT Hub — Sonoff + Tuya local control centre (LAN first, cloud as backup)  
   - Heimdall — App dashboard UI  
   - Mailrise — Mail-to-notification bridge  
   - Technitium DNS — DNS server with GUI + ingress  
