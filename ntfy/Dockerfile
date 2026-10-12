@@ -1,6 +1,6 @@
 # Dockerfile — Home Assistant ntfy add-on (fixed to run our run.sh as ENTRYPOINT)
 
-ARG BUILD_FROM
+ARG BUILD_FROM=binwiederhier/ntfy:latest
 FROM ${BUILD_FROM}
 ARG BUILD_ARCH
 

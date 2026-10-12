@@ -1,4 +1,4 @@
-ARG BUILD_FROM
+ARG BUILD_FROM=gotify/server:latest
 FROM ${BUILD_FROM}
 ARG BUILD_ARCH
 

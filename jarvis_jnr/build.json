@@ -1,7 +1,0 @@
-{
-  "build_from": {
-    "aarch64": "debian:stable-slim",
-    "amd64": "debian:stable-slim",
-    "armv7": "debian:stable-slim"
-  }
-}
