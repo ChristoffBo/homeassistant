@@ -12,6 +12,9 @@ One local control centre for Sonoff (eWeLink) and Tuya / Smart Life devices. Dev
 🌍 Web UI:  
 Open it from the add-on page (**Open Web UI**) or at `http://<home-assistant-ip>:3000`
 
+### Changing the port
+If port 3000 is already used on your Home Assistant host (the log shows `address already in use :::3000`), set a free port in **Configuration > port**, then set the same number under **Network** so the **Open Web UI** button uses it, and restart the add-on. The **Network** box alone does not move the port: the add-on runs on the host network, where port mappings are ignored.
+
 ⚙️ First-time setup (all in the Web UI):  
 1. **Account** page: log in with your eWeLink account (Sonoff devices).  
 2. **Tuya** page: press **Show QR code**, then in the Smart Life app tap **+ > Scan** and confirm.  
