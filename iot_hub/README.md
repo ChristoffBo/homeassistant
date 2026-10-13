@@ -10,7 +10,7 @@ One local control centre for Sonoff (eWeLink) and Tuya / Smart Life devices. Dev
 ✅ Persistent storage: logins, device keys and settings survive updates
 
 🌍 Web UI:  
-Open it from the add-on page (**Open Web UI**) or at `http://<home-assistant-ip>:3000`
+Open it inside Home Assistant (Ingress, sidebar panel **IOT Hub**), which also works away from home through Home Assistant Cloud / Nabu Casa, or directly at `http://<home-assistant-ip>:3000` on your home network.
 
 ### Changing the port
 If port 3000 is already used on your Home Assistant host (the log shows `address already in use :::3000`), set a free port in **Configuration > port**, then set the same number under **Network** so the **Open Web UI** button uses it, and restart the add-on. The **Network** box alone does not move the port: the add-on runs on the host network, where port mappings are ignored.

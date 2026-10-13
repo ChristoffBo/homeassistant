@@ -4,9 +4,12 @@ ARG BUILD_FROM=cbothma/iot-hub:latest
 FROM ${BUILD_FROM}
 ARG BUILD_ARCH
 
-# The IOT Hub image already starts the hub (node src/index.js in /app) and
-# keeps everything in /data, which the Supervisor persists. Nothing to add
-# here except the add-on labels; the image's own command is kept.
+# The IOT Hub image runs the hub (node src/index.js in /app) and keeps
+# everything in /data, which the Supervisor persists. The add-on adds a small
+# Home Assistant Ingress forwarder (ingress.js) and starts both from run.sh.
+COPY ingress.js run.sh /addon/
+RUN chmod +x /addon/run.sh
+CMD ["/addon/run.sh"]
 
 ARG BUILD_ARCH
 ARG BUILD_DATE

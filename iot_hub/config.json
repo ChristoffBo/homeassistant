@@ -13,6 +13,9 @@
   ],
   "host_network": true,
   "homeassistant_api": true,
+  "ingress": true,
+  "ingress_port": 38099,
+  "panel_title": "IOT Hub",
   "webui": "http://[HOST]:[PORT:3000]",
   "panel_icon": "mdi:lightbulb-group",
   "ports": {
