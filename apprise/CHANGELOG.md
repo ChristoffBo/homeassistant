@@ -1,3 +1,7 @@
+## v2.0.1-ls265 (2026-10-13 05:00:18)
+- Update from v2.0.1-ls264 to v2.0.1-ls265
+- Docker Image: [linuxserver/apprise-api:v2.0.1-ls265](https://fleet.linuxserver.io/image?name=)
+
 ## v2.0.1-ls264 (2026-10-04 05:00:16)
 - Update from v2.0.0-ls263 to v2.0.1-ls264
 - Docker Image: [linuxserver/apprise-api:v2.0.1-ls264](https://fleet.linuxserver.io/image?name=)
