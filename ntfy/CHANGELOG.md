@@ -1,3 +1,7 @@
+## v2.32.0 (2026-10-19 05:00:35)
+- Update from v2.31.1 to v2.32.0
+- Docker Image: [binwiederhier/ntfy:v2.32.0](https://hub.docker.com/r/binwiederhier/ntfy/tags)
+
 ## v2.31.1 (2026-10-17 16:10:10)
 - Update from v2.31.1-armv7 to v2.31.1
 - Docker Image: [binwiederhier/ntfy:v2.31.1](https://hub.docker.com/r/binwiederhier/ntfy/tags)
