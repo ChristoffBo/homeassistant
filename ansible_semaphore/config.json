@@ -1,6 +1,6 @@
 {
   "name": "Ansible Semaphore",
-  "version": "v2.19.16",
+  "version": "v2.19.17",
   "slug": "ansible_semaphore",
   "description": "Semaphore UI inside Home Assistant (official upstream image).",
   "arch": [
