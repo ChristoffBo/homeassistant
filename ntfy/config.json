@@ -1,6 +1,6 @@
 {
   "name": "ntfy Server (Official)",
-  "version": "v2.34.0",
+  "version": "v2.35.0",
   "slug": "ntfy",
   "description": "Self-hosted ntfy server using the official Docker image, with persistent storage (/data).",
   "url": "https://ntfy.sh",
