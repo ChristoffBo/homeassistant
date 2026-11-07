@@ -1,3 +1,7 @@
+## 28.3.0 (2026-11-07 05:00:24)
+- Update from 28.2.0 to 28.3.0
+- Docker Image: [ghcr.io/alexbelgium/gitea-{arch}:28.3.0](https://github.com/orgs/alexbelgium/gitea-{arch}/packages)
+
 ## 28.2.0 (2026-10-24 05:00:23)
 - Update from 28.1.0 to 28.2.0
 - Docker Image: [ghcr.io/alexbelgium/gitea-{arch}:28.2.0](https://github.com/orgs/alexbelgium/gitea-{arch}/packages)
