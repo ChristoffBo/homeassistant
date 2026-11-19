@@ -1,3 +1,7 @@
+## 2.45.4-alpine (2026-11-19 05:00:53)
+- Update from 2.45.3-alpine to 2.45.4-alpine
+- Docker Image: [portainer/portainer-ce:2.45.4-alpine](https://hub.docker.com/r/portainer/portainer-ce/tags)
+
 ## 2.45.3-alpine (2026-10-22 05:00:46)
 - Update from 2.45.2-alpine to 2.45.3-alpine
 - Docker Image: [portainer/portainer-ce:2.45.3-alpine](https://hub.docker.com/r/portainer/portainer-ce/tags)
